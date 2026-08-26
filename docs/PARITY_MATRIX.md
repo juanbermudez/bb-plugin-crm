@@ -119,9 +119,9 @@ and serve them through a local authenticated plugin route. BB has no plugin blob
 | Deal Agent tab | Linked BB thread | planned | 6 |
 | Source amount/currency | Integer minor units and code | done | 4 |
 | Frozen base amount | Stored converted minor units | done | 4 |
-| Manual rates | Currency settings | building | 4/8 |
+| Manual rates | Currency settings | done | 4/8 |
 | Fetched rates | Scheduled optional service | building | 4 |
-| Explicit re-rate | Admin operation | building | 4 |
+| Explicit re-rate | Admin operation | done | 4 |
 | Unconverted disclosure | Lists and dashboard warning | done | 4 |
 
 ## Records, fields, views, and activity

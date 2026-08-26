@@ -51,6 +51,11 @@ Observed:
 - Opening the deal produced `/plugins/crm/crm/deals/<deal-id>` and rendered the
   Overview, Contacts, Activity, and Agent tabs, stage control, source money,
   frozen base money, and archive action.
+- Currency settings rendered the reporting basis, effective-rate table,
+  explicit re-rate action, and audit ledger in the live BB panel.
+- Adding a manual USD/EUR rate of `1.17` with provider `Live QA treasury`
+  persisted, became the effective override, and immediately produced a matching
+  append-only audit row.
 
 Still required before release:
 
