@@ -14,7 +14,7 @@ import { CompaniesView } from "./views/companies/index.js";
 import { ContactsView } from "./views/contacts/index.js";
 import { DealsView } from "./views/deals/index.js";
 import { DashboardView } from "./views/dashboard/index.js";
-import { CurrencySettingsView } from "./views/settings/currency/index.js";
+import { SettingsView, type SettingsSection } from "./views/settings/index.js";
 
 const NAV_ITEMS: ReadonlyArray<{
   kind: CrmRouteKind;
@@ -102,7 +102,14 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             }}
           />
         ) : route.kind === "settings" ? (
-          <CurrencySettingsView />
+          <SettingsView
+            initialSection={route.recordId === "custom-fields" ? "custom-fields" : "currency"}
+            onSectionChange={(section: SettingsSection) => {
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({ kind: "settings", recordId: section }),
+              });
+            }}
+          />
         ) : (
           <PendingView kind={route.kind} />
         )}
