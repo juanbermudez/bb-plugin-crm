@@ -23,8 +23,9 @@ tag, or marketplace submission.
 - A final managed-install rehearsal exposed that the published BB `0.39.0`
   builder does not provide the newer `class-variance-authority`, `clsx`, and
   `tailwind-merge` host shims. The manifest now keeps exact runtime pins for
-  compatibility with the declared minimum; the corrected public commit must
-  complete the managed Git-install smoke below before release approval.
+  compatibility with the declared minimum. The corrected public
+  release-candidate commit then completed the managed Git-install and browser
+  smoke below.
 
 The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite
@@ -68,17 +69,20 @@ databases for migrations and persistence. They cover:
   activity authors are never inferred as assignees, and persisted schema-9 to
   schema-10 migration upgrades.
 
-## Pre-final managed Git-install / packaged-BB smoke
+## Final release-candidate managed Git-install / packaged-BB smoke
 
-A managed Git install and packaged-BB `0.39.0` smoke was previously run from an
-exact public commit before this final integrated work. It is retained as
-pre-final historical evidence only; it does not certify the current working
-tree and must be rerun from the final approved release commit/tag. No secret,
+A managed Git install and packaged-BB `0.39.0` smoke was run from the corrected
+exact public release-candidate commit after the integrated parity work. The
+exact SHA and package measurements are kept in the release/marketplace PR body
+rather than this packaged evidence file. A public `v0.1.0` tag install remains
+approval-gated and must still be checked after the tag is created. No secret,
 one-time credential, or token value is recorded here.
 
-That pre-final smoke loaded the plugin successfully; both
+The final release-candidate smoke loaded the plugin successfully; both
 `crm-agent-dispatcher` and `crm-archive-retention` background services were
-running, SQLite integrity was `ok`, and no foreign-key violations were found.
+running, schema version 10 matched, SQLite integrity was `ok`, no foreign-key
+violations were found, the managed source resolved to the requested public
+commit, and the browser console reported zero errors.
 
 Observed in the live CRM panel:
 
@@ -142,6 +146,10 @@ Observed in the live CRM panel:
 - Saved-view and currency removal actions opened BB AlertDialogs and were
   cancelled, proving the browser-native confirmation replacements without
   deleting live-smoke data.
+- The final corrected-commit smoke also opened the New menu and verified all
+  six creation actions (company, contact, deal, note, task, and agent), opened
+  the enrichment queue empty state, exercised Escape dismissal, and loaded
+  Settings/Tracking at its deep link.
 
 ## Release-gated or not run
 
@@ -151,7 +159,7 @@ The following are not claimed as passing evidence in this log:
   dark-theme and focused keyboard paths are covered by the smokes above, but a
   complete keyboard-only audit was not run;
 - Electron-specific smoke (no Electron QA was run for this update);
-- final production release tag creation, final public-tag installation, or
+- final production release tag creation, public-tag installation, or
   marketplace submission. No final tag, marketplace check, or PR is claimed.
 - Marketplace draft schema/build-contract audit is documented in
   [docs/MARKETPLACE_DRAFT.md](MARKETPLACE_DRAFT.md). A temporary concrete

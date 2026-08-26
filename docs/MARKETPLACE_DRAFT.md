@@ -121,11 +121,12 @@ operator-confirmed site authority.
   imports, generated metadata, package contents, icon, migrations, security
   boundaries, and checked-in release claims. These are local working-tree
   checks and do not claim a public release.
-- A managed Git install and packaged-BB panel smoke was previously run from an
-  exact public commit before this final integrated work. It is pre-final
-  historical evidence only and must be rerun from the final approved release
-  commit/tag; no final public-tag install is claimed.
-- The pre-final smoke covered Dashboard Me (installation-local owner)/Everyone,
+- A managed Git install and packaged-BB `0.39.0` panel smoke passed from the
+  corrected exact public release-candidate commit after the integrated parity
+  work. It resolved the requested commit, reported schema 10, clean SQLite/FK
+  health, both background services running, and zero browser-console errors.
+  A public-tag install is still required after approval; none is claimed yet.
+- The managed smoke covered Dashboard Me (installation-local owner)/Everyone,
   saved defaults, advanced Companies facets/selection, Agent creation,
   Connections/Tracking empty states, tracking-site one-time credentials, CLI
   status/doctor/list, onboarding, global search, column controls, record Agent
@@ -133,7 +134,8 @@ operator-confirmed site authority.
   stepper, contact portraits/Photo URL editing, the fixed public tracking
   loader, bounded drawers, drawer-tab URL restoration, CRM keyboard search and
   entity selection, builder Conversation fail-closed behavior, closed-stage
-  reasons, and BB AlertDialogs.
+  reasons, BB AlertDialogs, all six global creation actions, the enrichment
+  queue empty state/Escape behavior, and the Settings/Tracking deep link.
 - A complete keyboard-only sweep, light/custom-theme sweep, and
   Electron-specific QA were not run. Final clean-tag package and BB smoke
   evidence remains required.
