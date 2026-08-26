@@ -64,6 +64,60 @@ function makeRpc(
 }
 
 describe("ActivityTimeline", () => {
+  it("loads and expands a synced email thread from its timeline summary", async () => {
+    const email = activity({
+      id: "act_email",
+      type: "EMAIL",
+      subject: "Product recap",
+      emailThread: {
+        id: "email_thread_1",
+        messageCount: 1,
+        lastMessageAt: "2026-08-25T14:00:00.000Z",
+      },
+    });
+    const rpc = makeRpc(async (method) => {
+      if (method === "activity_timeline") {
+        return { entries: [email], nextCursor: null } satisfies TimelineOutput;
+      }
+      if (method === "activity_timelineCounts") return { ...counts, all: 1, email: 1 };
+      if (method === "mailbox_email_thread") {
+        return {
+          id: "email_thread_1",
+          subject: "Product recap",
+          messageCount: 1,
+          firstMessageAt: "2026-08-25T14:00:00.000Z",
+          lastMessageAt: "2026-08-25T14:00:00.000Z",
+          company: { id: "cmp_acme", name: "Acme Corporation" },
+          contact: null,
+          messages: [{
+            id: "email_message_1",
+            direction: "INBOUND",
+            fromEmail: "ada@example.com",
+            fromName: "Ada Lovelace",
+            recipients: [{ email: "sales@example.com", name: null, kind: "TO" }],
+            subject: "Product recap",
+            body: "Here are the decisions from today.",
+            snippet: "Here are the decisions…",
+            sentAt: "2026-08-25T14:00:00.000Z",
+            provider: "GOOGLE",
+            providerMessageId: "gmail-1",
+            webLink: "https://mail.google.com/mail/u/0/#inbox/gmail-1",
+            mailboxName: "sales@example.com",
+            mailboxUrl: null,
+          }],
+        };
+      }
+      return email;
+    });
+
+    render(<ActivityTimeline anchor={{ companyId: "cmp_acme" }} rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Show email thread (1)" }));
+    expect(await screen.findByText("Here are the decisions from today.")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Open in Gmail" }).getAttribute("href")).toContain("mail.google.com");
+    expect(rpc.call).toHaveBeenCalledWith("mailbox_email_thread", { id: "email_thread_1" });
+  });
+
   it("loads an anchored timeline, renders source counts, due dates, and day groups", async () => {
     const note = activity();
     const task = activity({

@@ -22,6 +22,7 @@ import {
   type TimelineInput,
   type TimelineOutput,
 } from "../../../contracts/core.js";
+import type { CalendarEvent, EmailThread } from "../../../contracts/mailbox.js";
 import { EmptyState } from "../../components/index.js";
 import { cn } from "../../../lib/utils.js";
 import { useActivityRpc, type ActivityRpcClient } from "./rpc.js";
@@ -310,6 +311,78 @@ function normalizeText(value: string): string | undefined {
   return normalized || undefined;
 }
 
+function externalUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function EmailThreadDetails({ thread }: { thread: EmailThread }) {
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{thread.messageCount} {thread.messageCount === 1 ? "message" : "messages"}</span>
+        <span>{formatDateTime(thread.firstMessageAt)} – {formatDateTime(thread.lastMessageAt)}</span>
+      </div>
+      <ol className="space-y-3">
+        {thread.messages.map((message) => {
+          const providerUrl = externalUrl(message.webLink);
+          return (
+            <li key={message.id} className="space-y-2 rounded-md bg-background p-3 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {message.fromName || message.fromEmail}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">{message.fromEmail}</p>
+                </div>
+                <time className="text-xs text-muted-foreground" dateTime={message.sentAt}>
+                  {formatDateTime(message.sentAt)}
+                </time>
+              </div>
+              {message.body || message.snippet ? (
+                <p className="max-h-64 overflow-y-auto whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+                  {message.body || message.snippet}
+                </p>
+              ) : null}
+              {providerUrl ? (
+                <a className="inline-flex text-xs font-medium underline-offset-2 hover:underline" href={providerUrl} target="_blank" rel="noreferrer">
+                  Open in {message.provider === "GOOGLE" ? "Gmail" : "Outlook"}
+                </a>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function CalendarEventDetails({ event }: { event: CalendarEvent }) {
+  const conferenceUrl = externalUrl(event.conferenceUrl);
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3 text-sm">
+      <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[7rem_1fr]">
+        <dt className="text-muted-foreground">When</dt>
+        <dd>{formatDateTime(event.startsAt)} – {formatDateTime(event.endsAt)}</dd>
+        {event.location ? <><dt className="text-muted-foreground">Location</dt><dd>{event.location}</dd></> : null}
+        <dt className="text-muted-foreground">Attendees</dt>
+        <dd>{event.attendees.map((attendee) => attendee.name || attendee.email).join(", ") || "None"}</dd>
+      </dl>
+      {event.description ? <p className="whitespace-pre-wrap leading-6 text-muted-foreground">{event.description}</p> : null}
+      {conferenceUrl ? (
+        <a className="inline-flex font-medium underline-offset-2 hover:underline" href={conferenceUrl} target="_blank" rel="noreferrer">
+          Join meeting
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function activityMatchesFilter(
   entry: ActivityEntry,
   filter: ActivitySourceTab,
@@ -516,12 +589,14 @@ function Composer({
 function TimelineEntry({
   entry,
   anchor,
+  rpc,
   completingId,
   onComplete,
   onOpenRelatedRecord,
 }: {
   entry: ActivityEntry;
   anchor: AnchorInput;
+  rpc: ActivityRpcClient;
   completingId: string | null;
   onComplete: (entry: ActivityEntry) => void;
   onOpenRelatedRecord?: ActivityTimelineProps["onOpenRelatedRecord"];
@@ -532,6 +607,10 @@ function TimelineEntry({
   const subject = activityTitle(entry);
   const completionLabel = isComplete ? "Reopen task" : "Complete task";
   const completionBusy = completingId === entry.id;
+  const [expanded, setExpanded] = useState(false);
+  const [details, setDetails] = useState<EmailThread | CalendarEvent | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const relations = [
     entry.company && entry.company.id !== anchor.companyId
       ? { kind: "company" as const, id: entry.company.id, label: entry.company.name }
@@ -547,6 +626,35 @@ function TimelineEntry({
       ? { kind: "deal" as const, id: entry.deal.id, label: entry.deal.name }
       : null,
   ].filter((relation): relation is NonNullable<typeof relation> => relation !== null);
+
+  const detailsLabel = entry.emailThread
+    ? `${expanded ? "Hide" : "Show"} email thread (${entry.emailThread.messageCount})`
+    : entry.calendarEvent
+      ? `${expanded ? "Hide" : "Show"} meeting details`
+      : null;
+
+  const toggleDetails = async () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
+    if (details) return;
+    setDetailsLoading(true);
+    setDetailsError(null);
+    try {
+      const value = entry.emailThread
+        ? await rpc.call("mailbox_email_thread", { id: entry.emailThread.id })
+        : entry.calendarEvent
+          ? await rpc.call("mailbox_calendar_event", { id: entry.calendarEvent.id })
+          : null;
+      setDetails(value);
+    } catch (cause) {
+      setDetailsError(errorMessage(cause));
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
 
   return (
     <li className="relative pl-10">
@@ -578,6 +686,18 @@ function TimelineEntry({
           <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
             {entry.body}
           </p>
+        ) : null}
+        {detailsLabel ? (
+          <div className="space-y-2">
+            <Button type="button" variant="outline" size="sm" aria-expanded={expanded} onClick={() => void toggleDetails()}>
+              <Icon name={expanded ? "ChevronUp" : "ChevronDown"} aria-hidden="true" />
+              {detailsLabel}
+            </Button>
+            {expanded && detailsLoading ? <p className="text-xs text-muted-foreground" role="status">Loading details…</p> : null}
+            {expanded && detailsError ? <p className="text-xs text-destructive" role="alert">{detailsError}</p> : null}
+            {expanded && details && entry.emailThread ? <EmailThreadDetails thread={details as EmailThread} /> : null}
+            {expanded && details && entry.calendarEvent ? <CalendarEventDetails event={details as CalendarEvent} /> : null}
+          </div>
         ) : null}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
           <span>By {entry.createdBy.name}</span>
@@ -911,6 +1031,7 @@ export function ActivityTimeline({
                   key={entry.id}
                   entry={entry}
                   anchor={anchorInput}
+                  rpc={rpc}
                   completingId={completingId}
                   onComplete={(value) => void onComplete(value)}
                   onOpenRelatedRecord={onOpenRelatedRecord}
@@ -959,6 +1080,7 @@ export function ActivityTimeline({
                       key={entry.id}
                       entry={entry}
                       anchor={anchorInput}
+                      rpc={rpc}
                       completingId={completingId}
                       onComplete={(value) => void onComplete(value)}
                       onOpenRelatedRecord={onOpenRelatedRecord}

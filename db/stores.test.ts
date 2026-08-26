@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { CRM_SCHEMA_MIGRATIONS, initializeSchema } from "./schema.js";
+import { CRM_SCHEMA_MIGRATIONS, CRM_SCHEMA_VERSION, initializeSchema } from "./schema.js";
 import {
   archiveCompany,
   companyFaviconUrl,
@@ -90,6 +90,8 @@ describe("CRM SQLite foundation", () => {
         "agent_triggers",
         "agent_versions",
         "agent_webhook_tokens",
+        "calendar_attendees",
+        "calendar_events",
         "companies",
         "connection_health",
         "connection_sync_cursors",
@@ -103,12 +105,16 @@ describe("CRM SQLite foundation", () => {
         "crm_metadata",
         "deal_contacts",
         "deals",
+        "email_messages",
+        "email_threads",
         "exchange_rate_audit",
         "exchange_rates",
         "field_definitions",
         "field_options",
         "field_values",
         "saved_views",
+        "slack_channels",
+        "slack_member_matches",
         "suppressed_contacts",
         "tracking_daily_aggregates",
         "tracking_daily_traffic_sources",
@@ -122,13 +128,15 @@ describe("CRM SQLite foundation", () => {
       const migrationIds = db
         .prepare("SELECT id FROM _bb_migrations ORDER BY id")
         .all() as Array<{ id: number }>;
-      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(migrationIds.map(({ id }) => id)).toEqual(
+        CRM_SCHEMA_MIGRATIONS.map((_, id) => id),
+      );
       expect(
         db
           .prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'")
           .pluck()
           .get(),
-      ).toBe("11");
+      ).toBe(String(CRM_SCHEMA_VERSION));
 
       const indexNames = db
         .prepare(
@@ -153,7 +161,7 @@ describe("CRM SQLite foundation", () => {
       expect(
         (db.prepare("SELECT COUNT(*) AS count FROM _bb_migrations").get() as { count: number })
           .count,
-      ).toBe(11);
+      ).toBe(CRM_SCHEMA_MIGRATIONS.length);
     } finally {
       await lifecycle.dispose();
     }
@@ -454,8 +462,8 @@ describe("CRM SQLite foundation", () => {
       expect(db.prepare("PRAGMA table_info(tracking_events)").all()).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "medium" })]),
       );
-      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("11");
-      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(10);
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe(String(CRM_SCHEMA_VERSION));
+      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(CRM_SCHEMA_MIGRATIONS.length - 1);
       expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspace_identity'").get()).toBeDefined();
     } finally {
       await lifecycle.dispose();

@@ -104,4 +104,35 @@ describe("ConnectionsSettingsView", () => {
     expect(await screen.findByText(/Cursor: cursor-1/)).toBeDefined();
     expect(screen.getByText("Sync diagnostics")).toBeDefined();
   });
+
+  it("runs a provider sync from the connection card", async () => {
+    const rpc = makeRpc(async (method) => {
+      if (method === "connections_list") return [connection];
+      if (method === "connections_syncNow") {
+        return { provider: "GOOGLE", connection, emailMessages: 2, calendarEvents: 1, channels: 0, people: 0, matchedPeople: 0 };
+      }
+      if (method === "connections_health") return connection.health;
+      return connection;
+    });
+    render(<ConnectionsSettingsView rpcClient={rpc} />);
+    await screen.findByText("Google Workspace");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync Google now" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("connections_syncNow", { id: connection.id }));
+  });
+
+  it("renders Slack channel inventory and exact-email people matches", async () => {
+    const slack = { ...connection, id: "conn_slack", provider: "SLACK" as const, displayName: "Acme Slack", externalAccountId: "T1", configuration: {}, scopes: ["users:read"] };
+    const rpc = makeRpc(async (method) => {
+      if (method === "connections_list") return [slack];
+      if (method === "slack_channels_list") return [{ id: "slack_channel_C1", slackChannelId: "C1", name: "sales", isPrivate: false, isMember: true, memberCount: 8 }];
+      if (method === "slack_matches_list") return [{ id: "slack_match_1", contactId: "con_ada", contactName: "Ada Lovelace", contactEmail: "ada@example.com", slackUserId: "U1", slackHandle: "@ada", slackEmail: "ada@example.com", matched: true }];
+      return slack;
+    });
+    render(<ConnectionsSettingsView rpcClient={rpc} />);
+
+    expect(await screen.findByText("#sales")).toBeDefined();
+    expect(screen.getByText("Ada Lovelace")).toBeDefined();
+    expect(screen.getByText("@ada")).toBeDefined();
+  });
 });

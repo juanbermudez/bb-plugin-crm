@@ -9,6 +9,7 @@ import type {
   TimelineInput,
   TimelineOutput,
 } from "../../../contracts/core.js";
+import type { CalendarEvent, EmailThread } from "../../../contracts/mailbox.js";
 import { rpcContract } from "../../../contracts/rpc.js";
 
 /**
@@ -27,6 +28,8 @@ export interface ActivityRpcClient {
     method: "activity_complete",
     input: CompleteActivityInput,
   ): Promise<ActivityEntry>;
+  call(method: "mailbox_email_thread", input: { id: string }): Promise<EmailThread>;
+  call(method: "mailbox_calendar_event", input: { id: string }): Promise<CalendarEvent>;
 }
 
 /** Use BB's host client while keeping the timeline injectable in tests/previews. */

@@ -222,11 +222,32 @@ import {
   trackingTokenSchema,
 } from "./connections.js";
 import {
+  calendarEventIngestSchema,
+  calendarEventSchema,
+  emailMessageIngestSchema,
+  emailThreadSchema,
+  mailboxPurgeInputSchema,
+  mailboxPurgeOutputSchema,
+  mailboxRecordInputSchema,
+} from "./mailbox.js";
+import {
   archiveRetentionGetInputSchema,
   archiveRetentionPruneInputSchema,
   archiveRetentionPruneResultSchema,
   archiveRetentionSettingsSchema,
 } from "./maintenance.js";
+import { providerSyncInputSchema, providerSyncOutputSchema } from "./provider-sync.js";
+import {
+  slackChannelSchema,
+  slackConnectionInputSchema,
+  slackCreateChannelInputSchema,
+  slackCreateChannelOutputSchema,
+  slackJoinInputSchema,
+  slackJoinOutputSchema,
+  slackMemberMatchSchema,
+  slackMessagePostInputSchema,
+  slackMessagePostOutputSchema,
+} from "./slack.js";
 import {
   enrichmentQueueInputSchema,
   enrichmentQueueOutputSchema,
@@ -300,6 +321,50 @@ export const rpcContract = defineRpcContract({
   connections_diagnostics: {
     input: connectionIdInputSchema,
     output: connectionDiagnosticsSchema,
+  },
+  connections_syncNow: {
+    input: providerSyncInputSchema,
+    output: providerSyncOutputSchema,
+  },
+  slack_channels_list: {
+    input: slackConnectionInputSchema,
+    output: z.array(slackChannelSchema),
+  },
+  slack_matches_list: {
+    input: slackConnectionInputSchema,
+    output: z.array(slackMemberMatchSchema),
+  },
+  slack_channel_join: {
+    input: slackJoinInputSchema,
+    output: slackJoinOutputSchema,
+  },
+  slack_channel_create: {
+    input: slackCreateChannelInputSchema,
+    output: slackCreateChannelOutputSchema,
+  },
+  slack_message_post: {
+    input: slackMessagePostInputSchema,
+    output: slackMessagePostOutputSchema,
+  },
+  mailbox_email_ingest: {
+    input: emailMessageIngestSchema,
+    output: emailThreadSchema,
+  },
+  mailbox_email_thread: {
+    input: mailboxRecordInputSchema,
+    output: emailThreadSchema,
+  },
+  mailbox_calendar_ingest: {
+    input: calendarEventIngestSchema,
+    output: calendarEventSchema,
+  },
+  mailbox_calendar_event: {
+    input: mailboxRecordInputSchema,
+    output: calendarEventSchema,
+  },
+  mailbox_purge_connection: {
+    input: mailboxPurgeInputSchema,
+    output: mailboxPurgeOutputSchema,
   },
   tracking_sites_list: {
     input: trackingSiteListInputSchema,

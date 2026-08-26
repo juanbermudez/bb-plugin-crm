@@ -389,6 +389,7 @@ describe("CRM plugin foundation", () => {
       "get_contact_work_history",
       "record_job_change",
       "schedule_recheck",
+      "crm_slack_message_post",
       "crm_record_contact_fact",
       "crm_record_contact_brief",
       "crm_record_contact_work_history",
@@ -3232,7 +3233,7 @@ describe("CRM plugin foundation", () => {
         "thread.failed": 1,
         "thread.deleted": 1,
       });
-      expect(reloaded.harness.inspection.registrations.services).toHaveLength(2);
+      expect(reloaded.harness.inspection.registrations.services).toHaveLength(3);
     } finally {
       replacementService.controller.abort();
       await replacementService.done;

@@ -20,7 +20,7 @@ Currently working end to end:
   owner)/Everyone scope,
   pipeline, performance, six-month trend, closing totals, overdue work, and
   recent activity
-- append-only SQLite storage (schema 11) for companies, contacts, deals,
+- append-only SQLite storage (schema 12) for companies, contacts, deals,
   activities, saved views, custom fields, agent lifecycles, connection health,
   tracking sites/events, daily traffic-source rollups, and the installation's
   website/optional company profile
@@ -67,7 +67,10 @@ Currently working end to end:
   supply that capability
 - evidence review for proposed facts/work history, immutable background brief
   versions, approval resolution, auditable run retry, and linked-thread cancel
-- connection health/diagnostics boundaries for Google, Microsoft, and Slack;
+- live bounded Google Gmail/Calendar and Microsoft Outlook sync with durable
+  cursors, normalized threads/events, contact matching, timeline projection,
+  inline detail, manual refresh, and a background worker; live Slack channel
+  and people inventory with exact-email matches plus join/create controls;
   tracking-site allowed-domain and cross-domain configuration, cookie controls,
   privacy rules, observed-page-view verification evidence, pause/rotate/revoke,
   a fixed loader and public domain/token/privacy-validated collector, daily
@@ -82,10 +85,10 @@ identity directory, or a plugin blob API. CRM owner facets and sorting therefore
 use stable installation-local owner IDs; roles, per-user authorization, and
 general-purpose API keys are not issued. Contact portraits and company favicons
 retain validated HTTPS source URLs rather than copying remote bytes into plugin
-storage. Provider OAuth, provider authorization, and live mail/calendar/Slack
-sync require externally supplied provider/agent-tool credentials and host
-authorization; none is bundled, so those connections remain metadata/health
-boundaries until configured. Agent thread cancellation can remain pending while
+storage. Provider tokens are stored only in BB server-side secret settings.
+OAuth/device callbacks and refresh-token writes require a host relay or
+operator-managed rotation because the plugin SDK cannot update secret settings;
+live sync runs once those secrets are configured. Agent thread cancellation can remain pending while
 BB reports a thread as stopping. External webhook triggers require a producer,
 and a public builder-share relay plus unrelated global BB thread-panel/mention
 surfaces are not included. Tracking reports anonymous site/path/source/medium

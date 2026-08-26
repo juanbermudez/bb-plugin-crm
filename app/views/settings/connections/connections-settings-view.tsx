@@ -9,12 +9,14 @@ import {
   CardTitle,
 } from "../../../../components/ui/card.js";
 import { Icon } from "../../../../components/ui/icon.js";
+import { Input } from "../../../../components/ui/input.js";
 import { AlertDialog, EmptyState, PageHeader } from "../../../components/index.js";
 import type {
   Connection,
   ConnectionProvider,
   SyncCursor,
 } from "../../../../contracts/connections.js";
+import type { SlackChannelRecord, SlackMemberMatchRecord } from "../../../../contracts/slack.js";
 import {
   useConnectionsRpc,
   type ConnectionsRpcClient,
@@ -50,6 +52,100 @@ type Diagnostics = {
   connection: Connection;
   syncCursors: readonly SyncCursor[];
 };
+
+function SlackWorkspacePanel({ connection, rpc }: { connection: Connection; rpc: ConnectionsRpcClient }) {
+  const [channels, setChannels] = useState<readonly SlackChannelRecord[]>([]);
+  const [matches, setMatches] = useState<readonly SlackMemberMatchRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [nextChannels, nextMatches] = await Promise.all([
+        rpc.call("slack_channels_list", { connectionId: connection.id }),
+        rpc.call("slack_matches_list", { connectionId: connection.id }),
+      ]);
+      setChannels(nextChannels);
+      setMatches(nextMatches);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setLoading(false);
+    }
+  }, [connection.id, connection.updatedAt, rpc]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <section className="space-y-4 rounded-lg border border-border bg-card p-4" aria-labelledby="slack-workspace-heading">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 id="slack-workspace-heading" className="font-semibold">Slack workspace</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Live channels and exact-email CRM people matches.</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" disabled={loading || busy !== null} onClick={() => void load()}>
+          <Icon name="RotateCcw" aria-hidden="true" /> Refresh inventory
+        </Button>
+      </div>
+      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+      {loading ? <p className="text-sm text-muted-foreground" role="status">Loading Slack inventory…</p> : (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium">Channels ({channels.length})</h3>
+            <div className="max-h-80 divide-y divide-border-hairline overflow-y-auto rounded-md border border-border">
+              {channels.map((channel) => (
+                <div key={channel.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate">#{channel.name} {channel.isPrivate ? <span className="text-xs text-muted-foreground">private</span> : null}</span>
+                  {channel.isMember ? <span className="text-xs text-muted-foreground">Joined</span> : (
+                    <Button type="button" size="sm" variant="ghost" disabled={busy !== null} onClick={async () => {
+                      setBusy(`join:${channel.id}`); setError(null);
+                      try {
+                        const result = await rpc.call("slack_channel_join", { connectionId: connection.id, channelId: channel.slackChannelId });
+                        if (!result.joined) throw new Error(result.reason ?? "Slack could not join the channel.");
+                        setChannels((current) => current.map((item) => item.id === channel.id ? { ...item, isMember: true } : item));
+                      } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(null); }
+                    }}>Join</Button>
+                  )}
+                </div>
+              ))}
+              {channels.length === 0 ? <p className="px-3 py-5 text-sm text-muted-foreground">Sync Slack to load channels.</p> : null}
+            </div>
+            <form className="flex flex-wrap gap-2" onSubmit={async (event) => {
+              event.preventDefault(); if (!name.trim()) return;
+              setBusy("create"); setError(null);
+              try {
+                const created = await rpc.call("slack_channel_create", { connectionId: connection.id, name, isPrivate });
+                setName("");
+                setChannels((current) => [...current, { id: `slack_channel_${created.id}`, slackChannelId: created.id, name: created.name, isPrivate, isMember: true, memberCount: null }]);
+              } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(null); }
+            }}>
+              <Input className="min-w-48 flex-1" value={name} onChange={(event) => setName(event.target.value.toLowerCase().replace(/[^a-z0-9-_]/gu, "-"))} placeholder="new-channel" aria-label="New Slack channel name" />
+              <label className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} /> Private</label>
+              <Button type="submit" size="sm" disabled={busy !== null || !name.trim()}>Create channel</Button>
+            </form>
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium">People matches ({matches.filter((item) => item.matched).length}/{matches.length})</h3>
+            <div className="max-h-80 divide-y divide-border-hairline overflow-y-auto rounded-md border border-border">
+              {matches.map((match) => (
+                <div key={match.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <div className="min-w-0"><p className="truncate font-medium">{match.contactName}</p><p className="truncate text-xs text-muted-foreground">{match.contactEmail}</p></div>
+                  <span className={match.matched ? "text-xs font-medium" : "text-xs text-muted-foreground"}>{match.slackHandle ?? "Not matched"}</span>
+                </div>
+              ))}
+              {matches.length === 0 ? <p className="px-3 py-5 text-sm text-muted-foreground">Sync Slack to match CRM contacts.</p> : null}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -123,6 +219,7 @@ interface ProviderCardProps {
   onDisable: (connection: Connection) => void;
   onEnable: (connection: Connection) => void;
   onHealth: (connection: Connection) => void;
+  onSync: (connection: Connection) => void;
   onDiagnostics: (connection: Connection) => void;
 }
 
@@ -138,6 +235,7 @@ function ProviderCard({
   onDisable,
   onEnable,
   onHealth,
+  onSync,
   onDiagnostics,
 }: ProviderCardProps) {
   const status = connection?.health.status ?? "DISCONNECTED";
@@ -288,6 +386,17 @@ function ProviderCard({
               </Button>
               <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onSync(connection)}
+                disabled={busyAction !== null || !connection.enabled}
+                aria-label={`Sync ${provider.label} now`}
+              >
+                <Icon name="CalendarSync" aria-hidden="true" />
+                Sync now
+              </Button>
+              <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => onDiagnostics(connection)}
@@ -420,7 +529,7 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
   const runConnectionAction = useCallback(
     async (
       connection: Connection,
-      action: "disable" | "enable" | "health",
+      action: "disable" | "enable" | "health" | "sync",
       options: { rethrow?: boolean } = {},
     ) => {
       const key = `${action}:${connection.id}`;
@@ -436,10 +545,12 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
                 enabled: true,
                 status: "DISCONNECTED",
               })
-            : {
+            : action === "health"
+              ? {
                 ...connection,
                 health: await rpc.call("connections_health", { id: connection.id }),
-              };
+              }
+              : (await rpc.call("connections_syncNow", { id: connection.id })).connection;
         updateConnection(next);
         setDiagnostics((current) => {
           const existing = current[connection.id];
@@ -579,11 +690,13 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
                       onDisable={(value) => setConfirmDisable(value)}
                       onEnable={(value) => void runConnectionAction(value, "enable")}
                       onHealth={(value) => void runConnectionAction(value, "health")}
+                      onSync={(value) => void runConnectionAction(value, "sync")}
                       onDiagnostics={(value) => void openDiagnostics(value)}
                     />
                   );
                 })}
               </div>
+              {byProvider.get("SLACK") ? <div className="mt-4"><SlackWorkspacePanel connection={byProvider.get("SLACK")!} rpc={rpc} /></div> : null}
             </section>
           </>
         )}

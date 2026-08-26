@@ -17,7 +17,7 @@ Status meanings:
 
 | Source capability | BB extension target | Status | Phase |
 | --- | --- | --- | --- |
-| Append-only schema evolution | SQLite migrations through `CRM_SCHEMA_VERSION = 11`; migration 10 adds tracking controls/rollups and migration 11 adds the installation website and optional workspace profile | done | 1/7/8 |
+| Append-only schema evolution | SQLite migrations through `CRM_SCHEMA_VERSION = 12`; migration 12 adds normalized mail/calendar records plus Slack inventory/matches | done | 1/7/8 |
 | Contextual facet counts | Counts use the current search and active/archived scope; selecting one facet does not collapse the other facet counts | done | 5 |
 | Activity facets | 7/30/90-day recency windows; multiple windows use the widest selected window | done | 5 |
 | Custom-field facet identity | Strict `field:<key>` keys shared by server output and list controls | done | 5 |
@@ -31,7 +31,7 @@ Status meanings:
 | --- | --- | --- | --- |
 | Marketing landing | GitHub README and marketplace detail | host-owned | 10 |
 | Sign-in | BB application session | host-owned | 0 |
-| Grant mailbox access | Connection health/metadata boundary; provider authorization requires external credentials and host authorization | building | 7 |
+| Grant mailbox access | BB secret settings accept operator-provisioned access tokens; OAuth callback/refresh custody remains host-owned because plugins cannot write secret settings | adapted | 7 |
 | Workspace onboarding | Persisted first-open CRM checklist | done | 8 |
 | Research onboarding | Explicit live/deployed BB research-agent selection; provider credentials stay with that agent's tools | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
@@ -113,7 +113,7 @@ Status meanings:
 | Proposed fact decision | Accept/dismiss review actions | done | 3 |
 | Dismiss/supersede | Evidence state transitions | done | 3 |
 | Background brief | Versioned brief display/create/history | done | 3 |
-| Email/meeting relationship summary | Provider-gated timeline relationship summary; local activity rows remain available | planned | 7 |
+| Email/meeting relationship summary | Synced mail/calendar rows match contacts and project into the unified timeline | done | 7 |
 | Social lookup and work history | Provider-gated research runs plus evidence-backed fact/work-history tools | done | 3/6 |
 | Contact portrait | HTTPS source portrait in list/drawer, inline URL editing, and initials/error fallback | done | 3 |
 
@@ -168,8 +168,8 @@ the server.
 | Sticky day groups | Sticky timeline day headers | done | 5 |
 | Infinite older history | Cursor pagination with observer-driven loading and button fallback | done | 5 |
 | Stage/enrichment rows | Transactional stage/enrichment activity rows | done | 4/5 |
-| Email thread expansion | Integration-backed row | planned | 7 |
-| Meeting attendee and join details | Integration-backed row | planned | 7 |
+| Email thread expansion | Lazy typed thread detail with provider link | done | 7 |
+| Meeting attendee and join details | Lazy typed attendee/location/conference detail | done | 7 |
 | Website activity | Privacy-filtered site/path/source/medium aggregates and visitor-days; no anonymous CRM-record attribution | adapted | 7 |
 
 ## Agent workspace
@@ -201,7 +201,7 @@ the server.
 | Approval | Durable approve/deny actions and run UI | done | 6 |
 | Retry/cancel | Auditable retry plus linked-thread cancel cleanup | done | 6 |
 | Share read-only builder chat | Not claimed: BB SDK exposes no public share relay; BB Connect or an external relay is required | gap | 6 |
-| Slack message action | Optional Slack integration | planned | 6/7 |
+| Slack message action | Idempotent channel/user delivery RPC and CRM agent tool backed by the live Slack adapter | done | 6/7 |
 
 Builder chat is available through visible plugin-spawned BUILDER links and the
 host `ThreadChat`. An assistant-message action can copy exact visible text into
@@ -216,11 +216,11 @@ publicly reachable share requires BB Connect or an external relay.
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
 | Connection health overview | CRM settings route | done | 7 |
-| Google mail/calendar | OAuth callback and forward sync | planned | 7 |
-| Microsoft mail/calendar | OAuth/device flow and forward sync | planned | 7 |
-| Slack authorization and scopes | OAuth callback and settings | planned | 7 |
-| Slack channels and creation | Channel settings | planned | 7 |
-| Slack people matching | Exact-email match plus review | planned | 7 |
+| Google mail/calendar | Bounded Gmail/Calendar adapter, 30-day initial mail backfill, incremental cursors, normalized storage, manual/background sync | adapted | 7 |
+| Microsoft mail | Bounded Graph/Outlook adapter, incremental cursor, normalized storage, manual/background sync | adapted | 7 |
+| Slack authorization and scopes | BB secret bot/user settings and scope-drift adapter; OAuth callback remains host-owned | adapted | 7 |
+| Slack channels and creation | Durable inventory plus public/private join and create controls | done | 7 |
+| Slack people matching | Durable exact-email CRM-contact match review | done | 7 |
 | HubSpot/Linear coming-soon rows | Omitted until supported | host-owned | 7 |
 | Intake endpoint | Source route explicitly says unavailable; no endpoint or unused intake credential is exposed | host-owned | 7 |
 | Tracking loader and script | Fixed `GET /tracking/loader.js` route | done | 7 |
@@ -231,7 +231,7 @@ publicly reachable share requires BB Connect or an external relay.
 | Attribution and sources | Daily anonymous source/medium rollups with event counts and per-day distinct-visitor `visitorDays` | adapted | 7 |
 | Retention rollup | Bounded rollup/prune RPCs | done | 7 |
 | Workspace name | Plugin setting | done | 1 |
-| Workspace website/profile | Schema-11 workspace settings store normalized website identity and an optional factual company profile; BB owns the installation name | done | 8 |
+| Workspace website/profile | Schema-12 workspace settings store normalized website identity and an optional factual company profile; BB owns the installation name | done | 8 |
 | Reporting currency | Plugin setting | done | 1 |
 | Research agent | Optional live/deployed BB agent selector; provider credentials remain in that agent's tools | done | 1/6 |
 | Archive retention | Bounded setting, prune RPC, and background service | done | 8 |
@@ -268,10 +268,10 @@ parity claims:
 - The BB SDK `0.4.8` compatibility floor has no plugin blob API; portraits and favicons are retained as
   validated HTTPS source URLs and other binary assets are not claimed as a
   hosted plugin capability.
-- Provider connection cards and health/metadata persistence are implemented,
-  but provider OAuth, authorization, and live mailbox/calendar/Slack sync are
-  not bundled. They require externally supplied provider/agent-tool credentials
-  and host authorization before they can run.
+- Live Google Gmail/Calendar, Microsoft Outlook mail, and Slack inventory/action
+  paths are implemented with bounded adapters, durable cursors, and BB secret
+  settings. OAuth/device callbacks and refresh-token writes remain host-owned;
+  operators must provision or rotate provider secrets outside the plugin UI.
 - The dispatcher can request a thread stop, but BB exposes no public
   cancellation lifecycle for a thread that reports `stopping`; the linked run
   remains pending until an unambiguous idle, failed, or deleted signal (or an
@@ -284,8 +284,8 @@ parity claims:
   sums (`visitorDays`); the public intake contract has no verified CRM record
   identifier, so website events are not attributed to a company/contact/deal by
   heuristic.
-- Email/meeting relationship summaries and attendee/join details remain
-  provider-gated until mailbox/calendar authorization and sync are available.
+- Email/meeting relationship summaries, full thread expansion, attendees, and
+  conference links are available whenever the corresponding provider secret is configured.
 - CRM due-task dispatch is opt-in and installation-local. It leases ordinary
   CRM timeline TASK rows and starts a manual hidden agent run for one explicitly
   configured live/deployed agent; it never infers the activity author as an

@@ -47,6 +47,7 @@
     "agent-dispatch.ts",
     "hooks",
     "lib",
+    "services",
     "skills",
     "app.tsx",
     "server.ts",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { initializeSchema } from "./schema.js";
+import { CRM_SCHEMA_MIGRATIONS, CRM_SCHEMA_VERSION, initializeSchema } from "./schema.js";
 import {
   AgentStateError,
   AgentStore,
@@ -17,8 +17,8 @@ describe("CRM agent workspace persistence", () => {
   it("keeps the migration v5 agent graph intact after later migrations", async () => {
     const { db, lifecycle } = withDatabase();
     try {
-      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("11");
-      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(10);
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe(String(CRM_SCHEMA_VERSION));
+      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(CRM_SCHEMA_MIGRATIONS.length - 1);
       const tables = db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agent_%' ORDER BY name",
       ).all() as Array<{ name: string }>;

@@ -142,6 +142,10 @@ import {
   TrackingAuthorizationError,
   TrackingPrivacyError,
 } from "./db/connections.js";
+import { createMailboxStore } from "./db/mailbox.js";
+import { createSlackStore } from "./db/slack.js";
+import { SlackAdapter } from "./lib/slack-adapter.js";
+import { syncProviderConnection, type ProviderCredentials } from "./services/provider-sync.js";
 import {
   DEFAULT_ARCHIVE_PRUNE_BATCH_SIZE,
   DEFAULT_ARCHIVE_RETENTION_DAYS,
@@ -164,6 +168,8 @@ export const CRM_AGENT_DISPATCH_INTERVAL_MS = 5_000;
 export const CRM_AGENT_DISPATCH_MAX_BATCH = 100;
 export const CRM_AGENT_DISPATCH_ORPHAN_LEASE_MS = DEFAULT_AGENT_ORPHAN_LEASE_MS;
 export const CRM_AGENT_DISPATCH_SERVICE_NAME = "crm-agent-dispatcher";
+export const CRM_PROVIDER_SYNC_SERVICE_NAME = "crm-provider-sync";
+export const CRM_PROVIDER_SYNC_INTERVAL_MS = 5 * 60_000;
 
 const DEAL_STAGES_REQUIRING_REASON = new Set<DealStage>([
   "UNQUALIFIED_TO_BUY",
@@ -839,6 +845,42 @@ export default async function plugin(bb: BbPluginApi) {
       options: ["default", ...AGENT_REASONING_LEVELS],
       default: "default",
     },
+    googleAccessToken: {
+      type: "string",
+      label: "Google access token",
+      description: "Operator-provisioned Gmail and Calendar token. Stored by BB as a server-only secret.",
+      secret: true,
+    },
+    microsoftAccessToken: {
+      type: "string",
+      label: "Microsoft access token",
+      description: "Operator-provisioned Microsoft Graph Mail.Read token. Stored by BB as a server-only secret.",
+      secret: true,
+    },
+    slackBotToken: {
+      type: "string",
+      label: "Slack bot token",
+      description: "Operator-provisioned Slack xoxb token. Stored by BB as a server-only secret.",
+      secret: true,
+    },
+    slackUserToken: {
+      type: "string",
+      label: "Slack user token",
+      description: "Optional Slack xoxp grant used for private-channel inventory and invitations.",
+      secret: true,
+    },
+    slackClientId: {
+      type: "string",
+      label: "Slack client id",
+      description: "Slack app client id used by a host-owned OAuth relay.",
+      default: "",
+    },
+    slackClientSecret: {
+      type: "string",
+      label: "Slack client secret",
+      description: "Slack app client secret used only by a host-owned OAuth relay.",
+      secret: true,
+    },
   });
 
   const db = bb.storage.database();
@@ -858,8 +900,20 @@ export default async function plugin(bb: BbPluginApi) {
   const crmEvents = createCrmEventStore(db);
   const agentWebhookTokens = createAgentWebhookTokenStore(db);
   const connections = createConnectionStore(db);
+  const mailbox = createMailboxStore(db);
+  const slackStore = createSlackStore(db);
   const trackingSites = createTrackingSiteStore(db);
   const tracking = createTrackingStore(db);
+
+  async function providerCredentials(): Promise<ProviderCredentials> {
+    const values = await settings.get();
+    return {
+      googleAccessToken: values.googleAccessToken,
+      microsoftAccessToken: values.microsoftAccessToken,
+      slackBotToken: values.slackBotToken,
+      slackUserToken: values.slackUserToken,
+    };
+  }
 
   function recordFieldValues(entity: FieldEntity, recordId: string): FieldValues {
     return Object.fromEntries(
@@ -2813,6 +2867,54 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  function configuredProviderSyncInterval(): number {
+    const raw = process.env.CRM_PROVIDER_SYNC_INTERVAL_MS;
+    if (raw === undefined) return CRM_PROVIDER_SYNC_INTERVAL_MS;
+    const parsed = Number(raw);
+    return Number.isSafeInteger(parsed) && parsed >= 10_000 && parsed <= 24 * 60 * 60 * 1_000
+      ? parsed
+      : CRM_PROVIDER_SYNC_INTERVAL_MS;
+  }
+
+  async function runProviderSyncSweep(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    const credentials = await providerCredentials();
+    for (const connection of connections.list({ enabled: true })) {
+      if (signal.aborted) return;
+      try {
+        const result = await syncProviderConnection(
+          { connections, contacts, mailbox, slackStore },
+          connection.id,
+          credentials,
+          signal,
+        );
+        changed("connection", "sync-succeeded", result.connection.id);
+      } catch (error) {
+        bb.log.warn(`CRM ${connection.provider} sync skipped or failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  let providerSyncServiceRunning = false;
+  bb.background.service(CRM_PROVIDER_SYNC_SERVICE_NAME, {
+    async start(signal) {
+      if (providerSyncServiceRunning) {
+        await waitForDispatcherStop(signal);
+        return;
+      }
+      providerSyncServiceRunning = true;
+      try {
+        while (!signal.aborted) {
+          await runProviderSyncSweep(signal);
+          if (signal.aborted) break;
+          await waitForDispatcherInterval(signal, configuredProviderSyncInterval());
+        }
+      } finally {
+        providerSyncServiceRunning = false;
+      }
+    },
+  });
+
   function uniqueBulkIds(ids: readonly string[]): string[] {
     return [...new Set(ids)];
   }
@@ -3787,6 +3889,90 @@ export default async function plugin(bb: BbPluginApi) {
         connection: connections.getRequired(id),
         syncCursors: connections.listSyncCursors(id),
       };
+    },
+    async connections_syncNow({ id }) {
+      const result = await syncProviderConnection(
+        { connections, contacts, mailbox, slackStore },
+        id,
+        await providerCredentials(),
+      );
+      changed("connection", "sync-succeeded", result.connection.id);
+      changed("connection", "health-updated", result.connection.id);
+      if (result.emailMessages > 0 || result.calendarEvents > 0) changed("activity", "synced", result.connection.id);
+      return result;
+    },
+    slack_channels_list({ connectionId }) {
+      const connection = connections.getRequired(connectionId);
+      if (connection.provider !== "SLACK") throw new Error("Connection is not Slack.");
+      return slackStore.listChannels(connectionId);
+    },
+    slack_matches_list({ connectionId }) {
+      const connection = connections.getRequired(connectionId);
+      if (connection.provider !== "SLACK") throw new Error("Connection is not Slack.");
+      return slackStore.listMatches(connectionId);
+    },
+    async slack_channel_join({ connectionId, channelId }) {
+      const connection = connections.getRequired(connectionId);
+      if (connection.provider !== "SLACK") throw new Error("Connection is not Slack.");
+      const credentials = await providerCredentials();
+      const channel = slackStore.listChannels(connectionId).find((item) => item.slackChannelId === channelId);
+      const result = await new SlackAdapter({
+        botToken: credentials.slackBotToken,
+        userToken: credentials.slackUserToken,
+      }).joinChannel(channelId, {
+        isPrivate: channel?.isPrivate ?? true,
+        isMember: channel?.isMember ?? false,
+      });
+      changed("connection", "slack-channel-updated", connectionId);
+      return result.joined
+        ? { joined: true, already: result.already, reason: null }
+        : { joined: false, already: false, reason: result.reason };
+    },
+    async slack_channel_create({ connectionId, name, isPrivate }) {
+      const connection = connections.getRequired(connectionId);
+      if (connection.provider !== "SLACK") throw new Error("Connection is not Slack.");
+      const credentials = await providerCredentials();
+      const result = await new SlackAdapter({
+        botToken: credentials.slackBotToken,
+        userToken: credentials.slackUserToken,
+      }).createChannel(name, isPrivate);
+      changed("connection", "slack-channel-created", connectionId);
+      return result;
+    },
+    async slack_message_post({ connectionId, destination, text, clientMessageId }) {
+      const connection = connections.getRequired(connectionId);
+      if (connection.provider !== "SLACK" || !connection.enabled) throw new Error("An enabled Slack connection is required.");
+      const credentials = await providerCredentials();
+      const result = await new SlackAdapter({
+        botToken: credentials.slackBotToken,
+        userToken: credentials.slackUserToken,
+      }).postMessage(destination, text, clientMessageId);
+      changed("connection", "slack-message-posted", connectionId);
+      return result;
+    },
+    mailbox_email_ingest(input) {
+      const thread = mailbox.ingestEmail(input, LOCAL_OWNER_ID);
+      changed("connection", "mail-synced", input.connectionId);
+      changed("activity", "created", thread.id);
+      return thread;
+    },
+    mailbox_email_thread({ id }) {
+      return mailbox.getEmailThread(id);
+    },
+    mailbox_calendar_ingest(input) {
+      const event = mailbox.ingestCalendarEvent(input, LOCAL_OWNER_ID);
+      changed("connection", "calendar-synced", input.connectionId);
+      changed("activity", "created", event.id);
+      return event;
+    },
+    mailbox_calendar_event({ id }) {
+      return mailbox.getCalendarEvent(id);
+    },
+    mailbox_purge_connection({ connectionId }) {
+      const result = mailbox.purgeConnection(connectionId);
+      changed("connection", "synced-data-purged", connectionId);
+      changed("activity", "purged", connectionId);
+      return result;
     },
     tracking_sites_list(input) {
       return trackingSites.list(input);
@@ -5031,6 +5217,7 @@ export default async function plugin(bb: BbPluginApi) {
     "crm_record_contact_brief",
     "crm_record_contact_work_history",
     "crm_finalize_enrichment",
+    "crm_slack_message_post",
   ] as const;
   const toolRecordEntity = z.enum(["company", "contact", "deal"]);
   // Social URLs are evidence-backed contact facts. Keeping them out of the
@@ -5154,6 +5341,12 @@ export default async function plugin(bb: BbPluginApi) {
     reason: z.string().trim().min(10),
     budget: z.number().int().min(1).max(20).default(4),
   }).strict();
+  const slackMessageToolInputSchema = z.object({
+    connectionId: idSchema.optional(),
+    destination: z.object({ kind: z.enum(["channel", "user"]), id: z.string().trim().min(1).max(128) }).strict(),
+    text: z.string().trim().min(1).max(4_000),
+    clientMessageId: z.string().trim().min(1).max(256),
+  }).strict();
   const RECHECK_DAY_MS = 24 * 60 * 60 * 1_000;
 
   function recheckTaskMeta(value: unknown): Record<string, unknown> {
@@ -5219,10 +5412,16 @@ export default async function plugin(bb: BbPluginApi) {
     return undefined;
   }
   function agentHistoryActivityLimit(threads: number): number {
-    // The local CRM stores activities rather than the source mailbox/calendar
-    // thread tables. Keep the result bounded while returning enough timeline
-    // context for the source history workflows.
+    // Keep activity and joined provider detail bounded for agent context.
     return Math.min(100, threads * 20);
+  }
+  function agentMailboxHistory(entries: readonly ActivityOutput[]) {
+    const threadIds = [...new Set(entries.flatMap((entry) => entry.emailThread ? [entry.emailThread.id] : []))];
+    const eventIds = [...new Set(entries.flatMap((entry) => entry.calendarEvent ? [entry.calendarEvent.id] : []))];
+    return {
+      threads: threadIds.map((id) => mailbox.getEmailThread(id)),
+      meetings: eventIds.map((id) => mailbox.getCalendarEvent(id)),
+    };
   }
   function agentContactNeedsIdentity(contact: StoredContact): boolean {
     if (!contact.email || contact.lastName !== null) return false;
@@ -5793,7 +5992,7 @@ export default async function plugin(bb: BbPluginApi) {
     description:
       "Read the local CRM history for a contact: the contact, company and deals, timeline activities, and evidence-backed facts, brief, and work history.",
     instructions:
-      "This BB port has local CRM activities and evidence but no connected mailbox or calendar thread tables. Treat empty threads and meetings as unavailable, not as proof that none occurred.",
+      "The result includes normalized provider threads and meetings when a configured connection has synced them. Absence is not proof that no external correspondence occurred.",
     parameters: readCrmHistoryToolInputSchema,
     execute(input) {
       const contact = contacts.get(input.contactId);
@@ -5803,14 +6002,14 @@ export default async function plugin(bb: BbPluginApi) {
         .list({ contactId: contact.id, limit: agentHistoryActivityLimit(input.threads) })
         .entries
         .map(activityOutput);
+      const providerHistory = agentMailboxHistory(entries);
       return JSON.stringify({
         found: true,
         contact: output,
         company: output.company,
         deals: output.deals ?? [],
         activities: entries,
-        threads: [],
-        meetings: [],
+        ...providerHistory,
         facts: output.facts ?? [],
         brief: output.brief ?? null,
         workHistory: output.workHistory ?? [],
@@ -5819,10 +6018,12 @@ export default async function plugin(bb: BbPluginApi) {
           emails: entries.filter((entry) => entry.type === "EMAIL").length,
           meetings: entries.filter((entry) => entry.type === "MEETING").length,
           tasks: entries.filter((entry) => entry.type === "TASK").length,
-          nextMeetingAt: null,
+          nextMeetingAt: providerHistory.meetings
+            .map((meeting) => meeting.startsAt)
+            .filter((startsAt) => Date.parse(startsAt) >= Date.now())
+            .sort()[0] ?? null,
         },
-        note:
-          "This history is limited to locally stored CRM activities and evidence. Connected email/calendar bodies and reply detection are not available in this BB port.",
+        note: "Provider data reflects the latest successful connection cursor; verify freshness in connection diagnostics.",
       });
     },
   });
@@ -5832,7 +6033,7 @@ export default async function plugin(bb: BbPluginApi) {
     description:
       "Read the local CRM history for a company: its contacts, deals, and timeline activities with stable record ids.",
     instructions:
-      "The local result includes CRM activities and relationships. Connected mailbox/calendar threads are not installed, so empty threads and meetings are unavailable rather than negative evidence.",
+      "The result includes normalized provider threads and meetings from the latest successful connection cursor.",
     parameters: readCompanyHistoryToolInputSchema,
     execute(input) {
       const company = companies.get(input.companyId);
@@ -5842,6 +6043,7 @@ export default async function plugin(bb: BbPluginApi) {
         .list({ companyId: company.id, limit: agentHistoryActivityLimit(input.threads) })
         .entries
         .map(activityOutput);
+      const providerHistory = agentMailboxHistory(entries);
       const people = output.contacts ?? [];
       const dealsOnCompany = output.deals ?? [];
       return JSON.stringify({
@@ -5850,8 +6052,7 @@ export default async function plugin(bb: BbPluginApi) {
         people,
         deals: dealsOnCompany,
         activities: entries,
-        threads: [],
-        meetings: [],
+        ...providerHistory,
         notes: entries
           .filter((entry) => entry.type === "NOTE")
           .map((entry) => ({
@@ -5869,8 +6070,7 @@ export default async function plugin(bb: BbPluginApi) {
           emails: entries.filter((entry) => entry.type === "EMAIL").length,
           meetings: entries.filter((entry) => entry.type === "MEETING").length,
         },
-        note:
-          "This history is limited to locally stored CRM activities and relationships. Connected email/calendar threads are not available in this BB port.",
+        note: "Provider data reflects the latest successful connection cursor; verify freshness in connection diagnostics.",
       });
     },
   });
@@ -5880,7 +6080,7 @@ export default async function plugin(bb: BbPluginApi) {
     description:
       "Read the local CRM history for a deal: current stage, value, company, contacts, stage-change activities, notes, and the remaining timeline.",
     instructions:
-      "Use the returned contact and company ids for follow-up reads. Connected correspondence and calendar history are not installed in this BB port.",
+      "Use the returned contact and company ids for follow-up reads. Provider correspondence is included when linked to the deal timeline.",
     parameters: readDealHistoryToolInputSchema,
     execute(input) {
       const deal = deals.get(input.dealId);
@@ -5890,6 +6090,7 @@ export default async function plugin(bb: BbPluginApi) {
         .list({ dealId: deal.id, limit: agentHistoryActivityLimit(input.threads) })
         .entries
         .map(activityOutput);
+      const providerHistory = agentMailboxHistory(entries);
       const stageHistory = entries
         .filter((entry) => entry.type === "STAGE_CHANGE")
         .map((entry) => {
@@ -5907,8 +6108,7 @@ export default async function plugin(bb: BbPluginApi) {
         people: output.contacts ?? [],
         stageHistory,
         activities: entries,
-        threads: [],
-        meetings: [],
+        ...providerHistory,
         notes: entries
           .filter((entry) => entry.type === "NOTE")
           .map((entry) => ({
@@ -5925,8 +6125,7 @@ export default async function plugin(bb: BbPluginApi) {
             ? null
             : Math.max(0, Math.floor((Date.now() - agentDate(deal.lastActivityAt, deal.createdAt)) / (24 * 60 * 60 * 1_000))),
         },
-        note:
-          "This history is limited to locally stored CRM activities and stage changes. Connected correspondence and calendar history are not available in this BB port.",
+        note: "Provider data reflects the latest successful connection cursor; verify freshness in connection diagnostics.",
       });
     },
   });
@@ -6073,6 +6272,28 @@ export default async function plugin(bb: BbPluginApi) {
         budget: input.budget,
         activityId: task.id,
       });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_slack_message_post",
+    description: "Post one idempotent CRM agent message to a connected Slack channel or matched Slack user.",
+    instructions: "Use only a channel id from Slack inventory or a matched Slack user id. Provide a stable clientMessageId for retry safety. Never invent a destination.",
+    parameters: slackMessageToolInputSchema,
+    async execute(input) {
+      const connection = input.connectionId
+        ? connections.getRequired(input.connectionId)
+        : connections.list({ provider: "SLACK", enabled: true })[0];
+      if (!connection || connection.provider !== "SLACK" || !connection.enabled) {
+        throw new Error("No enabled Slack connection is available.");
+      }
+      const credentials = await providerCredentials();
+      const receipt = await new SlackAdapter({
+        botToken: credentials.slackBotToken,
+        userToken: credentials.slackUserToken,
+      }).postMessage(input.destination, input.text, input.clientMessageId);
+      changed("connection", "slack-message-posted", connection.id);
+      return JSON.stringify({ posted: true, connectionId: connection.id, ...receipt });
     },
   });
 

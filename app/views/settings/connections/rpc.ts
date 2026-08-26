@@ -16,6 +16,11 @@ export const CONNECTION_METHODS = [
   "connections_syncFailure",
   "connections_syncCursors",
   "connections_syncResult",
+  "connections_syncNow",
+  "slack_channels_list",
+  "slack_matches_list",
+  "slack_channel_join",
+  "slack_channel_create",
   "connections_diagnostics",
 ] as const satisfies readonly (keyof typeof rpcContract)[];
 
@@ -36,4 +41,3 @@ export type ConnectionsRpcClient = {
 export function useConnectionsRpc(): ConnectionsRpcClient {
   return useRpc<typeof rpcContract>() as unknown as ConnectionsRpcClient;
 }
-

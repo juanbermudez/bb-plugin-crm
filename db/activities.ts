@@ -59,6 +59,22 @@ export interface ActivityDealRef {
   name: string;
 }
 
+export interface ActivityEmailThreadRef {
+  id: string;
+  messageCount: number;
+  lastMessageAt: string;
+}
+
+export interface ActivityCalendarEventRef {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  isAllDay: boolean;
+  location: string | null;
+  conferenceUrl: string | null;
+  attendeeCount: number;
+}
+
 export interface Activity {
   id: string;
   type: ActivityType;
@@ -79,9 +95,8 @@ export interface Activity {
   company: ActivityCompanyRef | null;
   contact: ActivityContactRef | null;
   deal: ActivityDealRef | null;
-  /** The optional integration rows are not part of the current BB schema. */
-  emailThread: null;
-  calendarEvent: null;
+  emailThread: ActivityEmailThreadRef | null;
+  calendarEvent: ActivityCalendarEventRef | null;
 }
 
 export type ActivityEntry = Activity;
@@ -286,11 +301,24 @@ const ACTIVITY_SELECT = `
     p.first_name AS contactRefFirstName,
     p.last_name AS contactRefLastName,
     d.id AS dealRefId,
-    d.name AS dealRefName
+    d.name AS dealRefName,
+    et.id AS emailThreadRefId,
+    et.message_count AS emailThreadMessageCount,
+    et.last_message_at AS emailThreadLastMessageAt,
+    ce.id AS calendarEventRefId,
+    ce.starts_at AS calendarEventStartsAt,
+    ce.ends_at AS calendarEventEndsAt,
+    ce.is_all_day AS calendarEventIsAllDay,
+    ce.location AS calendarEventLocation,
+    ce.conference_url AS calendarEventConferenceUrl,
+    (SELECT COUNT(*) FROM calendar_attendees AS ca WHERE ca.event_id = ce.id)
+      AS calendarEventAttendeeCount
   FROM activities AS a
   LEFT JOIN companies AS c ON c.id = a.company_id
   LEFT JOIN contacts AS p ON p.id = a.contact_id
-  LEFT JOIN deals AS d ON d.id = a.deal_id`;
+  LEFT JOIN deals AS d ON d.id = a.deal_id
+  LEFT JOIN email_threads AS et ON et.id = a.email_thread_id
+  LEFT JOIN calendar_events AS ce ON ce.id = a.calendar_event_id`;
 
 function parseActivity(value: unknown): Activity {
   if (!value || typeof value !== "object") throw new Error("Missing activity row.");
@@ -315,6 +343,35 @@ function parseActivity(value: unknown): Activity {
         id: requiredText(String(row.dealRefId), "Activity deal id"),
         name: requiredText(String(row.dealRefName), "Activity deal name"),
       };
+  const emailThread = row.emailThreadRefId === null || row.emailThreadRefId === undefined
+    ? null
+    : {
+        id: requiredText(String(row.emailThreadRefId), "Activity email thread id"),
+        messageCount: Number(row.emailThreadMessageCount),
+        lastMessageAt: requiredText(
+          String(row.emailThreadLastMessageAt),
+          "Activity email thread timestamp",
+        ),
+      };
+  const calendarEvent = row.calendarEventRefId === null || row.calendarEventRefId === undefined
+    ? null
+    : {
+        id: requiredText(String(row.calendarEventRefId), "Activity calendar event id"),
+        startsAt: requiredText(
+          String(row.calendarEventStartsAt),
+          "Activity calendar event start",
+        ),
+        endsAt: requiredText(
+          String(row.calendarEventEndsAt),
+          "Activity calendar event end",
+        ),
+        isAllDay: row.calendarEventIsAllDay === 1 || row.calendarEventIsAllDay === true,
+        location: nullableText(row.calendarEventLocation as string | null | undefined),
+        conferenceUrl: nullableText(
+          row.calendarEventConferenceUrl as string | null | undefined,
+        ),
+        attendeeCount: Number(row.calendarEventAttendeeCount),
+      };
   return {
     id: requiredText(String(row.id), "Activity id"),
     type,
@@ -335,8 +392,8 @@ function parseActivity(value: unknown): Activity {
     company,
     contact,
     deal,
-    emailThread: null,
-    calendarEvent: null,
+    emailThread,
+    calendarEvent,
   };
 }
 

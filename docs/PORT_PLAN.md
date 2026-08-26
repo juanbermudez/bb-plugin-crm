@@ -21,7 +21,7 @@ saved/dynamic columns, unified activity, enrichment, CRM-event/webhook
 automation, leased due-task dispatch, clarification prompts, bounded BB
 project attachments, agent definition/run lifecycle, and the BB-native
 natural-language builder conversation surface are implemented. The current
-append-only storage schema is version 11. The post-baseline audit closeout also
+append-only storage schema is version 12. The post-baseline audit closeout also
 covers contextual facets and activity windows, relation-aware search and count
 sorting, suppression/auto-company behavior, an aggregate enrichment queue,
 source-shaped related-record payloads, primary-contact validation, tracking
@@ -29,10 +29,12 @@ cookies/rules/evidence/traffic visitor-days, global create routes, and favicon
 URLs. Public builder sharing and unrelated global BB thread-panel/mention
 surfaces are not claimed.
 
-Phase 7 is implemented for privacy-safe tracking plus integration health
-boundaries; provider OAuth and live Google, Microsoft, and Slack sync require
-externally supplied provider/agent-tool credentials and host authorization and
-are not bundled. Phase 8 is implemented except for general API keys and
+Phase 7 now includes privacy-safe tracking, normalized Gmail/Calendar and
+Outlook mail storage, durable provider cursors, timeline detail, Slack
+inventory/matching/channel actions, manual sync, and a bounded background
+worker. Provider OAuth/device callbacks and refresh-token writes remain
+host-owned, so operators provision access/bot/user tokens through BB secret
+settings. Phase 8 is implemented except for general API keys and
 per-user roles, which cannot be issued safely without a public BB
 current-user/RBAC authority or identity directory. Phase 9 has automated
 coverage plus packaged-browser checks across wide/compact layouts, default
@@ -268,13 +270,12 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Agent provider/model/reasoning settings and an optional live BB research-agent selector; provider credentials stay with that agent's tools.
 - Archive retention policy.
 - Connections overview with liveness and last-sync metadata.
-- Planned Google mail/calendar connection and sync state; live sync requires
-  external provider/agent-tool credentials and host authorization.
-- Planned Microsoft mail/calendar connection and sync state; live sync requires
-  external provider/agent-tool credentials and host authorization.
-- Planned Slack authorization, scopes, channels, people matching, and
-  disconnect; live sync requires external provider/agent-tool credentials and
-  host authorization.
+- Live Google Gmail/Calendar connection state, manual/background sync, bounded
+  initial backfill, incremental cursors, and normalized activity projection.
+- Live Microsoft Outlook mail connection state, manual/background sync,
+  incremental cursor, and normalized activity projection.
+- Live Slack channel/member inventory, exact-email contact matches, public or
+  user-granted private joins, channel creation, and diagnostics.
 - Source-compatible unavailable intake state and connection instructions.
 - Tracking site status, allowed domains, script, cross-domain/cookie rules,
   privacy sanitization, observed-page-view verification evidence, traffic
@@ -337,9 +338,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 ### Planned mail, calendar, and conversations
 
-This is the source-compatible target, not a bundled live-sync implementation.
-OAuth/device authorization and sync require externally supplied
-provider/agent-tool credentials and host authorization.
+Live sync is bundled; OAuth/device authorization and refresh-token persistence
+are not. They require operator-provisioned BB secret settings or a host relay.
 
 - OAuth or device authorization uses secret plugin settings and local callbacks.
 - Forward-only mailbox cursors prevent accidental historical bulk import.
@@ -347,15 +347,15 @@ provider/agent-tool credentials and host authorization.
 - Match records without inventing identities.
 - Missing integration configuration disables only that capability.
 
-### Planned Slack integration
+### Slack integration
 
-This is release-gated until external provider/agent-tool credentials and host
-authorization are available; no live Slack sync is bundled.
+The adapter, inventory, matching, and channel actions are bundled. A host-owned
+OAuth relay or operator-provisioned BB secrets supply bot/user grants.
 
-- Store installation and workspace grants in secret settings or encrypted files.
-- Sync channel and member catalogs.
-- Match CRM users and Slack members by exact email with manual correction.
-- Surface missing scopes and stale grants before agent actions run.
+- Store installation grants only in BB secret settings.
+- Sync and persist bounded channel and member catalogs.
+- Match CRM contacts and Slack members by exact email; ambiguous duplicates stay unmatched.
+- Surface provider failures through connection health and cursor diagnostics.
 
 ### Tracking
 
@@ -410,7 +410,7 @@ Tasks:
 
 - Finalize manifest, icon, license, repository metadata, and engine ranges.
 - Build append-only migration runner and initial schema; current migrations
-  advance through schema 11 without rewriting earlier versions.
+  advance through schema 12 without rewriting earlier versions.
 - Build route parser, shell, navigation rail, BB header actions, and error boundary.
 - Add shared query cache, realtime invalidation, and mutation error handling.
 - Vendor required BB table, drawer, tabs, select, menu, badge, skeleton,
@@ -516,12 +516,10 @@ Exit criteria:
 
 Tasks:
 
-- Implement Google and Microsoft authorization, forward sync, health, and
-  disconnect only when external provider/agent-tool credentials and host
-  authorization are available.
-- Implement Slack authorization, scopes, channels, member matching, and
-  delivery checks only when external provider/agent-tool credentials and host
-  authorization are available.
+- Implement bounded Google Gmail/Calendar and Microsoft Outlook mail sync,
+  normalized storage, health, cursors, manual controls, and background refresh.
+- Implement Slack scopes, inventory, exact-email member matching, join/create
+  actions, and diagnostics using operator-provisioned BB secrets.
 - Preserve the source's unavailable intake state; do not issue an unused
   credential until a real, authenticated intake contract exists.
 - Implement tracking loader, tracker config, cookie/cross-domain rules, privacy
@@ -640,8 +638,8 @@ These are deliberate limits or release gates, not stale parity omissions:
 | Boundary | Current behavior and fallback |
 | --- | --- |
 | BB current-user identity, identity directory, and plugin RBAC | CRM uses an installation-local owner. Owner facets and sorting use stable owner IDs, not display-name order. Per-user roles, authorization, and general-purpose API keys are not exposed. |
-| Google/Microsoft/Slack authorization and live sync | Connection health, metadata, and diagnostics are implemented; OAuth/device authorization and mailbox/calendar/Slack sync require externally supplied provider/agent-tool credentials and host authorization. |
-| Email/meeting relationship details | Timeline and relation summaries remain provider-gated until the corresponding mailbox/calendar sync is available. |
+| Google/Microsoft/Slack authorization | Live sync and actions use BB server-only secret settings. OAuth/device callbacks, refresh-token exchange, and programmatic secret writes require a host relay or operator rotation because the public plugin SDK is read-only for settings. |
+| Email/meeting relationship details | Implemented for normalized provider data; availability is gated only by configured provider credentials. |
 | Anonymous Website Activity attribution | Tracking stores privacy-filtered site/path/source/medium aggregates and visitor-days only. No anonymous visitor is attributed to a company/contact/deal without a verified first-party identity contract. |
 | Plugin blob storage | Portraits and favicons remain validated HTTPS source URLs; arbitrary remote bytes are not fetched or mirrored into plugin storage. |
 | Public builder sharing and unrelated global BB thread surfaces | Linked plugin-spawned threads and host `ThreadChat` are supported. Public share relay, global thread-panel/message-action slots, and mention providers require BB Connect, an external relay, or future BB APIs. |

@@ -6,12 +6,12 @@ port plan and marketplace draft and are not treated as passing evidence.
 ## Current integrated release-candidate checks
 
 Verified on 2026-08-26 against the integrated release-candidate working tree,
-with CRM schema version 11, a BB `0.39.0` managed-install compatibility floor,
+with CRM schema version 12, a BB `0.39.0` managed-install compatibility floor,
 and current plugin SDK `0.4.22` declarations. These
 checks are local working-tree evidence; they do not claim a public release,
 tag, or marketplace submission.
 
-- `npm test`: 56 test files and 291 tests passed.
+- `npm test`: 65 test files and 356 tests passed.
 - `npm run typecheck`: passed.
 - Current-BB `bb plugin types --check .`: passed; packaged BB `0.39.0`
   compatibility is verified by the managed-install/build smoke below.
@@ -47,6 +47,10 @@ databases for migrations and persistence. They cover:
   import/export, connection health, privacy-safe tracking ingestion/rollups,
   agent definitions/triggers/runs/actions/audit rows, and dispatcher thread
   lifecycle.
+- Bounded Google Gmail/Calendar, Microsoft Graph/Outlook, and Slack adapters;
+  provider orchestration, schema-12 mailbox/calendar and Slack inventory
+  persistence, cursor advancement, exact-email matching, secret non-persistence,
+  manual sync controls, inline thread/meeting details, and Slack settings views.
 - Agent dispatcher behavior for one queued claim, hidden BB-thread linking,
   reload reconciliation, stale unlinked-claim recovery with lease fencing,
   terminal lifecycle signals, best-effort cleanup, and the `stopping`-thread
@@ -73,7 +77,7 @@ databases for migrations and persistence. They cover:
   live-agent selection, strict `CRM_DUE_TASK` snapshots, completion/reopen
   tooling, global activity creation, the shell enrichment queue, the rule that
   activity authors are never inferred as assignees, and persisted schema-9 to
-  schema-11 migration upgrades.
+  schema-12 migration upgrades.
 - Workspace website/profile persistence, website-only setup, source default
   list states, null-last related ordering, open-deal count sorting, archived
   dashboard semantics, manual-only field protection, and the source-named
@@ -90,7 +94,7 @@ rather than this packaged evidence file. A public `v0.1.0` tag install remains
 approval-gated and must still be checked after the tag is created. No secret,
 one-time credential, or token value is recorded here.
 
-The final schema-11 release-candidate smoke loaded exact public implementation
+The prior schema-11 release-candidate smoke loaded exact public implementation
 and package commit `bc2c24ce72c947fd919d6ccd7c8d56ec13a803d6`; both
 `crm-agent-dispatcher` and `crm-archive-retention` background services were
 running, schema version 11 matched, SQLite integrity was `ok`, no foreign-key
@@ -205,9 +209,9 @@ The following are not claimed as passing evidence in this log:
   the expected Git-liveness failure because no approved `v0.1.0` tag exists.
 
 The public SDK limitations are part of the parity record: BB provides no
-current-user/RBAC API or plugin blob API; provider OAuth and live
-mail/calendar/Slack sync require external provider/agent-tool credentials and
-host authorization and are not bundled; the source's intake route is explicitly
+current-user/RBAC API or plugin blob API; live provider sync is bundled but
+OAuth/device callbacks and refresh-token writes require operator-provisioned BB
+secrets or a host credential relay; the source's intake route is explicitly
 unavailable; tracking ingestion requires operator-confirmed site authority; an
 external producer is required for webhook triggers; a thread reported as
 `stopping` can remain pending because BB exposes no public cancellation

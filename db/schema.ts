@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 11;
+export const CRM_SCHEMA_VERSION = 12;
 
 export const CRM_SCHEMA_MIGRATIONS: string[] = [
   `
@@ -1246,6 +1246,167 @@ export const CRM_SCHEMA_MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '11', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS email_threads (
+      id TEXT PRIMARY KEY NOT NULL,
+      root_message_id TEXT NOT NULL UNIQUE,
+      subject TEXT,
+      company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
+      contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+      first_message_at TEXT NOT NULL,
+      last_message_at TEXT NOT NULL,
+      message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS email_messages (
+      id TEXT PRIMARY KEY NOT NULL,
+      thread_id TEXT NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN ('GOOGLE', 'MICROSOFT')),
+      provider_message_id TEXT NOT NULL,
+      provider_thread_id TEXT,
+      rfc_message_id TEXT,
+      direction TEXT NOT NULL CHECK (direction IN ('INBOUND', 'OUTBOUND')),
+      from_email TEXT NOT NULL COLLATE NOCASE,
+      from_name TEXT,
+      recipients TEXT NOT NULL CHECK (json_valid(recipients)),
+      subject TEXT,
+      snippet TEXT,
+      body TEXT,
+      sent_at TEXT NOT NULL,
+      web_link TEXT,
+      mailbox_name TEXT,
+      mailbox_url TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (provider, provider_message_id)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS email_messages_rfc_message_idx
+      ON email_messages(rfc_message_id COLLATE NOCASE)
+      WHERE rfc_message_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS email_messages_thread_sent_idx
+      ON email_messages(thread_id, sent_at, id);
+    CREATE INDEX IF NOT EXISTS email_messages_connection_idx
+      ON email_messages(connection_id, sent_at, id);
+    CREATE INDEX IF NOT EXISTS email_threads_company_last_idx
+      ON email_threads(company_id, last_message_at DESC);
+    CREATE INDEX IF NOT EXISTS email_threads_contact_last_idx
+      ON email_threads(contact_id, last_message_at DESC);
+
+    CREATE TABLE IF NOT EXISTS calendar_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN ('GOOGLE', 'MICROSOFT')),
+      provider_event_id TEXT NOT NULL,
+      ical_uid TEXT NOT NULL,
+      original_start_time TEXT NOT NULL,
+      recurring_event_id TEXT,
+      title TEXT,
+      description TEXT,
+      location TEXT,
+      conference_url TEXT,
+      starts_at TEXT NOT NULL,
+      ends_at TEXT NOT NULL,
+      is_all_day INTEGER NOT NULL DEFAULT 0 CHECK (is_all_day IN (0, 1)),
+      status TEXT NOT NULL,
+      organizer_email TEXT COLLATE NOCASE,
+      company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
+      contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (provider, provider_event_id),
+      UNIQUE (ical_uid, original_start_time)
+    );
+
+    CREATE TABLE IF NOT EXISTS calendar_attendees (
+      id TEXT PRIMARY KEY NOT NULL,
+      event_id TEXT NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+      email TEXT NOT NULL COLLATE NOCASE,
+      name TEXT,
+      response_status TEXT,
+      is_organizer INTEGER NOT NULL DEFAULT 0 CHECK (is_organizer IN (0, 1)),
+      contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+      UNIQUE (event_id, email)
+    );
+
+    CREATE INDEX IF NOT EXISTS calendar_events_company_start_idx
+      ON calendar_events(company_id, starts_at DESC);
+    CREATE INDEX IF NOT EXISTS calendar_events_contact_start_idx
+      ON calendar_events(contact_id, starts_at DESC);
+    CREATE INDEX IF NOT EXISTS calendar_events_connection_idx
+      ON calendar_events(connection_id, starts_at DESC);
+    CREATE INDEX IF NOT EXISTS calendar_attendees_contact_idx
+      ON calendar_attendees(contact_id, event_id);
+
+    CREATE TABLE IF NOT EXISTS slack_channels (
+      id TEXT PRIMARY KEY NOT NULL,
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      slack_channel_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_private INTEGER NOT NULL DEFAULT 0 CHECK (is_private IN (0, 1)),
+      is_member INTEGER NOT NULL DEFAULT 0 CHECK (is_member IN (0, 1)),
+      member_count INTEGER CHECK (member_count IS NULL OR member_count >= 0),
+      updated_at TEXT NOT NULL,
+      UNIQUE (connection_id, slack_channel_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS slack_member_matches (
+      id TEXT PRIMARY KEY NOT NULL,
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      slack_user_id TEXT,
+      slack_handle TEXT,
+      slack_email TEXT COLLATE NOCASE,
+      matched INTEGER NOT NULL DEFAULT 0 CHECK (matched IN (0, 1)),
+      updated_at TEXT NOT NULL,
+      UNIQUE (connection_id, contact_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS slack_channels_connection_name_idx
+      ON slack_channels(connection_id, name);
+    CREATE INDEX IF NOT EXISTS slack_member_matches_connection_match_idx
+      ON slack_member_matches(connection_id, matched DESC, contact_id);
+
+    CREATE TRIGGER IF NOT EXISTS activities_email_thread_insert_guard
+    BEFORE INSERT ON activities
+    WHEN NEW.email_thread_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM email_threads WHERE id = NEW.email_thread_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'activity email thread does not exist');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS activities_email_thread_update_guard
+    BEFORE UPDATE OF email_thread_id ON activities
+    WHEN NEW.email_thread_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM email_threads WHERE id = NEW.email_thread_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'activity email thread does not exist');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS activities_calendar_event_insert_guard
+    BEFORE INSERT ON activities
+    WHEN NEW.calendar_event_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM calendar_events WHERE id = NEW.calendar_event_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'activity calendar event does not exist');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS activities_calendar_event_update_guard
+    BEFORE UPDATE OF calendar_event_id ON activities
+    WHEN NEW.calendar_event_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM calendar_events WHERE id = NEW.calendar_event_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'activity calendar event does not exist');
+    END;
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '12', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;
