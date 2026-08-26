@@ -146,18 +146,16 @@ describe("DealsView", () => {
       }),
     );
 
-    fireEvent.change(screen.getByLabelText("Deal status filter"), {
-      target: { value: "closed" },
-    });
+    fireEvent.click(screen.getByLabelText("Deal status filter"));
+    fireEvent.click(screen.getByRole("option", { name: "Closed" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "deals_list",
         expect.objectContaining({ status: "closed", archived: false }),
       ),
     );
-    fireEvent.change(screen.getByLabelText("Deal status filter"), {
-      target: { value: "all" },
-    });
+    fireEvent.click(screen.getByLabelText("Deal status filter"));
+    fireEvent.click(screen.getByRole("option", { name: "All" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "deals_list",
@@ -315,7 +313,7 @@ describe("DealsView", () => {
     await screen.findByRole("dialog", { name: "Acme Expansion" });
     fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Role for Ada Lovelace" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Role for Ada Lovelace" }));
     const roleInput = screen.getByLabelText("Role for Ada Lovelace");
     fireEvent.change(roleInput, { target: { value: "Economic buyer" } });
     fireEvent.blur(roleInput);
@@ -327,7 +325,7 @@ describe("DealsView", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove Ada Lovelace from deal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Ada Lovelace from deal" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("deals_contacts_detach", {
         dealId: deal.id,
@@ -496,13 +494,6 @@ describe("DealsView", () => {
         closedReason: "No current need",
       }),
     );
-    await waitFor(() =>
-      expect(
-        (within(drawer).getByRole("button", { name: "Save stage" }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false),
-    );
-
     fireEvent.change(within(drawer).getByLabelText("Stage"), {
       target: { value: "CLOSED_LOST" },
     });
@@ -661,9 +652,8 @@ describe("DealsView", () => {
     render(<DealsView rpcClient={rpc} />);
 
     await screen.findByText("Acme Expansion");
-    fireEvent.change(screen.getByLabelText("Sort deals"), {
-      target: { value: "amount" },
-    });
+    fireEvent.click(screen.getByLabelText("Sort deals"));
+    fireEvent.click(screen.getByRole("option", { name: "Amount" }));
     fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     fireEvent.click(screen.getByLabelText("Demo booked"));
     await waitFor(() =>

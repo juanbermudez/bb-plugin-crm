@@ -56,6 +56,7 @@ import {
   SearchField,
   TableShell,
   TooltipIconButton,
+  TableToolbarSelect,
   ownerOptionsFromRecords,
   type EntityOption,
   usePersistentColumnPreferences,
@@ -1959,21 +1960,19 @@ export function DealsView({
             placeholder="Search deals by name or company…"
             containerClassName="w-56 shrink-0"
           />
-          <label className="sr-only" htmlFor="deal-status-filter">Deal status</label>
-          <select
-            id="deal-status-filter"
-            className={`${SELECT_CLASS} w-28`}
-            aria-label="Deal status filter"
+          <TableToolbarSelect
+            label="Deal status filter"
             value={status}
-            onChange={(event) => {
-              setStatus(event.target.value as DealListStatus);
+            options={DEAL_STATUS_OPTIONS.map((option) => ({
+              value: option.id,
+              label: option.label,
+            }))}
+            className="w-28"
+            onValueChange={(value) => {
+              setStatus(value as DealListStatus);
               setPage(1);
             }}
-          >
-            {DEAL_STATUS_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-          </select>
+          />
           <ListControls
             compact
             compactMode="filters"

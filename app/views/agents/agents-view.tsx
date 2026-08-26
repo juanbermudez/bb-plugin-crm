@@ -24,6 +24,7 @@ import {
   RecordDrawer,
   SearchField,
   TableShell,
+  TableToolbarSelect,
   TooltipIconButton,
 } from "../../components/index.js";
 import type {
@@ -1891,17 +1892,19 @@ export function AgentsView({
             placeholder="Search agents…"
             containerClassName="w-full sm:w-56"
           />
-          <label className="sr-only" htmlFor="agent-status-filter">Filter agents by status</label>
-          <select
-            id="agent-status-filter"
-            className={`${SELECT_CLASS} w-auto min-w-36`}
-            aria-label="Filter agents by status"
+          <TableToolbarSelect
+            label="Filter agents by status"
+            className="w-36"
             value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as AgentDefinitionStatus | "ALL")}
-          >
-            <option value="ALL">All statuses</option>
-            {AGENT_STATUSES.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
-          </select>
+            onValueChange={(nextValue) => setStatusFilter(nextValue as AgentDefinitionStatus | "ALL")}
+            options={[
+              { value: "ALL", label: "All statuses" },
+              ...AGENT_STATUSES.map((status) => ({
+                value: status,
+                label: statusLabel(status),
+              })),
+            ]}
+          />
           <TooltipIconButton
             label="Include archived agents"
             icon="Archive"

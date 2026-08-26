@@ -395,12 +395,11 @@ describe("CompaniesView", () => {
 
     await screen.findByText("Acme Corporation");
     const sort = screen.getByLabelText("Sort companies");
-    expect(within(sort).getByRole("option", { name: "Contacts" })).toBeDefined();
-    expect(within(sort).getByRole("option", { name: "Open deals" })).toBeDefined();
-    expect(within(sort).getByRole("option", { name: "Archived" })).toBeDefined();
-    fireEvent.change(screen.getByLabelText("Sort companies"), {
-      target: { value: "industry" },
-    });
+    fireEvent.click(sort);
+    expect(screen.getByRole("option", { name: "Contacts" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "Open deals" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "Archived" })).toBeDefined();
+    fireEvent.click(screen.getByRole("option", { name: "Industry" }));
     expect(screen.getByRole("button", { name: "Sort descending" })).toBeDefined();
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
@@ -520,9 +519,7 @@ describe("CompaniesView", () => {
         }),
       ),
     );
-    expect((screen.getByLabelText("Sort companies") as HTMLSelectElement).value).toBe(
-      "domain",
-    );
+    expect(screen.getByLabelText("Sort companies").textContent).toContain("Domain");
     expect(screen.getByRole("button", { name: "Sort descending" })).toBeDefined();
   });
 

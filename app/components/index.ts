@@ -17,6 +17,11 @@ export {
 export { SearchField, type SearchFieldProps } from "./search-field.js";
 export { ListToolbar, type ListToolbarProps } from "./list-toolbar.js";
 export {
+  TableToolbarSelect,
+  type TableToolbarSelectOption,
+  type TableToolbarSelectProps,
+} from "./table-toolbar-select.js";
+export {
   TooltipIconButton,
   type TooltipIconButtonProps,
 } from "./tooltip-icon-button.js";

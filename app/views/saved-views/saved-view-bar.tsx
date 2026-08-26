@@ -20,6 +20,7 @@ import type {
   SavedViewUpdateInput,
 } from "../../../contracts/core.js";
 import { AlertDialog, RecordDrawer } from "../../components/index.js";
+import { TableToolbarSelect } from "../../components/table-toolbar-select.js";
 import { TooltipIconButton } from "../../components/tooltip-icon-button.js";
 import { cn } from "../../../lib/utils.js";
 import { useSavedViewsRpc, type SavedViewsRpcClient } from "./rpc.js";
@@ -310,31 +311,21 @@ export function SavedViewBar({
         className={cn("relative flex shrink-0 items-center gap-1", className)}
         data-component="saved-view-bar"
       >
-        <div className="relative w-36 min-w-36">
-          <Icon
-            name="ListView"
-            aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <select
-            id={`${barId}-chooser`}
-            className={cn(SELECT_CLASS, "pl-9")}
-            value={selectedViewId ?? ""}
-            disabled={loading}
-            aria-label="Saved views"
-            onChange={(event) => chooseView(event.target.value)}
-          >
-            <option value="">All records</option>
-            {views.map((view) => {
-              const isDefault = view.id === defaultViewId || view.isDefault;
-              return (
-                <option key={view.id} value={view.id}>
-                  {view.name}{isDefault ? " · Default" : ""}
-                </option>
-              );
-            })}
-          </select>
-        </div>
+        <TableToolbarSelect
+          label="Saved views"
+          value={selectedViewId ?? ""}
+          disabled={loading}
+          icon="ListView"
+          className="w-36 min-w-36"
+          options={[
+            { value: "", label: "All records" },
+            ...views.map((view) => ({
+              value: view.id,
+              label: `${view.name}${view.id === defaultViewId || view.isDefault ? " · Default" : ""}`,
+            })),
+          ]}
+          onValueChange={chooseView}
+        />
         {selectedView ? (
           <TooltipIconButton
             label="Manage saved view"

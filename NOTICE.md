@@ -11,3 +11,7 @@ BB plugin APIs, UI patterns, and scaffolded components derive from
 
 The BB source baseline is commit
 `2cfd2b5df57daeed51ea544b54a8869bbec1c478` from the `main` branch.
+
+The locally ejected animated Select primitive derives from the free
+[beUI Select](https://beui.dev/components/motion/select) registry source and is
+adapted to use BB's existing icon and theme utilities.

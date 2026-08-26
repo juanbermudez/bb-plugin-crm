@@ -16,6 +16,7 @@ import {
 } from "../../../components/ui/popover.js";
 import type { FieldDefinition, SortDirection } from "../../../contracts/core.js";
 import { cn } from "../../../lib/utils.js";
+import { TableToolbarSelect } from "../../components/table-toolbar-select.js";
 import { TooltipIconButton } from "../../components/tooltip-icon-button.js";
 
 export interface ListSortOption {
@@ -270,27 +271,16 @@ export function ListControls({
             </PopoverContent>
           </Popover>
         ) : null}
-        {showSort ? <div className="relative">
-          <Icon
-            name="Sort"
-            aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <label className="sr-only" htmlFor={`${filtersId}-sort`}>Sort {entityLabel}</label>
-          <select
-            id={`${filtersId}-sort`}
-            className={cn(SELECT_CLASS, "w-36 pl-9")}
-            aria-label={`Sort ${entityLabel}`}
+        {showSort ? (
+          <TableToolbarSelect
+            label={`Sort ${entityLabel}`}
             value={sort}
-            onChange={(event) => onSortChange(event.target.value)}
-          >
-            {sortOptions.map((option) => (
-              <option key={option.value || "default"} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div> : null}
+            options={sortOptions}
+            onValueChange={onSortChange}
+            icon="Sort"
+            className="w-36"
+          />
+        ) : null}
         {showSort ? <TooltipIconButton
           label={dir === "desc" ? "Sort descending" : "Sort ascending"}
           icon={dir === "desc" ? "ArrowDown" : "ArrowUp"}

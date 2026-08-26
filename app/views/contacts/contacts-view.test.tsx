@@ -532,9 +532,8 @@ describe("ContactsView", () => {
     render(<ContactsView rpcClient={rpc} />);
 
     await screen.findByText("Ada Lovelace");
-    fireEvent.change(screen.getByLabelText("Sort contacts"), {
-      target: { value: "title" },
-    });
+    fireEvent.click(screen.getByLabelText("Sort contacts"));
+    fireEvent.click(screen.getByRole("option", { name: "Title" }));
     fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     fireEvent.click(screen.getByLabelText("VP Engineering"));
     await waitFor(() =>
