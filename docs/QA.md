@@ -118,6 +118,14 @@ Observed in the live CRM panel:
   panel registrations, removal of the plugin-owned navigation/header, compact
   single-row company/contact/deal controls, CRM settings registration in BB
   Settings, and an Agents builder composer that is hidden until its modal opens.
+- A fresh isolated BB path install of commit `723041f` was inspected in the
+  in-app browser at 1280×720. CRM, Companies, Contacts, Deals, and Agents
+  appeared as main-sidebar rows; Contacts/Companies/Deals rendered one compact
+  table toolbar; BB's right-panel toggle followed the title-bar New action; the
+  Agents composer was absent until `Build with BB` opened its modal; and
+  `/settings/plugins/crm` rendered Workspace, Currency, Custom fields,
+  Connections, and Tracking under BB Settings. Existing user CRM data was not
+  used or mutated for this smoke.
 - Dashboard loaded in both `Me` and `Everyone` scope and refreshed the summary
   for the selected scope.
 - A saved company view was created, selected, marked as the default, and
