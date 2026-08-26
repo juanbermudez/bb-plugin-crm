@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useBbNavigate,
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
+
 import { Button } from "../components/ui/button.js";
-import { Icon, type IconName } from "../components/ui/icon.js";
+import { Icon } from "../components/ui/icon.js";
 import {
   EnrichmentQueue,
   GlobalSearch,
@@ -12,34 +13,21 @@ import {
   readWorkspaceChecklistState,
   type GlobalSearchResult,
 } from "./components/index.js";
+import { GlobalActivityCreate } from "./components/global-activity-create.js";
 import type { EnrichmentQueueSubject } from "../contracts/enrichment-queue.js";
 import type { DealStage } from "../contracts/core.js";
 import {
-  crmRouteToSubPath,
-  parseCrmRoute,
+  crmRouteToPanelTarget,
+  parseCrmPanelRoute,
   type CrmCreateAction,
-  type CrmRouteKind,
+  type CrmPanelKind,
+  type CrmRoute,
 } from "./routes.js";
 import { CompaniesView } from "./views/companies/index.js";
 import { ContactsView } from "./views/contacts/index.js";
 import { DealsView } from "./views/deals/index.js";
 import { DashboardView } from "./views/dashboard/index.js";
-import { SettingsView, type SettingsSection } from "./views/settings/index.js";
 import { AgentsView } from "./views/agents/index.js";
-import { GlobalActivityCreate } from "./components/global-activity-create.js";
-
-const NAV_ITEMS: ReadonlyArray<{
-  kind: CrmRouteKind;
-  label: string;
-  icon: IconName;
-}> = [
-  { kind: "dashboard", label: "Dashboard", icon: "ChartColumn" },
-  { kind: "companies", label: "Companies", icon: "Layers" },
-  { kind: "contacts", label: "Contacts", icon: "UserRound" },
-  { kind: "deals", label: "Deals", icon: "Target" },
-  { kind: "agents", label: "Agents", icon: "Brain" },
-  { kind: "settings", label: "Settings", icon: "Settings" },
-];
 
 const CREATE_ITEMS: ReadonlyArray<{ action: CrmCreateAction; label: string }> = [
   { action: "company", label: "New company" },
@@ -50,44 +38,75 @@ const CREATE_ITEMS: ReadonlyArray<{ action: CrmCreateAction; label: string }> = 
   { action: "agent", label: "New agent" },
 ];
 
-function PendingView({ kind }: { kind: Exclude<CrmRouteKind, "dashboard"> }) {
-  const title = NAV_ITEMS.find((item) => item.kind === kind)?.label ?? kind;
-  return (
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col justify-center gap-2 p-6 text-center">
-      <h1 className="text-lg font-semibold">{title}</h1>
-      <p className="text-sm text-muted-foreground">
-        This feature slice is mapped in the port plan and is next in the parity build.
-      </p>
-    </div>
-  );
+export interface CrmPanelProps extends PluginNavPanelProps {
+  panelKind?: CrmPanelKind;
 }
 
-export function CrmAppShell({ subPath }: PluginNavPanelProps) {
-  const route = parseCrmRoute(subPath);
+function useCrmRouteNavigation() {
   const navigate = useBbNavigate();
+  return useCallback((route: CrmRoute) => {
+    const target = crmRouteToPanelTarget(route);
+    navigate.toPluginPanel(target.path, { subPath: target.subPath });
+  }, [navigate]);
+}
+
+function createRoute(action: CrmCreateAction): CrmRoute {
+  const kind = action === "company"
+    ? "companies"
+    : action === "contact"
+      ? "contacts"
+      : action === "deal"
+        ? "deals"
+        : action === "agent"
+          ? "agents"
+          : "dashboard";
+  return { kind, recordId: null, create: action };
+}
+
+function routeForSearchResult(result: GlobalSearchResult): CrmRoute {
+  return {
+    kind: result.kind === "company"
+      ? "companies"
+      : result.kind === "contact"
+        ? "contacts"
+        : "deals",
+    recordId: result.id,
+  };
+}
+
+function routeForQueueSubject(subject: EnrichmentQueueSubject): CrmRoute | null {
+  if (subject.kind === "contact") return { kind: "contacts", recordId: subject.id };
+  if (subject.kind === "company") return { kind: "companies", recordId: subject.id };
+  if (subject.kind === "deal") return { kind: "deals", recordId: subject.id };
+  if (subject.kind === "agent") return { kind: "agents", recordId: subject.id };
+  if (subject.related === null) return null;
+  return {
+    kind: subject.related.kind === "contact"
+      ? "contacts"
+      : subject.related.kind === "company"
+        ? "companies"
+        : "deals",
+    recordId: subject.related.id,
+  };
+}
+
+/** Compact actions mounted in BB's host-owned title bar. */
+export function CrmHeaderContent({ subPath: _subPath }: CrmPanelProps) {
+  const goRoute = useCrmRouteNavigation();
   const [createOpen, setCreateOpen] = useState(false);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const createMenuRef = useRef<HTMLDivElement>(null);
-  const [checklistOpen, setChecklistOpen] = useState(
-    () => !readWorkspaceChecklistState().dismissed,
-  );
-  const focusCreateButton = useMemo(
-    () => () => {
-      const button = createButtonRef.current;
-      if (
-        button?.isConnected &&
-        button.closest('[aria-hidden="true"], [inert]') === null
-      ) {
-        button.focus({ preventScroll: true });
-      }
-    },
-    [],
-  );
+
+  const focusCreateButton = useCallback(() => {
+    const button = createButtonRef.current;
+    if (button?.isConnected && button.closest('[aria-hidden="true"], [inert]') === null) {
+      button.focus({ preventScroll: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (!createOpen) return;
-    const firstItem = createMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]');
-    firstItem?.focus();
+    createMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     const handleMouseDown = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -106,8 +125,10 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         setCreateOpen(false);
         return;
       }
-      if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
-      const items = Array.from(createMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = Array.from(
+        createMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
+      );
       if (items.length === 0) return;
       event.preventDefault();
       const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -125,235 +146,120 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [createOpen, focusCreateButton]);
-  const go = useMemo(
-    () => (kind: CrmRouteKind) => {
-      navigate.toPluginPanel("crm", {
-        subPath: crmRouteToSubPath({ kind, recordId: null }),
-      });
-    },
-    [navigate],
-  );
-  const clearCreateRoute = useMemo(
-    () => () => {
-      // Focus before routing: the menu item that launched a global create
-      // action is about to unmount, while the persistent header trigger stays
-      // available as the controlled drawer's stable return target.
-      focusCreateButton();
-      navigate.toPluginPanel("crm", {
-        subPath: crmRouteToSubPath({
-          kind: route.kind,
-          recordId: route.recordId,
-          ...(route.tab === undefined ? {} : { tab: route.tab }),
-          ...(route.stage === undefined ? {} : { stage: route.stage }),
-        }),
-      });
-      queueMicrotask(focusCreateButton);
-    },
-    [focusCreateButton, navigate, route.kind, route.recordId, route.stage, route.tab],
-  );
-  const openCreate = useMemo(
-    () => (action: CrmCreateAction) => {
-      focusCreateButton();
-      const kind =
-        action === "company"
-          ? "companies"
-          : action === "contact"
-            ? "contacts"
-            : action === "deal"
-              ? "deals"
-              : action === "agent"
-                ? "agents"
-                : "dashboard";
-      navigate.toPluginPanel("crm", {
-        subPath: crmRouteToSubPath({ kind, recordId: null, create: action }),
-      });
-    },
-    [focusCreateButton, navigate],
-  );
-
-  const openSearchResult = (result: GlobalSearchResult) => {
-    navigate.toPluginPanel("crm", {
-      subPath: crmRouteToSubPath({
-        kind:
-          result.kind === "company"
-            ? "companies"
-            : result.kind === "contact"
-              ? "contacts"
-              : "deals",
-        recordId: result.id,
-      }),
-    });
-  };
-
-  const openDashboardRecord = useMemo(
-    () => (kind: "company" | "contact" | "deal", id: string) => {
-      navigate.toPluginPanel("crm", {
-        subPath: crmRouteToSubPath({
-          kind: kind === "company" ? "companies" : kind === "contact" ? "contacts" : "deals",
-          recordId: id,
-        }),
-      });
-    },
-    [navigate],
-  );
-
-  const openDashboardDeals = useMemo(
-    () => (stage?: DealStage) => {
-      navigate.toPluginPanel("crm", {
-        subPath: crmRouteToSubPath({
-          kind: "deals",
-          recordId: null,
-          ...(stage === undefined ? {} : { stage }),
-        }),
-      });
-    },
-    [navigate],
-  );
-
-  const openDashboardCurrencySettings = useMemo(
-    () => () => {
-      navigate.toPluginPanel("crm", {
-        subPath: crmRouteToSubPath({ kind: "settings", recordId: "currency" }),
-      });
-    },
-    [navigate],
-  );
-
-  const openQueueSubject = useMemo(
-    () => (subject: EnrichmentQueueSubject) => {
-      const target =
-        subject.kind === "contact"
-          ? { kind: "contacts" as const, recordId: subject.id }
-          : subject.kind === "company"
-            ? { kind: "companies" as const, recordId: subject.id }
-            : subject.kind === "deal"
-              ? { kind: "deals" as const, recordId: subject.id }
-            : subject.kind === "agent"
-              ? { kind: "agents" as const, recordId: subject.id }
-              : subject.related === null
-                ? null
-                : {
-                    kind:
-                      subject.related.kind === "contact"
-                        ? ("contacts" as const)
-                        : subject.related.kind === "company"
-                          ? ("companies" as const)
-                          : ("deals" as const),
-                    recordId: subject.related.id,
-                  };
-      if (target === null) return;
-      navigate.toPluginPanel("crm", { subPath: crmRouteToSubPath(target) });
-    },
-    [navigate],
-  );
-
-  const dismissChecklist = () => {
-    setChecklistOpen(false);
-  };
-
-  const routeLabel = NAV_ITEMS.find((item) => item.kind === route.kind)?.label ?? "CRM";
-
-  const navigation = NAV_ITEMS.map((item) => (
-    <Button
-      key={item.kind}
-      variant="ghost"
-      size="icon"
-      aria-label={item.label}
-      aria-pressed={route.kind === item.kind}
-      onClick={() => go(item.kind)}
-    >
-      <Icon name={item.icon} aria-hidden="true" />
-    </Button>
-  ));
 
   return (
-    <div className="@container flex h-full min-h-0 flex-col bg-background text-foreground @md:flex-row">
-      <nav className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5 @md:w-14 @md:flex-col @md:border-r @md:border-b-0 @md:px-0 @md:py-3">
-        {navigation}
-      </nav>
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5 sm:px-5">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              CRM
-            </span>
-            <span className="text-border" aria-hidden="true">/</span>
-            <span className="truncate text-sm font-medium">{routeLabel}</span>
-          </div>
-          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:flex-none">
-            <GlobalSearch onOpen={openSearchResult} className="order-3 w-full sm:order-none sm:w-72" />
-            <EnrichmentQueue onOpen={openQueueSubject} />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-expanded={checklistOpen}
-              onClick={() => setChecklistOpen((open) => !open)}
-            >
-              <Icon name="Check" aria-hidden="true" />
-              Checklist
-            </Button>
-            <div className="relative">
+    <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+      <GlobalSearch
+        onOpen={(result) => goRoute(routeForSearchResult(result))}
+        className="hidden w-64 lg:block"
+      />
+      <EnrichmentQueue
+        onOpen={(subject) => {
+          const route = routeForQueueSubject(subject);
+          if (route !== null) goRoute(route);
+        }}
+      />
+      <div className="relative">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-expanded={createOpen}
+          aria-haspopup="menu"
+          aria-controls="crm-create-menu"
+          ref={createButtonRef}
+          onClick={() => setCreateOpen((open) => !open)}
+        >
+          <Icon name="Plus" aria-hidden="true" />
+          New
+        </Button>
+        {createOpen ? (
+          <div
+            id="crm-create-menu"
+            ref={createMenuRef}
+            className="absolute right-0 z-40 mt-2 w-44 rounded-lg border border-border bg-background p-1 shadow-lg"
+            role="menu"
+            aria-label="Create CRM record"
+          >
+            {CREATE_ITEMS.map(({ action, label }) => (
               <Button
+                key={action}
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                aria-expanded={createOpen}
-                aria-haspopup="menu"
-                aria-controls="crm-create-menu"
-                ref={createButtonRef}
-                onClick={() => setCreateOpen((open) => !open)}
+                className="w-full justify-start"
+                role="menuitem"
+                onClick={() => {
+                  setCreateOpen(false);
+                  goRoute(createRoute(action));
+                }}
               >
-                <Icon name="Plus" aria-hidden="true" />
-                New
+                {label}
               </Button>
-              {createOpen ? (
-                <div
-                  id="crm-create-menu"
-                  ref={createMenuRef}
-                  className="absolute right-0 z-40 mt-2 w-44 rounded-lg border border-border bg-background p-1 shadow-lg"
-                  role="menu"
-                  aria-label="Create CRM record"
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setCreateOpen(false);
-                      createButtonRef.current?.focus();
-                    }
-                  }}
-                >
-                  {CREATE_ITEMS.map(({ action, label }) => {
-                    return (
-                      <Button
-                        key={action}
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                        role="menuitem"
-                        onClick={() => {
-                          setCreateOpen(false);
-                          openCreate(action);
-                        }}
-                      >
-                        {label}
-                      </Button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
+            ))}
           </div>
-        </header>
-        {checklistOpen ? (
-          <WorkspaceChecklist onNavigate={go} onDismiss={dismissChecklist} />
         ) : null}
-        <div className="min-h-0 min-w-0 flex-1">
+      </div>
+    </div>
+  );
+}
+
+function MovedSettingsNotice() {
+  return (
+    <div className="mx-auto flex min-h-80 w-full max-w-xl flex-col items-center justify-center gap-3 p-6 text-center">
+      <Icon name="Settings" aria-hidden="true" className="size-6 text-muted-foreground" />
+      <h1 className="text-lg font-semibold">CRM settings moved</h1>
+      <p className="text-sm text-muted-foreground">
+        Configure the CRM from BB Settings under Plugins → CRM.
+      </p>
+      <Button asChild variant="outline" size="sm">
+        <a href="/settings/plugins/crm">Open BB Settings</a>
+      </Button>
+    </div>
+  );
+}
+
+export function CrmAppShell({ subPath, panelKind = "dashboard" }: CrmPanelProps) {
+  const route = parseCrmPanelRoute(panelKind, subPath);
+  const goRoute = useCrmRouteNavigation();
+  const [checklistOpen, setChecklistOpen] = useState(
+    () => route.kind === "dashboard" && !readWorkspaceChecklistState().dismissed,
+  );
+
+  const clearCreateRoute = useCallback(() => {
+    goRoute({
+      kind: route.kind,
+      recordId: route.recordId,
+      ...(route.tab === undefined ? {} : { tab: route.tab }),
+      ...(route.stage === undefined ? {} : { stage: route.stage }),
+    });
+  }, [goRoute, route.kind, route.recordId, route.stage, route.tab]);
+
+  const openDashboardRecord = useCallback((kind: "company" | "contact" | "deal", id: string) => {
+    goRoute({
+      kind: kind === "company" ? "companies" : kind === "contact" ? "contacts" : "deals",
+      recordId: id,
+    });
+  }, [goRoute]);
+
+  const openDashboardDeals = useCallback((stage?: DealStage) => {
+    goRoute({ kind: "deals", recordId: null, ...(stage === undefined ? {} : { stage }) });
+  }, [goRoute]);
+
+  return (
+    <div className="@container flex h-full min-h-0 flex-col bg-background text-foreground">
+      {route.kind === "dashboard" && checklistOpen ? (
+        <WorkspaceChecklist
+          onNavigate={(kind) => goRoute({ kind, recordId: null })}
+          onDismiss={() => setChecklistOpen(false)}
+        />
+      ) : null}
+      <main className="min-h-0 min-w-0 flex-1 overflow-auto">
         {route.kind === "dashboard" ? (
           <DashboardView
             onOpenRecord={openDashboardRecord}
             onOpenDeals={openDashboardDeals}
-            onOpenCurrencySettings={openDashboardCurrencySettings}
+            onOpenCurrencySettings={() => window.location.assign("/settings/plugins/crm")}
           />
         ) : route.kind === "companies" ? (
           <CompaniesView
@@ -361,20 +267,8 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             initialCreate={route.create === "company"}
             initialTab={route.tab}
             onCreateChange={route.create === "company" ? clearCreateRoute : undefined}
-            onRecordIdChange={(recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({ kind: "companies", recordId }),
-              });
-            }}
-            onTabChange={(tab, recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({
-                  kind: "companies",
-                  recordId,
-                  tab,
-                }),
-              });
-            }}
+            onRecordIdChange={(recordId) => goRoute({ kind: "companies", recordId })}
+            onTabChange={(tab, recordId) => goRoute({ kind: "companies", recordId, tab })}
           />
         ) : route.kind === "contacts" ? (
           <ContactsView
@@ -382,28 +276,12 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             initialCreate={route.create === "contact"}
             initialTab={route.tab}
             onCreateChange={route.create === "contact" ? clearCreateRoute : undefined}
-            onOpenRelatedRecord={(kind, id) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({
-                  kind: kind === "deal" ? "deals" : "companies",
-                  recordId: id,
-                }),
-              });
-            }}
-            onRecordIdChange={(recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({ kind: "contacts", recordId }),
-              });
-            }}
-            onTabChange={(tab, recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({
-                  kind: "contacts",
-                  recordId,
-                  tab,
-                }),
-              });
-            }}
+            onOpenRelatedRecord={(kind, id) => goRoute({
+              kind: kind === "deal" ? "deals" : "companies",
+              recordId: id,
+            })}
+            onRecordIdChange={(recordId) => goRoute({ kind: "contacts", recordId })}
+            onTabChange={(tab, recordId) => goRoute({ kind: "contacts", recordId, tab })}
           />
         ) : route.kind === "deals" ? (
           <DealsView
@@ -412,49 +290,12 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             initialCreate={route.create === "deal"}
             initialTab={route.tab}
             onCreateChange={route.create === "deal" ? clearCreateRoute : undefined}
-            onOpenRelatedRecord={(kind, id) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({
-                  kind: kind === "contact" ? "contacts" : "companies",
-                  recordId: id,
-                }),
-              });
-            }}
-            onRecordIdChange={(recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({ kind: "deals", recordId }),
-              });
-            }}
-            onTabChange={(tab, recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({
-                  kind: "deals",
-                  recordId,
-                  tab,
-                }),
-              });
-            }}
-          />
-        ) : route.kind === "settings" ? (
-          <SettingsView
-            initialSection={
-              route.recordId === "workspace"
-                ? "workspace"
-                : route.recordId === "custom-fields"
-                ? "custom-fields"
-                : route.recordId === "connections"
-                  ? "connections"
-                  : route.recordId === "tracking"
-                    ? "tracking"
-                    : route.recordId === "currency"
-                      ? "currency"
-                    : "workspace"
-            }
-            onSectionChange={(section: SettingsSection) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({ kind: "settings", recordId: section }),
-              });
-            }}
+            onOpenRelatedRecord={(kind, id) => goRoute({
+              kind: kind === "contact" ? "contacts" : "companies",
+              recordId: id,
+            })}
+            onRecordIdChange={(recordId) => goRoute({ kind: "deals", recordId })}
+            onTabChange={(tab, recordId) => goRoute({ kind: "deals", recordId, tab })}
           />
         ) : route.kind === "agents" ? (
           <AgentsView
@@ -462,32 +303,15 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             initialCreate={route.create === "agent"}
             initialTab={route.tab}
             onCreateChange={route.create === "agent" ? clearCreateRoute : undefined}
-            onRecordIdChange={(recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({ kind: "agents", recordId }),
-              });
-            }}
-            onTabChange={(tab, recordId) => {
-              navigate.toPluginPanel("crm", {
-                subPath: crmRouteToSubPath({
-                  kind: "agents",
-                  recordId,
-                  tab,
-                }),
-              });
-            }}
+            onRecordIdChange={(recordId) => goRoute({ kind: "agents", recordId })}
+            onTabChange={(tab, recordId) => goRoute({ kind: "agents", recordId, tab })}
           />
         ) : (
-          <PendingView kind={route.kind} />
+          <MovedSettingsNotice />
         )}
-        </div>
       </main>
       {route.create === "note" || route.create === "task" ? (
-        <GlobalActivityCreate
-          type={route.create}
-          onClose={clearCreateRoute}
-          returnFocusRef={createButtonRef}
-        />
+        <GlobalActivityCreate type={route.create} onClose={clearCreateRoute} />
       ) : null}
     </div>
   );

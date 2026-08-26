@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { crmRouteToSubPath, parseCrmRoute } from "./routes.js";
+import {
+  crmRouteToPanelTarget,
+  crmRouteToSubPath,
+  parseCrmPanelRoute,
+  parseCrmRoute,
+} from "./routes.js";
 
 describe("CRM panel routes", () => {
   it("defaults unknown and empty paths to the dashboard", () => {
@@ -68,6 +73,37 @@ describe("CRM panel routes", () => {
     expect(parseCrmRoute("dashboard/create/unknown")).toEqual({
       kind: "dashboard",
       recordId: null,
+    });
+  });
+
+  it("parses first-class BB panel paths while preserving legacy CRM links", () => {
+    expect(parseCrmPanelRoute("contacts", "")).toEqual({
+      kind: "contacts",
+      recordId: null,
+    });
+    expect(parseCrmPanelRoute("companies", "cmp%2Facme/activity")).toEqual({
+      kind: "companies",
+      recordId: "cmp/acme",
+      tab: "activity",
+    });
+    expect(parseCrmPanelRoute("dashboard", "deals/deal-1")).toEqual({
+      kind: "deals",
+      recordId: "deal-1",
+    });
+  });
+
+  it("maps logical routes to the panel that owns them", () => {
+    expect(crmRouteToPanelTarget({ kind: "companies", recordId: "cmp/acme" })).toEqual({
+      path: "companies",
+      subPath: "cmp%2Facme",
+    });
+    expect(crmRouteToPanelTarget({ kind: "deals", recordId: null, stage: "DEMO_BOOKED" })).toEqual({
+      path: "deals",
+      subPath: "?stage=DEMO_BOOKED",
+    });
+    expect(crmRouteToPanelTarget({ kind: "dashboard", recordId: null, create: "task" })).toEqual({
+      path: "crm",
+      subPath: "create/task",
     });
   });
 });

@@ -14,9 +14,16 @@ describe("CRM nav panel", () => {
 
   it("renders the operational dashboard and records BB navigation", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.navPanels).toHaveLength(1);
+    expect(app.navPanels).toHaveLength(5);
+    expect(app.navPanels.map(({ title, path }) => ({ title, path }))).toEqual([
+      { title: "CRM", path: "crm" },
+      { title: "Companies", path: "companies" },
+      { title: "Contacts", path: "contacts" },
+      { title: "Deals", path: "deals" },
+      { title: "Agents", path: "agents" },
+    ]);
 
-    const panel = app.navPanels[0]!;
+    const panel = app.navPanels.find(({ path }) => path === "crm")!;
     expect(panel).toMatchObject({
       id: "crm",
       title: "CRM",
@@ -57,6 +64,25 @@ describe("CRM nav panel", () => {
             overdueTasks: [],
             recentActivity: [],
           }),
+        },
+      },
+    );
+
+    await slot.findByText("Open pipeline");
+    expect(slot.getByText("Your dashboard is clear")).toBeDefined();
+    expect(slot.getByText(/0 open deals · EUR/)).toBeDefined();
+    expect(slot.queryByRole("navigation")).toBeNull();
+    expect(slot.queryByText("CRM", { selector: "header *" })).toBeNull();
+    expect(slot.inspection.rpcCalls).toContainEqual({
+      method: "dashboard_summary",
+      input: { scope: "me" },
+    });
+
+    const headerSlot = renderSlot(
+      { ...panel, component: panel.headerContent! },
+      { subPath: "" },
+      {
+        rpc: {
           enrichment_queue: () => ({
             rows: [{
               id: "run_shell_queue",
@@ -83,32 +109,17 @@ describe("CRM nav panel", () => {
         },
       },
     );
-
-    await slot.findByText("Open pipeline");
-    expect(slot.getByText("Your dashboard is clear")).toBeDefined();
-    expect(slot.getByText(/0 open deals · EUR/)).toBeDefined();
-    expect(slot.getByRole("button", { name: /Enrichment queue/ })).toBeDefined();
-    fireEvent.click(slot.getByRole("button", { name: /Enrichment queue/ }));
-    fireEvent.click(await slot.findByRole("button", { name: "Open company Shell Queue Systems" }));
-    expect(slot.inspection.navigateCalls).toContainEqual({
+    expect(headerSlot.getByRole("button", { name: /Enrichment queue/ })).toBeDefined();
+    fireEvent.click(headerSlot.getByRole("button", { name: /Enrichment queue/ }));
+    fireEvent.click(await headerSlot.findByRole("button", { name: "Open company Shell Queue Systems" }));
+    expect(headerSlot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
-      path: "crm",
-      options: { subPath: "companies/company_shell_queue" },
-    });
-    expect(slot.inspection.rpcCalls).toContainEqual({
-      method: "dashboard_summary",
-      input: { scope: "me" },
+      path: "companies",
+      options: { subPath: "company_shell_queue" },
     });
 
-    fireEvent.click(slot.getByRole("button", { name: "Companies" }));
-    expect(slot.inspection.navigateCalls).toContainEqual({
-      method: "toPluginPanel",
-      path: "crm",
-      options: { subPath: "companies" },
-    });
-
-    fireEvent.click(slot.getByRole("button", { name: "New" }));
-    const createMenu = slot.getByRole("menu", { name: "Create CRM record" });
+    fireEvent.click(headerSlot.getByRole("button", { name: "New" }));
+    const createMenu = headerSlot.getByRole("menu", { name: "Create CRM record" });
     const menuItems = within(createMenu).getAllByRole("menuitem");
     expect(menuItems).toHaveLength(6);
     expect(document.activeElement).toBe(menuItems[0]);
@@ -117,29 +128,30 @@ describe("CRM nav panel", () => {
     expect(within(createMenu).getByRole("menuitem", { name: "New note" })).toBeDefined();
     expect(within(createMenu).getByRole("menuitem", { name: "New task" })).toBeDefined();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(slot.queryByRole("menu", { name: "Create CRM record" })).toBeNull();
-    expect(document.activeElement).toBe(slot.getByRole("button", { name: "New" }));
-    fireEvent.click(slot.getByRole("button", { name: "New" }));
+    expect(headerSlot.queryByRole("menu", { name: "Create CRM record" })).toBeNull();
+    expect(document.activeElement).toBe(headerSlot.getByRole("button", { name: "New" }));
+    fireEvent.click(headerSlot.getByRole("button", { name: "New" }));
     fireEvent.mouseDown(document.body);
-    expect(slot.queryByRole("menu", { name: "Create CRM record" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "New" }));
-    const reopenedMenu = slot.getByRole("menu", { name: "Create CRM record" });
+    expect(headerSlot.queryByRole("menu", { name: "Create CRM record" })).toBeNull();
+    fireEvent.click(headerSlot.getByRole("button", { name: "New" }));
+    const reopenedMenu = headerSlot.getByRole("menu", { name: "Create CRM record" });
     fireEvent.click(within(reopenedMenu).getByRole("menuitem", { name: "New company" }));
-    expect(slot.inspection.navigateCalls).toContainEqual({
+    expect(headerSlot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
-      path: "crm",
-      options: { subPath: "companies/create/company" },
+      path: "companies",
+      options: { subPath: "create/company" },
     });
 
+    headerSlot.lifecycle.unmount();
     slot.lifecycle.unmount();
   });
 
   it("renders the Agents workspace from the BB route", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const panel = app.navPanels[0]!;
+    const panel = app.navPanels.find(({ path }) => path === "agents")!;
     const slot = renderSlot(
       panel,
-      { subPath: "agents" },
+      { subPath: "" },
       {
         rpc: {
           agents_list: () => [
@@ -184,7 +196,7 @@ describe("CRM nav panel", () => {
 
   it("routes company drawer tabs with the opened record id", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const panel = app.navPanels[0]!;
+    const panel = app.navPanels.find(({ path }) => path === "companies")!;
     const company = {
       id: "cmp_acme",
       name: "Acme Corporation",
@@ -199,7 +211,7 @@ describe("CRM nav panel", () => {
     };
     const slot = renderSlot(
       panel,
-      { subPath: "companies/cmp_acme" },
+      { subPath: "cmp_acme" },
       {
         rpc: {
           companies_list: () => ({ rows: [company], total: 1, facetCounts: {} }),
@@ -215,68 +227,57 @@ describe("CRM nav panel", () => {
     fireEvent.click(slot.getByRole("tab", { name: "Contacts" }));
     expect(slot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
-      path: "crm",
-      options: { subPath: "companies/cmp_acme/contacts" },
+      path: "companies",
+      options: { subPath: "cmp_acme/contacts" },
     });
     slot.lifecycle.unmount();
   });
 
-  it("deep-links settings connections and tracking sections", async () => {
+  it("renders CRM configuration in BB Settings", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const panel = app.navPanels[0]!;
-    const connectionsSlot = renderSlot(
-      panel,
-      { subPath: "settings/connections" },
+    expect(app.settingsSections).toHaveLength(1);
+    const settings = app.settingsSections[0]!;
+    expect(settings).toMatchObject({
+      id: "crm-settings",
+      title: "CRM",
+    });
+    const settingsSlot = renderSlot(
+      settings,
+      {},
       {
         rpc: {
           connections_list: () => [],
-        },
-      },
-    );
-    await connectionsSlot.findByRole("heading", { name: "Connections" });
-    expect(connectionsSlot.getByText(/OAuth authorization is not bundled/)).toBeDefined();
-    expect(connectionsSlot.inspection.rpcCalls).toContainEqual({
-      method: "connections_list",
-      input: {},
-    });
-    connectionsSlot.lifecycle.unmount();
-
-    const trackingSlot = renderSlot(
-      panel,
-      { subPath: "settings/tracking" },
-      {
-        rpc: {
           tracking_sites_list: () => [],
           tracking_tokens_list: () => [],
           tracking_aggregates_list: () => [],
-        },
-      },
-    );
-    await trackingSlot.findByRole("heading", { name: "Tracking" });
-    expect(trackingSlot.getByText("No tracking sites configured")).toBeDefined();
-    expect(trackingSlot.inspection.rpcCalls).toContainEqual({
-      method: "tracking_sites_list",
-      input: { limit: 100, offset: 0 },
-    });
-    trackingSlot.lifecycle.unmount();
-
-    const currencySlot = renderSlot(
-      panel,
-      { subPath: "settings/currency" },
-      {
-        rpc: {
           status: () => ({ reportingCurrency: "USD" }),
           currency_rates_listEffective: () => [],
           currency_rates_listAudit: () => [],
         },
       },
     );
-    const currencyTab = currencySlot.getByRole("tab", { name: "Currency" });
+    expect(settingsSlot.queryByRole("heading", { name: "Settings" })).toBeNull();
+    fireEvent.click(settingsSlot.getByRole("tab", { name: "Connections" }));
+    await settingsSlot.findByRole("heading", { name: "Connections" });
+    expect(settingsSlot.getByText(/OAuth authorization is not bundled/)).toBeDefined();
+    expect(settingsSlot.inspection.rpcCalls).toContainEqual({
+      method: "connections_list",
+      input: {},
+    });
+    fireEvent.click(settingsSlot.getByRole("tab", { name: "Tracking" }));
+    await settingsSlot.findByRole("heading", { name: "Tracking" });
+    expect(settingsSlot.getByText("No tracking sites configured")).toBeDefined();
+    expect(settingsSlot.inspection.rpcCalls).toContainEqual({
+      method: "tracking_sites_list",
+      input: { limit: 100, offset: 0 },
+    });
+    fireEvent.click(settingsSlot.getByRole("tab", { name: "Currency" }));
+    const currencyTab = settingsSlot.getByRole("tab", { name: "Currency" });
     expect(currencyTab.getAttribute("aria-selected")).toBe("true");
-    expect(currencySlot.inspection.rpcCalls).toContainEqual({
+    expect(settingsSlot.inspection.rpcCalls).toContainEqual({
       method: "currency_rates_listEffective",
       input: {},
     });
-    currencySlot.lifecycle.unmount();
+    settingsSlot.lifecycle.unmount();
   });
 });

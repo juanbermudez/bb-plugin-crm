@@ -25,6 +25,8 @@ const SECTIONS = [
 
 export interface SettingsViewProps {
   initialSection?: SettingsSection;
+  /** Removes the duplicate page heading when BB owns the settings section. */
+  embedded?: boolean;
   onSectionChange?: (section: SettingsSection) => void;
   currencyRpcClient?: CurrencyRpcClient;
   customFieldsRpcClient?: CustomFieldsRpcClient;
@@ -35,6 +37,7 @@ export interface SettingsViewProps {
 
 export function SettingsView({
   initialSection = "workspace",
+  embedded = false,
   onSectionChange,
   currencyRpcClient,
   customFieldsRpcClient,
@@ -50,13 +53,17 @@ export function SettingsView({
 
   return (
     <div className="flex min-h-full min-w-0 flex-col">
-      <header className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Configure reporting money, shared fields, provider connections, and site tracking.
-        </p>
+      <header className={embedded ? "shrink-0 border-b border-border pb-4" : "shrink-0 border-b border-border px-4 py-4 sm:px-5"}>
+        {!embedded ? (
+          <>
+            <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Configure reporting money, shared fields, provider connections, and site tracking.
+            </p>
+          </>
+        ) : null}
         <div
-          className="mt-4 flex flex-wrap items-center gap-1"
+          className={embedded ? "flex flex-wrap items-center gap-1" : "mt-4 flex flex-wrap items-center gap-1"}
           role="tablist"
           aria-label="CRM settings sections"
         >
