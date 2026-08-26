@@ -35,10 +35,10 @@ Status meanings:
 | Workspace onboarding | Persisted first-open CRM checklist | done | 8 |
 | Research onboarding | Explicit live/deployed BB research-agent selection; provider credentials stay with that agent's tools | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
-| Desktop icon rail | Inner CRM rail inside BB nav panel | done | 1 |
-| Mobile navigation | Compact CRM navigation row | done | 1 |
+| Desktop icon rail | Flat first-class BB sidebar rows for CRM, Companies, Contacts, Deals, and Agents; nested groups are unavailable in SDK 0.4.x | adapted | 1 |
+| Mobile navigation | BB host navigation for the registered CRM panels | adapted | 1 |
 | Global app header | BB host title bar | host-owned | 1 |
-| CRM header actions | BB nav-panel header content | done | 1 |
+| CRM header actions | BB nav-panel `headerContent`; host right-panel toggle follows New | done | 1 |
 | Global create menu | Keyboard-accessible routes for company, contact, deal, agent, note, and task creation; notes/tasks require an existing CRM record | done | 5 |
 | Quick switcher | Cross-record CRM search and deep links | done | 5 |
 | Deep links | BB `subPath` routes | done | 1 |
@@ -74,6 +74,7 @@ Status meanings:
 | Owner, industry, enrichment facets | Filter bar | done | 2 |
 | Activity and custom-field facets | Contextual filter-bar counts in current search/archive scope; 7/30/90-day activity windows and `field:<key>` custom-field keys | done | 5 |
 | Saved views | Saved-view rows and installation default | done | 5 |
+| Compact list controls | One table toolbar with saved-view selector and icon-only save/manage/reset actions | done | 2/5 |
 | Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
 | Bulk owner | Bulk RPC and CLI | done | 2 |
@@ -188,7 +189,7 @@ the server.
 | Record conversation | Idempotent plugin-spawned linked BB thread | done | 6 |
 | Transcript and tools | Host `ThreadChat` for linked record threads | done | 6 |
 | Clarification question | Strict `ask_question` pending interaction and native BB input renderer | done | 6 |
-| Builder home/chat | CRM Agents route, definition/version editor, runs, durable BUILDER thread history, explicit new/delete conversation actions, assistant-message draft transfer, and host `ThreadChat` | done | 6 |
+| Builder home/chat | Modal `Build with BB` composer, CRM Agents list, definition/version editor, runs, durable BUILDER thread history, explicit new/delete conversation actions, assistant-message draft transfer, and host `ThreadChat` | done | 6 |
 | Builder attachments | Bounded upload/read/copy through resolved BB project attachment APIs | done | 6 |
 | Agent definitions and versions | Plugin tables and editor | done | 6 |
 | Delete agent definition | Durable DELETED fence, trigger shutdown, active-run cancellation, and hidden-worker cleanup with retained history | done | 6 |
@@ -215,7 +216,7 @@ publicly reachable share requires BB Connect or an external relay.
 
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
-| Connection health overview | CRM settings route | done | 7 |
+| Connection health overview | BB Settings → Plugins → CRM | done | 7 |
 | Google mail/calendar | Bounded Gmail/Calendar adapter, 30-day initial mail backfill, incremental cursors, normalized storage, manual/background sync | adapted | 7 |
 | Microsoft mail | Bounded Graph/Outlook adapter, incremental cursor, normalized storage, manual/background sync | adapted | 7 |
 | Slack authorization and scopes | BB secret bot/user settings and scope-drift adapter; OAuth callback remains host-owned | adapted | 7 |

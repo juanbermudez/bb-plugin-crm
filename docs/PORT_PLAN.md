@@ -62,7 +62,12 @@ Content plan:
 Interaction thesis:
 
 - Opening a row preserves list context and reveals a wide record drawer.
+- Company, contact, and deal workspaces use one compact command row directly
+  above the table for search, saved view, filters, sort, columns, archive, and
+  result count. Saving the current view is an icon action in that row.
 - List filters, sorting, columns, page, and saved views survive navigation.
+- The Agents list stays table-first; its native BB builder composer appears
+  only in a modal launched from the page actions.
 - Small fades and shared layout transitions clarify route, tab, and drawer changes.
 - Keyboard access covers global search, create, close drawer, and list movement.
 
@@ -79,7 +84,7 @@ that BB already owns.
 | Better Auth sessions | BB's authenticated local application session; CRM scope uses an installation-local owner because the public SDK exposes no current-user identity API or plugin identity directory |
 | Members and invitations | BB user/host context; CRM uses an installation-local owner, and owner facets/sorting use stable local owner IDs because the public SDK exposes no current-user/RBAC API or identity directory |
 | SSO provider management | BB authentication settings; CRM stores no second identity system |
-| Next.js routing | One BB `navPanel` with `subPath` routing |
+| Next.js routing | First-class BB `navPanel` routes for CRM, Companies, Contacts, Deals, and Agents, with `subPath` record state |
 | Nest tRPC | BB plugin `defineRpcContract` and `useRpc` |
 | Postgres and Prisma | Plugin-owned SQLite with append-only migrations |
 | Eve sessions | BB hidden and visible threads with CRM agent tools and skills |
@@ -110,9 +115,13 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 ### BB surfaces
 
-- One `navPanel` named CRM owns `/plugins/crm/crm/*`.
-- One settings section shows data, integration, and migration health.
-- The CRM header exposes a keyboard-accessible New menu for company, contact,
+- Five first-class `navPanel` registrations expose CRM, Companies, Contacts,
+  Deals, and Agents in BB's main sidebar. BB SDK 0.4.x has no nested/grouped
+  nav-panel contract, so these are flat rows rather than visual children of CRM.
+- One BB `settingsSection` owns workspace, currency, field, connection, and
+  tracking configuration; settings is not advertised in CRM navigation.
+- BB's host-owned title bar mounts compact CRM search, enrichment, and a
+  keyboard-accessible New menu for company, contact,
   deal, note, task, and agent creation. Notes and tasks first select an
   existing company, contact, or deal and then create the activity through the
   same typed RPC as record drawers.
@@ -149,13 +158,16 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 ### CRM shell
 
-- Compact CRM mark and inner navigation rail.
-- Dashboard, companies, contacts, deals, agents, and settings destinations.
-- Global search and quick switcher.
+- No plugin-owned navigation rail or duplicate CRM breadcrumb/header.
+- Dashboard, companies, contacts, deals, and agents are BB sidebar destinations;
+  settings lives under BB Settings → Plugins → CRM.
+- Global search and quick switcher mount in BB's host-owned title bar.
 - Keyboard-accessible global New menu for company, contact, deal, note, task,
   and agent. Record-attached notes/tasks use a global picker and the existing
   activity contract rather than inventing an unscoped activity.
-- Responsive compact navigation.
+- The host's right-panel toggle remains BB-owned and follows the New action in
+  the title bar. The public SDK cannot suppress the host CRM logo/title or
+  register nested sidebar children.
 - Loading, empty, disconnected, and migration-error states.
 
 ### Dashboard
@@ -172,6 +184,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Companies
 
 - Searchable, sortable, paginated table.
+- One compact toolbar above the table contains search, saved view, filter,
+  sort/direction, columns, archived scope, save-view icon, and result count.
 - Saved views and column preferences.
 - Standard and custom field columns, with contextual facet counts and 7/30/90-day
   activity facets; custom-field facet keys are `field:<key>`.
@@ -193,6 +207,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Contacts
 
 - Searchable, sortable, paginated table.
+- One compact toolbar above the table contains search, saved view, filter,
+  sort/direction, columns, archived scope, save-view icon, and result count.
 - Saved views, contextual facets, standard fields, custom fields, and bulk
   actions. Activity facets use 7/30/90-day recency windows and custom-field
   keys use `field:<key>`.
@@ -210,6 +226,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Deals
 
 - Searchable, sortable, paginated table.
+- One compact toolbar above the table contains search, saved view, status,
+  filter, sort/direction, columns, archived scope, save-view icon, and result count.
 - Stage, owner, company, contact, currency, close-date, and value facets;
   deal search includes associated company name and custom-field facets use
   `field:<key>`.
@@ -247,6 +265,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Agent definitions home, version editor, run history, and a natural-language
   builder conversation tab backed by visible plugin-spawned BUILDER threads and
   host `ThreadChat`.
+- The list page does not mount a persistent composer. `Build with BB` opens the
+  native builder composer in a responsive modal; successful draft creation
+  closes it and opens the new agent's Conversation drawer.
 - Draft, validation, ready, deployed, live, paused, archived, and deleted states.
 - Agent capability summary and generated definition review.
 - Trigger configuration for manual, schedule, event, and webhook runs.
@@ -265,6 +286,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 ### Settings and connections
 
+- All CRM configuration renders inside BB's plugin settings page instead of a
+  CRM sidebar route; legacy CRM settings links show a move notice.
 - BB-managed workspace name, plugin-local normalized company website and
   optional factual profile, and reporting currency.
 - Agent provider/model/reasoning settings and an optional live BB research-agent selector; provider credentials stay with that agent's tools.
@@ -411,7 +434,7 @@ Tasks:
 - Finalize manifest, icon, license, repository metadata, and engine ranges.
 - Build append-only migration runner and initial schema; current migrations
   advance through schema 12 without rewriting earlier versions.
-- Build route parser, shell, navigation rail, BB header actions, and error boundary.
+- Build route parser, first-class BB panels, BB title-bar actions, and error boundary.
 - Add shared query cache, realtime invalidation, and mutation error handling.
 - Vendor required BB table, drawer, tabs, select, menu, badge, skeleton,
   tooltip, popover, textarea, switch, and command components.

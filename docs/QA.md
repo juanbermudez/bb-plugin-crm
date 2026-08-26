@@ -114,6 +114,10 @@ bundle reported app hash `dd8f433df71f490b` and runtime SDK `0.4.8`.
 
 Observed in the live CRM panel:
 
+- The current simplification pass has automated coverage for five BB sidebar
+  panel registrations, removal of the plugin-owned navigation/header, compact
+  single-row company/contact/deal controls, CRM settings registration in BB
+  Settings, and an Agents builder composer that is hidden until its modal opens.
 - Dashboard loaded in both `Me` and `Everyone` scope and refreshed the summary
   for the selected scope.
 - A saved company view was created, selected, marked as the default, and
@@ -190,8 +194,9 @@ Observed in the live CRM panel:
   contact or deal, use each nested record's complete drawer surface, and return
   to the parent company without losing navigation state. The activity timeline
   and record-specific Agent tabs remained available at each level.
-- The global Agents page rendered BB's native builder home and thread composer,
-  including suggestion cards plus project, model, and permission controls. The
+- The global Agents page rendered BB's native builder composer in a modal
+  launched from `Build with BB`, including suggestion cards plus project,
+  model, and permission controls. The
   disposable host lacked a resolvable Codex executable/model, so live model
   execution failed closed; successful spawn/link behavior remains covered by
   server tests.
