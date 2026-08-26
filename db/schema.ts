@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 5;
+export const CRM_SCHEMA_VERSION = 6;
 
 const MIGRATIONS: string[] = [
   `
@@ -775,6 +775,153 @@ const MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '5', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    -- Phase 7 integrations are deliberately split into configuration, health,
+    -- and cursor rows. OAuth credentials are never part of these tables; the
+    -- host/plugin secret store owns those values. Configuration is restricted
+    -- to non-secret provider metadata by the connections store.
+    CREATE TABLE IF NOT EXISTS connections (
+      id TEXT PRIMARY KEY NOT NULL,
+      provider TEXT NOT NULL
+        CHECK (provider IN ('GOOGLE', 'MICROSOFT', 'SLACK')),
+      external_account_id TEXT,
+      display_name TEXT,
+      configuration TEXT NOT NULL DEFAULT '{}'
+        CHECK (json_valid(configuration)),
+      scopes TEXT NOT NULL DEFAULT '[]'
+        CHECK (json_valid(scopes)),
+      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (provider, external_account_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS connection_health (
+      connection_id TEXT PRIMARY KEY NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'DISCONNECTED'
+        CHECK (status IN ('DISCONNECTED', 'CONNECTING', 'CONNECTED', 'DEGRADED', 'ERROR', 'DISABLED')),
+      last_checked_at TEXT,
+      last_success_at TEXT,
+      last_failure_at TEXT,
+      failure_code TEXT,
+      failure_message TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS connection_sync_cursors (
+      id TEXT PRIMARY KEY NOT NULL,
+      connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+      stream TEXT NOT NULL CHECK (length(trim(stream)) > 0),
+      cursor TEXT,
+      last_success_at TEXT,
+      last_failure_at TEXT,
+      failure_code TEXT,
+      failure_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (connection_id, stream)
+    );
+
+    CREATE TABLE IF NOT EXISTS tracking_sites (
+      id TEXT PRIMARY KEY NOT NULL,
+      site_key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      allowed_domains TEXT NOT NULL CHECK (json_valid(allowed_domains)),
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED')),
+      verification_status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (verification_status IN ('PENDING', 'VERIFIED')),
+      verified_at TEXT,
+      paused_at TEXT,
+      rotated_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      CHECK (json_type(allowed_domains) = 'array')
+    );
+
+    CREATE TABLE IF NOT EXISTS tracking_tokens (
+      id TEXT PRIMARY KEY NOT NULL,
+      site_id TEXT REFERENCES tracking_sites(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL CHECK (scope IN ('INTAKE', 'TRACKING')),
+      token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+      token_hint TEXT NOT NULL CHECK (length(token_hint) BETWEEN 4 AND 32),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      last_used_at TEXT,
+      revoked_at TEXT,
+      CHECK ((scope = 'TRACKING' AND site_id IS NOT NULL) OR
+             (scope = 'INTAKE' AND site_id IS NULL))
+    );
+
+    CREATE TABLE IF NOT EXISTS tracking_retention (
+      site_id TEXT PRIMARY KEY NOT NULL REFERENCES tracking_sites(id) ON DELETE CASCADE,
+      event_retention_days INTEGER NOT NULL DEFAULT 30
+        CHECK (event_retention_days BETWEEN 1 AND 3650),
+      aggregate_retention_days INTEGER NOT NULL DEFAULT 730
+        CHECK (aggregate_retention_days BETWEEN 1 AND 3650),
+      last_rollup_at TEXT,
+      last_pruned_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tracking_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      site_id TEXT NOT NULL REFERENCES tracking_sites(id) ON DELETE CASCADE,
+      token_id TEXT NOT NULL REFERENCES tracking_tokens(id) ON DELETE RESTRICT,
+      event_type TEXT NOT NULL CHECK (event_type IN ('PAGE_VIEW', 'FORM_SUBMIT', 'IDENTIFY', 'CUSTOM')),
+      occurred_at TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      origin TEXT NOT NULL CHECK (length(trim(origin)) > 0),
+      path TEXT NOT NULL CHECK (length(path) BETWEEN 1 AND 2048),
+      referrer_path TEXT CHECK (referrer_path IS NULL OR length(referrer_path) BETWEEN 1 AND 2048),
+      visitor_hash TEXT CHECK (visitor_hash IS NULL OR length(visitor_hash) = 64),
+      session_hash TEXT CHECK (session_hash IS NULL OR length(session_hash) = 64),
+      source TEXT CHECK (source IS NULL OR length(source) BETWEEN 1 AND 128),
+      properties TEXT NOT NULL DEFAULT '{}'
+        CHECK (json_valid(properties) AND json_type(properties) = 'object'),
+      event_key TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (site_id, event_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS tracking_daily_aggregates (
+      site_id TEXT NOT NULL REFERENCES tracking_sites(id) ON DELETE CASCADE,
+      day TEXT NOT NULL CHECK (length(day) = 10),
+      event_type TEXT NOT NULL CHECK (event_type IN ('PAGE_VIEW', 'FORM_SUBMIT', 'IDENTIFY', 'CUSTOM')),
+      path TEXT NOT NULL CHECK (length(path) BETWEEN 1 AND 2048),
+      source TEXT NOT NULL DEFAULT '',
+      event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+      unique_visitors INTEGER NOT NULL DEFAULT 0 CHECK (unique_visitors >= 0),
+      first_seen_at TEXT,
+      last_seen_at TEXT,
+      rolled_up_at TEXT NOT NULL,
+      PRIMARY KEY (site_id, day, event_type, path, source)
+    );
+
+    CREATE INDEX IF NOT EXISTS connections_provider_enabled_idx
+      ON connections(provider, enabled);
+    CREATE INDEX IF NOT EXISTS connection_health_status_idx
+      ON connection_health(status, last_checked_at);
+    CREATE INDEX IF NOT EXISTS connection_sync_cursors_connection_idx
+      ON connection_sync_cursors(connection_id, stream);
+    CREATE INDEX IF NOT EXISTS tracking_sites_status_idx
+      ON tracking_sites(status, verification_status);
+    CREATE INDEX IF NOT EXISTS tracking_tokens_site_scope_idx
+      ON tracking_tokens(site_id, scope, revoked_at);
+    CREATE INDEX IF NOT EXISTS tracking_events_site_received_idx
+      ON tracking_events(site_id, received_at DESC);
+    CREATE INDEX IF NOT EXISTS tracking_events_site_occurred_idx
+      ON tracking_events(site_id, occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS tracking_events_rollup_idx
+      ON tracking_events(site_id, event_type, occurred_at, path);
+    CREATE INDEX IF NOT EXISTS tracking_daily_aggregates_site_day_idx
+      ON tracking_daily_aggregates(site_id, day DESC, event_type);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '6', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;

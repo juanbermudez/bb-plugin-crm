@@ -14,11 +14,11 @@ function withDatabase() {
 }
 
 describe("CRM agent workspace persistence", () => {
-  it("applies migration v5 with the agent graph, guards, indexes, and timestamps", async () => {
+  it("keeps the migration v5 agent graph intact after later migrations", async () => {
     const { db, lifecycle } = withDatabase();
     try {
-      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("5");
-      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(4);
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("6");
+      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(5);
       const tables = db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agent_%' ORDER BY name",
       ).all() as Array<{ name: string }>;
