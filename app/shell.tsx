@@ -14,6 +14,7 @@ import {
 } from "./routes.js";
 import { CompaniesView } from "./views/companies/index.js";
 import { ContactsView } from "./views/contacts/index.js";
+import { DealsView } from "./views/deals/index.js";
 
 const NAV_ITEMS: ReadonlyArray<{
   kind: CrmRouteKind;
@@ -148,6 +149,15 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "contacts", recordId }),
+              });
+            }}
+          />
+        ) : route.kind === "deals" ? (
+          <DealsView
+            initialRecordId={route.recordId}
+            onRecordIdChange={(recordId) => {
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({ kind: "deals", recordId }),
               });
             }}
           />
