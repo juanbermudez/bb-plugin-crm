@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rpcContract } from "./rpc.js";
 
 describe("CRM RPC contract", () => {
-  it("uses deterministic flat method names for the company, contact, and deal surfaces", () => {
+  it("uses deterministic flat method names for all implemented surfaces", () => {
     expect(Object.keys(rpcContract)).toEqual([
       "status",
       "companies_list",
@@ -41,6 +41,13 @@ describe("CRM RPC contract", () => {
       "deals_bulkArchive",
       "deals_bulkRestore",
       "deals_bulkPurge",
+      "currency_rates_list",
+      "currency_rates_listEffective",
+      "currency_rates_listAudit",
+      "currency_rates_upsertManual",
+      "currency_rates_removeManual",
+      "currency_deals_rerate",
+      "currency_deals_rerateAll",
     ]);
   });
 
@@ -97,6 +104,55 @@ describe("CRM RPC contract", () => {
         page: 1,
         pageSize: 25,
         unexpected: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates currency pairs, rate filters, and rerate options at the boundary", () => {
+    expect(
+      rpcContract.currency_rates_upsertManual.input.safeParse({
+        baseCurrency: "USD",
+        quoteCurrency: "EUR",
+        rate: 1.1,
+        asOf: "2026-08-25T00:00:00.000Z",
+        provider: "manual",
+        actorId: "user-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.currency_rates_upsertManual.input.safeParse({
+        baseCurrency: "USD",
+        quoteCurrency: "USD",
+        rate: 1.1,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.currency_rates_upsertManual.input.safeParse({
+        baseCurrency: "usd",
+        quoteCurrency: "EUR",
+        rate: 1.1,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.currency_rates_list.input.safeParse({
+        baseCurrency: "USD",
+        sources: ["MANUAL"],
+        limit: 100,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.currency_deals_rerate.input.safeParse({
+        id: "deal-1",
+        baseCurrency: "USD",
+        rounding: "HALF_UP",
+        onlyMissing: true,
+        now: "2026-08-25T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.currency_deals_rerateAll.input.safeParse({
+        now: new Date(),
       }).success,
     ).toBe(false);
   });

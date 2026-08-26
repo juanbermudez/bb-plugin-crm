@@ -126,6 +126,8 @@ export const FIELD_TYPES = [
 ] as const;
 
 export const RATE_SOURCES = ["FETCHED", "MANUAL"] as const;
+export const RATE_AUDIT_ACTIONS = ["UPSERT", "DELETE"] as const;
+export const ROUNDING_MODES = ["HALF_UP", "DOWN", "UP"] as const;
 export const SORT_DIRECTIONS = ["asc", "desc"] as const;
 export const ACTIVITY_WINDOWS = ["7", "30", "90"] as const;
 export const CLOSING_WINDOWS = [
@@ -173,6 +175,8 @@ export const factStatusSchema = z.enum(FACT_STATUSES);
 export const fieldEntitySchema = z.enum(FIELD_ENTITIES);
 export const fieldTypeSchema = z.enum(FIELD_TYPES);
 export const rateSourceSchema = z.enum(RATE_SOURCES);
+export const rateAuditActionSchema = z.enum(RATE_AUDIT_ACTIONS);
+export const roundingModeSchema = z.enum(ROUNDING_MODES);
 export const sortDirectionSchema = z.enum(SORT_DIRECTIONS);
 export const activityWindowSchema = z.enum(ACTIVITY_WINDOWS);
 export const closingWindowSchema = z.enum(CLOSING_WINDOWS);
@@ -194,6 +198,8 @@ export type FactStatus = z.infer<typeof factStatusSchema>;
 export type FieldEntity = z.infer<typeof fieldEntitySchema>;
 export type FieldType = z.infer<typeof fieldTypeSchema>;
 export type RateSource = z.infer<typeof rateSourceSchema>;
+export type RateAuditAction = z.infer<typeof rateAuditActionSchema>;
+export type RoundingMode = z.infer<typeof roundingModeSchema>;
 export type SortDirection = z.infer<typeof sortDirectionSchema>;
 export type ActivityWindow = z.infer<typeof activityWindowSchema>;
 export type ClosingWindow = z.infer<typeof closingWindowSchema>;
@@ -273,6 +279,170 @@ export const rateSchema = z
   })
   .strict();
 export type Rate = z.infer<typeof rateSchema>;
+
+/** Persisted exchange-rate row returned by the currency store. */
+export const exchangeRateSchema = rateSchema
+  .extend({
+    id: idSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+export type ExchangeRate = z.infer<typeof exchangeRateSchema>;
+
+/** Append-only audit row for a fetched/manual exchange-rate change. */
+export const exchangeRateAuditSchema = z
+  .object({
+    id: idSchema,
+    exchangeRateId: idSchema.nullable(),
+    baseCurrency: currencyCodeSchema,
+    quoteCurrency: currencyCodeSchema,
+    source: rateSourceSchema,
+    action: rateAuditActionSchema,
+    rate: z.number().finite().positive().nullable(),
+    asOf: timestampSchema.nullable(),
+    provider: nullableText,
+    previousRate: z.number().finite().positive().nullable(),
+    previousAsOf: timestampSchema.nullable(),
+    previousProvider: nullableText,
+    actorId: idSchema.nullable(),
+    recordedAt: timestampSchema,
+  })
+  .strict();
+export type ExchangeRateAudit = z.infer<typeof exchangeRateAuditSchema>;
+
+const rateListLimitSchema = z
+  .number()
+  .int()
+  .finite()
+  .min(0)
+  .max(1_000);
+
+/** Filters for the complete set of fetched and manual exchange-rate rows. */
+export const currencyRateListInputSchema = z
+  .object({
+    baseCurrency: currencyCodeSchema.optional(),
+    quoteCurrency: currencyCodeSchema.optional(),
+    sources: z.array(rateSourceSchema).optional(),
+    limit: rateListLimitSchema.optional(),
+  })
+  .strict();
+export type CurrencyRateListInput = z.infer<
+  typeof currencyRateListInputSchema
+>;
+
+/** Filters for the effective rate per quote currency (manual overrides fetched). */
+export const currencyRateEffectiveListInputSchema = z
+  .object({
+    baseCurrency: currencyCodeSchema.optional(),
+    limit: rateListLimitSchema.optional(),
+  })
+  .strict();
+export type CurrencyRateEffectiveListInput = z.infer<
+  typeof currencyRateEffectiveListInputSchema
+>;
+
+/** Filters for the append-only exchange-rate audit history. */
+export const currencyRateAuditListInputSchema = z
+  .object({
+    baseCurrency: currencyCodeSchema.optional(),
+    quoteCurrency: currencyCodeSchema.optional(),
+    source: rateSourceSchema.optional(),
+    limit: rateListLimitSchema.optional(),
+  })
+  .strict();
+export type CurrencyRateAuditListInput = z.infer<
+  typeof currencyRateAuditListInputSchema
+>;
+
+/** Input for an explicit manual rate write. The method supplies MANUAL as source. */
+export const currencyRateUpsertManualInputSchema = z
+  .object({
+    id: idSchema.optional(),
+    baseCurrency: currencyCodeSchema,
+    quoteCurrency: currencyCodeSchema,
+    rate: z.number().finite().positive(),
+    asOf: timestampSchema.optional(),
+    provider: nullableText.optional(),
+    actorId: idSchema.nullable().optional(),
+  })
+  .strict()
+  .refine((value) => value.baseCurrency !== value.quoteCurrency, {
+    message: "An exchange-rate pair must contain two different currencies.",
+    path: ["quoteCurrency"],
+  });
+export type CurrencyRateUpsertManualInput = z.infer<
+  typeof currencyRateUpsertManualInputSchema
+>;
+
+/** Input for removing only the manual row for a currency pair. */
+export const currencyRateRemoveManualInputSchema = z
+  .object({
+    baseCurrency: currencyCodeSchema,
+    quoteCurrency: currencyCodeSchema,
+    actorId: idSchema.nullable().optional(),
+  })
+  .strict()
+  .refine((value) => value.baseCurrency !== value.quoteCurrency, {
+    message: "An exchange-rate pair must contain two different currencies.",
+    path: ["quoteCurrency"],
+  });
+export type CurrencyRateRemoveManualInput = z.infer<
+  typeof currencyRateRemoveManualInputSchema
+>;
+
+const rerateOptionsShape = {
+  baseCurrency: currencyCodeSchema.optional(),
+  rounding: roundingModeSchema.optional(),
+  onlyMissing: z.boolean().optional(),
+  now: timestampSchema.optional(),
+};
+
+/** Explicitly refreshes one deal's frozen reporting-currency conversion. */
+export const currencyDealRerateInputSchema = z
+  .object({ id: idSchema, ...rerateOptionsShape })
+  .strict();
+export type CurrencyDealRerateInput = z.infer<
+  typeof currencyDealRerateInputSchema
+>;
+
+/** Explicitly refreshes frozen conversions for all eligible deals. */
+export const currencyDealRerateAllInputSchema = z
+  .object(rerateOptionsShape)
+  .strict();
+export type CurrencyDealRerateAllInput = z.infer<
+  typeof currencyDealRerateAllInputSchema
+>;
+
+export const exchangeRateListOutputSchema = z.array(exchangeRateSchema);
+export type ExchangeRateListOutput = z.infer<
+  typeof exchangeRateListOutputSchema
+>;
+
+export const exchangeRateAuditListOutputSchema = z.array(exchangeRateAuditSchema);
+export type ExchangeRateAuditListOutput = z.infer<
+  typeof exchangeRateAuditListOutputSchema
+>;
+
+export const rerateSummarySchema = z
+  .object({
+    baseCurrency: currencyCodeSchema,
+    converted: z.number().int().finite().min(0),
+    cleared: z.number().int().finite().min(0),
+    missing: z.array(currencyCodeSchema),
+    processed: z.number().int().finite().min(0),
+  })
+  .strict();
+export type RerateSummary = z.infer<typeof rerateSummarySchema>;
+
+/* Descriptive aliases keep the currency vocabulary available to callers that
+ * use either rate or exchange-rate terminology. */
+export const currencyRateSchema = exchangeRateSchema;
+export const currencyRateAuditSchema = exchangeRateAuditSchema;
+export const currencyRateListOutputSchema = exchangeRateListOutputSchema;
+export const currencyRateAuditListOutputSchema = exchangeRateAuditListOutputSchema;
+export type CurrencyRate = ExchangeRate;
+export type CurrencyRateAudit = ExchangeRateAudit;
 
 /** Generic scalar value used by a typed custom field at the wire boundary. */
 export const fieldValueSchema = z.union([

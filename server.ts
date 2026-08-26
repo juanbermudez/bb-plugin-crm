@@ -127,7 +127,11 @@ export default async function plugin(bb: BbPluginApi) {
     return facets;
   }
 
-  function changed(entity: "company" | "contact" | "deal", action: string, id: string): void {
+  function changed(
+    entity: "company" | "contact" | "deal" | "currency",
+    action: string,
+    id: string,
+  ): void {
     bb.realtime.publish("changed", { entity, action, id });
   }
 
@@ -570,6 +574,59 @@ export default async function plugin(bb: BbPluginApi) {
         deals.purge(id);
         changed("deal", "purged", id);
       });
+    },
+    currency_rates_list(input) {
+      return currency.list(input);
+    },
+    async currency_rates_listEffective({ baseCurrency, limit }) {
+      const configured = baseCurrency ?? (await settings.get()).reportingCurrency;
+      return currency.listEffective(currencyCodeSchema.parse(configured), limit);
+    },
+    currency_rates_listAudit(input) {
+      return currency.listAudit(input);
+    },
+    currency_rates_upsertManual(input) {
+      const rate = currency.upsertManual(input);
+      changed(
+        "currency",
+        "manual-rate-upserted",
+        `${rate.baseCurrency}_${rate.quoteCurrency}`,
+      );
+      return rate;
+    },
+    currency_rates_removeManual({ baseCurrency, quoteCurrency, actorId }) {
+      const rate = currency.rates.removeManual(baseCurrency, quoteCurrency, actorId);
+      if (rate) {
+        changed(
+          "currency",
+          "manual-rate-removed",
+          `${rate.baseCurrency}_${rate.quoteCurrency}`,
+        );
+      }
+      return rate;
+    },
+    async currency_deals_rerate({ id, baseCurrency, rounding, onlyMissing, now }) {
+      const configured = baseCurrency ?? (await settings.get()).reportingCurrency;
+      const deal = currency.rerateDeal(id, currencyCodeSchema.parse(configured), {
+        rounding,
+        onlyMissing,
+        now,
+      });
+      changed("deal", "rerated", deal.id);
+      return dealOutput(deal);
+    },
+    async currency_deals_rerateAll({ baseCurrency, rounding, onlyMissing, now }) {
+      const configured = baseCurrency ?? (await settings.get()).reportingCurrency;
+      const summary = currency.rerateAll(currencyCodeSchema.parse(configured), {
+        rounding,
+        onlyMissing,
+        now,
+      });
+      changed("deal", "rerated", "*");
+      return {
+        ...summary,
+        missing: summary.missing.map((code) => currencyCodeSchema.parse(code)),
+      };
     },
   });
 

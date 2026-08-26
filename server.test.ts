@@ -222,4 +222,78 @@ describe("CRM plugin foundation", () => {
 
     await harness.lifecycle.dispose();
   });
+
+  it("administers manual rates and explicitly re-rates deals through typed RPC", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "USD" },
+    });
+    await plugin(bb);
+    await harness.behavior.callRpc("currency_rates_upsertManual", {
+      baseCurrency: "USD",
+      quoteCurrency: "EUR",
+      rate: 1.1,
+      asOf: "2026-08-24T00:00:00.000Z",
+      actorId: "owner_1",
+    });
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Rate Admin Co",
+    })) as { id: string };
+    const deal = (await harness.behavior.callRpc("deals_create", {
+      name: "Rate Admin Deal",
+      companyId: company.id,
+      ownerId: "owner_1",
+      amountCents: 10_000,
+      currency: "EUR",
+    })) as { id: string };
+
+    await expect(
+      harness.behavior.callRpc("currency_rates_listEffective", {}),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        baseCurrency: "USD",
+        quoteCurrency: "EUR",
+        source: "MANUAL",
+        rate: 1.1,
+      }),
+    ]);
+    await harness.behavior.callRpc("currency_rates_upsertManual", {
+      baseCurrency: "USD",
+      quoteCurrency: "EUR",
+      rate: 1.2,
+      asOf: "2026-08-25T00:00:00.000Z",
+    });
+    await expect(
+      harness.behavior.callRpc("currency_deals_rerate", { id: deal.id }),
+    ).resolves.toMatchObject({
+      baseAmountCents: 12_000,
+      baseCurrency: "USD",
+      fxRate: 1.2,
+      fxRateAt: "2026-08-25T00:00:00.000Z",
+    });
+    await expect(
+      harness.behavior.callRpc("currency_rates_listAudit", {
+        baseCurrency: "USD",
+        quoteCurrency: "EUR",
+      }),
+    ).resolves.toHaveLength(2);
+    await expect(
+      harness.behavior.callRpc("currency_rates_removeManual", {
+        baseCurrency: "USD",
+        quoteCurrency: "EUR",
+        actorId: "owner_1",
+      }),
+    ).resolves.toMatchObject({ rate: 1.2, source: "MANUAL" });
+    await expect(
+      harness.behavior.callRpc("currency_deals_rerateAll", {}),
+    ).resolves.toMatchObject({
+      baseCurrency: "USD",
+      converted: 0,
+      cleared: 1,
+      missing: ["EUR"],
+      processed: 1,
+    });
+
+    await harness.lifecycle.dispose();
+  });
 });

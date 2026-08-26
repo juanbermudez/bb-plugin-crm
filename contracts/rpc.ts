@@ -17,6 +17,16 @@ import {
   contactListOutputSchema,
   contactSchema,
   contactUpdateInputSchema,
+  currencyDealRerateAllInputSchema,
+  currencyDealRerateInputSchema,
+  currencyRateAuditListInputSchema,
+  currencyRateAuditListOutputSchema,
+  currencyRateEffectiveListInputSchema,
+  currencyRateListInputSchema,
+  currencyRateListOutputSchema,
+  currencyRateRemoveManualInputSchema,
+  currencyRateSchema,
+  currencyRateUpsertManualInputSchema,
   dealCreateInputSchema,
   dealListInputSchema,
   dealListOutputSchema,
@@ -24,6 +34,7 @@ import {
   dealUpdateInputSchema,
   purgeInputSchema,
   recordIdInputSchema,
+  rerateSummarySchema,
   restoreInputSchema,
   setDealStageInputSchema,
 } from "./core.js";
@@ -183,5 +194,33 @@ export const rpcContract = defineRpcContract({
   deals_bulkPurge: {
     input: bulkIdsInputSchema,
     output: bulkResultSchema,
+  },
+  currency_rates_list: {
+    input: currencyRateListInputSchema,
+    output: currencyRateListOutputSchema,
+  },
+  currency_rates_listEffective: {
+    input: currencyRateEffectiveListInputSchema,
+    output: currencyRateListOutputSchema,
+  },
+  currency_rates_listAudit: {
+    input: currencyRateAuditListInputSchema,
+    output: currencyRateAuditListOutputSchema,
+  },
+  currency_rates_upsertManual: {
+    input: currencyRateUpsertManualInputSchema,
+    output: currencyRateSchema,
+  },
+  currency_rates_removeManual: {
+    input: currencyRateRemoveManualInputSchema,
+    output: currencyRateSchema.nullable(),
+  },
+  currency_deals_rerate: {
+    input: currencyDealRerateInputSchema,
+    output: dealSchema,
+  },
+  currency_deals_rerateAll: {
+    input: currencyDealRerateAllInputSchema,
+    output: rerateSummarySchema,
   },
 });
