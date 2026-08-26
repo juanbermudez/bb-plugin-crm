@@ -6,6 +6,7 @@ import {
   RecordNotFoundError,
   type Db,
 } from "./types.js";
+import { isSensitiveTrackingValue } from "../lib/tracking-privacy.js";
 
 /** Providers supported by the Phase 7 persistence foundation. */
 export const CONNECTION_PROVIDERS = ["GOOGLE", "MICROSOFT", "SLACK"] as const;
@@ -789,6 +790,9 @@ function normalizeTrackingProperties(value: Record<string, unknown> | null | und
     if (typeof item === "string") {
       if (item.length > TRACKING_LIMITS.maxPropertyValueLength) throw new Error(`Tracking property ${key} is too long.`);
       if (/[\u0000-\u001f\u007f]/.test(item)) throw new Error(`Tracking property ${key} contains control characters.`);
+      if (isSensitiveTrackingValue(item)) {
+        throw new Error(`Sensitive tracking property value is not allowed: ${key}.`);
+      }
       if ((/(?:url|uri|path|href|referrer|location)/i.test(normalizedKey)) && (item.includes("?") || item.includes("#"))) {
         throw new Error(`Tracking property ${key} must not contain a query string or fragment.`);
       }
@@ -796,6 +800,9 @@ function normalizeTrackingProperties(value: Record<string, unknown> | null | und
     } else if (item === null || typeof item === "boolean") {
       output[normalizedKey] = item;
     } else if (typeof item === "number" && Number.isFinite(item)) {
+      if (isSensitiveTrackingValue(item)) {
+        throw new Error(`Sensitive tracking property value is not allowed: ${key}.`);
+      }
       output[normalizedKey] = item;
     } else {
       throw new Error(`Tracking property ${key} must be a scalar JSON value.`);

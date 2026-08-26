@@ -824,6 +824,18 @@ function normalizeTimestamp(
   return parsed.toISOString();
 }
 
+function normalizeCutoff(value: Date | string, label: string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error(`${label} must be a valid date.`);
+  return date.toISOString();
+}
+
+function nextLeaseTimestamp(previousStartedAt: string): string {
+  const previousMs = new Date(previousStartedAt).getTime();
+  if (Number.isNaN(previousMs)) throw new Error("Agent run started timestamp must be a valid date.");
+  return new Date(Math.max(Date.now(), previousMs + 1)).toISOString();
+}
+
 function storedTimestamp(value: unknown, label: string): string {
   const text = requiredText(stringValue(value, label), label);
   if (Number.isNaN(new Date(text).getTime())) throw new Error(`${label} must be a valid timestamp.`);
@@ -1743,8 +1755,8 @@ export class AgentStore {
       if (!(["DRAFT", "LIVE", "PAUSED"] as readonly AgentDefinitionStatus[]).includes(agent.status)) {
         throw statusError("agent", agent.id, agent.status, "LIVE");
       }
-      if (!(version.status === "DRAFT" || version.status === "READY" || version.status === "DEPLOYED")) {
-        throw new AgentStateError(`Only a draft or ready agent version can be deployed; version ${version.id} is ${version.status}.`);
+      if (!(version.status === "READY" || version.status === "DEPLOYED")) {
+        throw new AgentStateError(`Only a validated READY or already DEPLOYED agent version can be deployed; version ${version.id} is ${version.status}.`);
       }
       if (parsed.requestId) {
         const existing = this.db.prepare(`
@@ -2068,6 +2080,82 @@ export class AgentStore {
     return rows.map((value) => this.runDetail(parseRun(value), includeEvents, includeActions));
   }
 
+  /**
+   * Return RUNNING runs whose dispatch lease has expired and that still have
+   * no BB thread link. The query is intentionally bounded so a damaged or
+   * abandoned queue cannot make one background sweep unbounded.
+   */
+  listOrphanedRunningRunIds(cutoff: Date | string, limit = 100): string[] {
+    const cutoffAt = normalizeCutoff(cutoff, "Agent run lease cutoff");
+    const rows = this.db.prepare(`
+      SELECT r.id
+      FROM agent_runs AS r
+      WHERE r.status = 'RUNNING'
+        AND r.started_at IS NOT NULL
+        AND r.started_at <= @cutoffAt
+        AND NOT EXISTS (
+          SELECT 1
+          FROM agent_thread_links AS l
+          WHERE l.run_id = r.id
+        )
+      ORDER BY r.started_at ASC, r.id ASC
+      LIMIT @limit
+    `).all({ cutoffAt, limit: bounded(limit, "Agent orphan recovery limit") }) as Array<{ id?: unknown }>;
+    return rows.map((row) => identifier(row.id, "Agent orphaned run id"));
+  }
+
+  /**
+   * Renew the lease for one orphaned RUNNING run. This compare-and-set style
+   * update lets only one dispatcher reclaim a stale row; a dispatcher that
+   * was merely slow loses its old startedAt fence before it can link a thread.
+   */
+  reclaimOrphanedRun(
+    id: string,
+    cutoff: Date | string,
+    actorId?: string,
+  ): AgentRunDetail | null {
+    const runId = identifier(id, "Agent run id");
+    const cutoffAt = normalizeCutoff(cutoff, "Agent run lease cutoff");
+    return this.db.transaction(() => {
+      const before = this.getRunRequired(runId);
+      if (before.status !== "RUNNING" || before.startedAt === null) return null;
+      if (new Date(before.startedAt).getTime() > new Date(cutoffAt).getTime()) return null;
+      const linked = this.db.prepare(
+        "SELECT 1 FROM agent_thread_links WHERE run_id = ? LIMIT 1",
+      ).get(runId);
+      if (linked) return null;
+
+      const renewedStartedAt = nextLeaseTimestamp(before.startedAt);
+      const update = this.db.prepare(`
+        UPDATE agent_runs
+        SET started_at = ?, finished_at = NULL,
+            error_code = NULL, error_message = NULL
+        WHERE id = ? AND status = 'RUNNING' AND started_at = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_thread_links WHERE run_id = agent_runs.id
+          )
+      `).run(renewedStartedAt, runId, before.startedAt);
+      if (update.changes !== 1) return null;
+
+      this.appendRunEvent(runId, "run.recovered", {
+        reason: "Dispatch lease expired before a BB thread was linked.",
+        previousStartedAt: before.startedAt,
+      });
+      this.insertAudit({
+        agentId: before.agentId,
+        versionId: before.versionId,
+        runId,
+        actorId: normalizeActor(actorId),
+        actorType: "SYSTEM",
+        type: "run.recovered",
+        summary: "Recovered an orphaned agent run dispatch lease",
+        before: { status: before.status, startedAt: before.startedAt },
+        after: { status: "RUNNING", startedAt: renewedStartedAt },
+      });
+      return this.getRunDetailRequired(runId);
+    })();
+  }
+
   startRun(id: string, actorId?: string): AgentRunDetail {
     return this.transitionRun(id, "RUNNING", ["QUEUED"], actorId, "run.started", "Started agent run", (run, timestamp) => {
       this.db.prepare("UPDATE agent_runs SET started_at = ?, finished_at = NULL WHERE id = ?").run(timestamp, run.id);
@@ -2298,6 +2386,7 @@ export class AgentStore {
     agentIdOrInput: string | AgentThreadLinkInput,
     inputOrActor?: AgentThreadLinkInput | string,
     actorId?: string,
+    expectedStartedAt?: string,
   ): AgentThreadLink {
     const normalized = normalizeThreadInput(
       agentIdOrInput,
@@ -2312,6 +2401,10 @@ export class AgentStore {
       if (value.runId) {
         run = this.getRunRequired(value.runId);
         if (run.agentId !== agent.id) throw new AgentStateError("Thread run does not belong to the agent.");
+        if (expectedStartedAt !== undefined &&
+          (run.status !== "RUNNING" || run.startedAt !== expectedStartedAt)) {
+          throw new AgentConflictError("The agent run dispatch lease is no longer owned by this dispatcher.");
+        }
       }
       if (value.versionId) {
         const version = this.getVersionRequired(value.versionId);

@@ -3,6 +3,7 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import plugin from "./server.js";
 import { CRM_AGENT_DISPATCH_SERVICE_NAME } from "./server.js";
 import { createAgentStore } from "./db/agents.js";
+import { createCompanyStore } from "./db/companies.js";
 import { createCurrencyStore } from "./db/currency.js";
 import { CRM_SCHEMA_VERSION } from "./db/schema.js";
 
@@ -202,6 +203,33 @@ describe("CRM plugin foundation", () => {
     expect(exportedCsv.stdout).toContain("id,name,domain,ownerId");
     expect(exportedCsv.stdout).toContain("Importable");
     await target.harness.lifecycle.dispose();
+  });
+
+  it("paginates exports beyond one thousand rows and preserves archive selectors", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    const companies = createCompanyStore(bb.storage.database());
+    for (let index = 0; index < 1_002; index += 1) {
+      const suffix = String(index).padStart(4, "0");
+      companies.create({ id: `export-company-${suffix}`, name: `Export Company ${suffix}` });
+    }
+    companies.archive("export-company-0000");
+
+    const activeExport = await harness.behavior.runCli(["export", "company", "--format", "json"]);
+    expect(activeExport.exitCode).toBe(0);
+    expect((JSON.parse(activeExport.stdout) as { records: unknown[] }).records).toHaveLength(1_001);
+
+    const allExport = await harness.behavior.runCli(["export", "company", "--format", "json", "--all"]);
+    expect(allExport.exitCode).toBe(0);
+    expect((JSON.parse(allExport.stdout) as { records: unknown[] }).records).toHaveLength(1_002);
+
+    const archivedExport = await harness.behavior.runCli(["export", "company", "--format", "json", "--archived"]);
+    expect(archivedExport.exitCode).toBe(0);
+    expect((JSON.parse(archivedExport.stdout) as { records: Array<{ id: string }> }).records).toEqual([
+      expect.objectContaining({ id: "export-company-0000" }),
+    ]);
+
+    await harness.lifecycle.dispose();
   });
 
   it("registers native CRM agent tools for search, records, fields, and activity", async () => {
@@ -1458,6 +1486,91 @@ describe("CRM plugin foundation", () => {
       });
       expect(store.getRunRequired("run_no_project").status).toBe("QUEUED");
       expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("reclaims an orphaned running claim on a later dispatcher sweep", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-orphan-server" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-orphan", kind: "standard" }] },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_orphan_server", "version_orphan_server");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_orphan_server",
+      id: "run_orphan_server",
+      idempotencyKey: "run-orphan-server-key",
+    });
+    const store = createAgentStore(bb.storage.database());
+    store.startRun("run_orphan_server", "crm-dispatcher");
+    bb.storage.database().prepare("UPDATE agent_runs SET started_at = ? WHERE id = ?").run(
+      new Date(Date.now() - 10 * 60 * 1_000).toISOString(),
+      "run_orphan_server",
+    );
+
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      await vi.waitFor(() => {
+        expect(store.listThreads("agent_orphan_server", { runId: "run_orphan_server" })).toEqual([
+          expect.objectContaining({ threadId: "bb-thread-orphan-server" }),
+        ]);
+      });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(store.getRunRequired("run_orphan_server").events.map((event) => event.type)).toEqual([
+        "run.queued",
+        "run.started",
+        "run.recovered",
+      ]);
+      expect(store.listRunAudit("run_orphan_server")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "thread.linked" }),
+      ]));
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("persistently disables an invalid enabled schedule after one failure", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: { projects: { list: async () => [] } },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_invalid_schedule", "version_invalid_schedule");
+    const trigger = await harness.behavior.callRpc("agents_triggers_create", {
+      agentId: "agent_invalid_schedule",
+      data: {
+        id: "trigger_invalid_schedule",
+        versionId: "version_invalid_schedule",
+        type: "SCHEDULE",
+        name: "Invalid schedule",
+        config: { cron: "not-a-cron" },
+        enabled: true,
+      },
+    }) as { id: string; enabled: boolean; nextRunAt: string | null };
+    expect(trigger).toMatchObject({ id: "trigger_invalid_schedule", enabled: true });
+
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      await vi.waitFor(() => {
+        expect(createAgentStore(bb.storage.database()).getTriggerRequired(trigger.id)).toMatchObject({
+          enabled: false,
+          nextRunAt: null,
+        });
+      });
+      const failures = () => harness.inspection.logEntries.filter((entry) =>
+        entry.message.includes("CRM agent schedule trigger_invalid_schedule is invalid"),
+      );
+      expect(failures()).toHaveLength(1);
     } finally {
       service.controller.abort();
       await service.done;

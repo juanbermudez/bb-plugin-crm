@@ -50,6 +50,7 @@ function fixture(options: {
     modelId: "crm/model-1",
     sandboxPolicy: { network: "ask" },
   }, "user_1");
+  store.validateVersion(version.id, undefined, "user_1");
   store.deploy(agent.id, version.id, "user_1");
 
   function queueRun(id: string, input: AgentJsonValue = { companyId: "company_1" }) {
@@ -146,6 +147,58 @@ describe("CRM agent thread dispatcher", () => {
         errorMessage: "project unavailable",
         result: null,
       });
+      expect(state.store.listThreads(state.agent.id, { runId: run.id })).toEqual([]);
+    } finally {
+      await dispose(state);
+    }
+  });
+
+  it("reclaims an expired unlinked RUNNING claim and links exactly one retry thread", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-recovered" }));
+    const state = fixture({ spawn });
+    const run = state.queueRun("run_orphan_recovery");
+    state.store.startRun(run.id, "crm-dispatcher");
+    state.db.prepare("UPDATE agent_runs SET started_at = ? WHERE id = ?").run(
+      new Date(Date.now() - 10 * 60 * 1_000).toISOString(),
+      run.id,
+    );
+    try {
+      expect(state.dispatcher.listOrphanedRunningRunIds()).toEqual([run.id]);
+      const result = await state.dispatcher.dispatchQueuedRun(run.id);
+
+      expect(result).toMatchObject({
+        kind: "dispatched",
+        run: { status: "RUNNING" },
+        thread: { threadId: "bb-thread-recovered", runId: run.id },
+      });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(state.store.listThreads(state.agent.id, { runId: run.id })).toEqual([
+        expect.objectContaining({ threadId: "bb-thread-recovered" }),
+      ]);
+      expect(state.store.getRunRequired(run.id).events.map((event) => event.type)).toEqual([
+        "run.queued",
+        "run.started",
+        "run.recovered",
+      ]);
+      expect(state.store.listRunAudit(run.id)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "run.recovered" }),
+      ]));
+    } finally {
+      await dispose(state);
+    }
+  });
+
+  it("does not reclaim a fresh unlinked RUNNING claim", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-fresh" }));
+    const state = fixture({ spawn });
+    const run = state.queueRun("run_fresh_claim");
+    state.store.startRun(run.id, "crm-dispatcher");
+    try {
+      expect(state.dispatcher.listOrphanedRunningRunIds()).toEqual([]);
+      const result = await state.dispatcher.dispatchQueuedRun(run.id);
+
+      expect(result).toMatchObject({ kind: "in-flight", run: { status: "RUNNING" } });
+      expect(spawn).not.toHaveBeenCalled();
       expect(state.store.listThreads(state.agent.id, { runId: run.id })).toEqual([]);
     } finally {
       await dispose(state);

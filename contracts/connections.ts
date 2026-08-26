@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema, rpcJsonObjectSchema, rpcJsonValueSchema } from "./core.js";
+import { isSensitiveTrackingValue } from "../lib/tracking-privacy.js";
 
 /** Providers that have persistence support. Authorization is host-owned. */
 export const connectionProviders = ["GOOGLE", "MICROSOFT", "SLACK"] as const;
@@ -486,6 +487,8 @@ export const trackingPropertiesSchema = z
         addIssue(ctx, [key], "Tracking property key has invalid characters.");
       } else if (sensitiveTrackingProperty.test(normalized)) {
         addIssue(ctx, [key], "Sensitive tracking properties are not allowed.");
+      } else if (isSensitiveTrackingValue(value[key])) {
+        addIssue(ctx, [key], "Sensitive tracking property values are not allowed.");
       } else if (
         value[key] !== null &&
         typeof value[key] !== "string" &&

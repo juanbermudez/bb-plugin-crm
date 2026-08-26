@@ -146,6 +146,27 @@ describe("tracking persistence", () => {
       eventType: "FORM_SUBMIT",
       origin: "https://example.com",
       path: "/signup",
+      properties: { campaign: "Reach ada@example.com" },
+    })).toThrow("Sensitive tracking property value");
+    expect(() => sanitizeTrackingEvent({
+      token: "crm_trk_test-token-123456",
+      eventType: "FORM_SUBMIT",
+      origin: "https://example.com",
+      path: "/signup",
+      properties: { checkout_reference: "4111 1111 1111 1111" },
+    })).toThrow("Sensitive tracking property value");
+    expect(sanitizeTrackingEvent({
+      token: "crm_trk_test-token-123456",
+      eventType: "CUSTOM",
+      origin: "https://example.com",
+      path: "/signup",
+      properties: { campaign: "spring", order_reference: "1234567890123456", seats: 4111 },
+    }).properties).toEqual({ campaign: "spring", order_reference: "1234567890123456", seats: 4111 });
+    expect(() => sanitizeTrackingEvent({
+      token: "crm_trk_test-token-123456",
+      eventType: "FORM_SUBMIT",
+      origin: "https://example.com",
+      path: "/signup",
       properties: { nested: { safe: true } },
     })).toThrow("scalar JSON value");
   });

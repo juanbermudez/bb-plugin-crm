@@ -70,6 +70,7 @@ describe("CRM agent workspace persistence", () => {
       }, "user_1");
       expect(version).toMatchObject({ agentId: agent.id, number: 1, status: "DRAFT" });
 
+      store.validateVersion(version.id, undefined, "user_1");
       const deployed = store.deploy(agent.id, version.id, "user_1");
       expect(deployed).toEqual({ id: agent.id, versionId: version.id, status: "LIVE" });
       expect(store.list({ search: "renewal" })).toEqual([
@@ -168,6 +169,10 @@ describe("CRM agent workspace persistence", () => {
       expect(() => store.pause(agent.id)).toThrow(AgentStateError);
       expect(() => store.startRun("missing")).toThrow("No agent run");
 
+      expect(() => store.deploy(agent.id, version.id)).toThrow(
+        "Only a validated READY or already DEPLOYED agent version can be deployed",
+      );
+      store.validateVersion(version.id);
       store.deploy(agent.id, version.id);
       const run = store.queueRun(agent.id, { idempotencyKey: "invalid-transition-run" });
       expect(() => store.succeedRun(run.id)).toThrow("from QUEUED to SUCCEEDED");
@@ -183,12 +188,34 @@ describe("CRM agent workspace persistence", () => {
     }
   });
 
+  it("does not deploy an unvalidated draft version", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const store = new AgentStore(db);
+      const agent = store.create({ id: "agent_deploy_validation", name: "Deploy validation" });
+      const version = store.createVersion(agent.id, {
+        id: "version_deploy_validation",
+        instructions: "run",
+      });
+
+      expect(version.status).toBe("DRAFT");
+      expect(() => store.deploy(agent.id, version.id)).toThrow(
+        "Only a validated READY or already DEPLOYED agent version can be deployed",
+      );
+      expect(store.getRequired(agent.id).status).toBe("DRAFT");
+      expect(store.getVersionRequired(version.id).status).toBe("DRAFT");
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
   it("cascades child persistence when an agent is explicitly purged", async () => {
     const { db, lifecycle } = withDatabase();
     try {
       const store = new AgentStore(db);
       const agent = store.create({ id: "agent_cascade", name: "Cascade test" });
       const version = store.createVersion(agent.id, { instructions: "run" });
+      store.validateVersion(version.id);
       store.deploy(agent.id, version.id);
       const trigger = store.createTrigger(agent.id, {
         versionId: version.id,

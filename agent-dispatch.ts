@@ -54,6 +54,15 @@ type AgentThreadSendInput = NonNullable<AgentThreadSendArgs["input"]>;
 export const CRM_AGENT_DISPATCHER_ACTOR = "crm-dispatcher";
 
 /**
+ * A RUNNING row without a thread link is a dispatch claim, not proof that a
+ * worker exists. After this bounded lease expires, another sweep may reclaim
+ * the claim and retry thread creation.
+ */
+export const DEFAULT_AGENT_ORPHAN_LEASE_MS = 5 * 60 * 1_000;
+export const MIN_AGENT_ORPHAN_LEASE_MS = 1_000;
+export const MAX_AGENT_ORPHAN_LEASE_MS = 24 * 60 * 60 * 1_000;
+
+/**
  * These rules are intentionally part of every run prompt. They constrain the
  * model's behavior without pretending that prompt text is a security boundary;
  * the CRM tools and the host still enforce their own validation and policy.
@@ -240,6 +249,8 @@ export interface AgentDispatcherOptions {
   cleanupHiddenThreads?: boolean;
   /** Rules appended to each run prompt. Defaults to the CRM safety contract. */
   safetyRules?: readonly string[];
+  /** How long an unlinked RUNNING claim may live before a sweep reclaims it. */
+  orphanLeaseMs?: number;
 }
 
 export interface CreateAgentDispatcherOptions extends AgentDispatcherOptions {
@@ -272,6 +283,18 @@ function requiredText(value: unknown, label: string): string {
 function boundedError(value: unknown): string {
   const message = text(value).trim() || "Unknown dispatcher failure.";
   return message.length > 4_000 ? `${message.slice(0, 3_997)}...` : message;
+}
+
+function boundedLeaseMs(value: number | undefined): number {
+  const leaseMs = value ?? DEFAULT_AGENT_ORPHAN_LEASE_MS;
+  if (!Number.isSafeInteger(leaseMs) ||
+    leaseMs < MIN_AGENT_ORPHAN_LEASE_MS ||
+    leaseMs > MAX_AGENT_ORPHAN_LEASE_MS) {
+    throw new Error(
+      `Agent orphan lease must be an integer between ${MIN_AGENT_ORPHAN_LEASE_MS} and ${MAX_AGENT_ORPHAN_LEASE_MS} milliseconds.`,
+    );
+  }
+  return leaseMs;
 }
 
 function isTerminal(status: AgentRun["status"]): boolean {
@@ -335,6 +358,7 @@ export class AgentDispatcher {
   private readonly environment: AgentThreadEnvironment;
   private readonly cleanupHiddenThreads: boolean;
   private readonly safetyRules: readonly string[];
+  private readonly orphanLeaseMs: number;
 
   constructor(private readonly options: CreateAgentDispatcherOptions) {
     this.store = createAgentStore(options.db);
@@ -346,6 +370,7 @@ export class AgentDispatcher {
     this.environment = options.environment ?? { type: "project-default" };
     this.cleanupHiddenThreads = options.cleanupHiddenThreads ?? true;
     this.safetyRules = options.safetyRules ?? DEFAULT_CRM_AGENT_SAFETY_RULES;
+    this.orphanLeaseMs = boundedLeaseMs(options.orphanLeaseMs);
     if (typeof options.projectId !== "function") {
       requiredText(options.projectId, "Agent dispatcher project id");
     }
@@ -386,15 +411,32 @@ export class AgentDispatcher {
         // Another worker may have claimed the row between the read and the
         // transition. Re-read before deciding whether this is a real error.
         const latest = this.store.getRunRequired(current.id);
-        if (latest.status !== "QUEUED" && isStateTransitionError(error)) {
-          const link = this.linkForRun(latest.id);
-          if (link) {
+        if (latest.status === "QUEUED" || !isStateTransitionError(error)) throw error;
+        const link = this.linkForRun(latest.id);
+        if (link) {
+          return {
+            kind: "already-dispatched",
+            run: latest,
+            thread: link,
+          };
+        }
+        if (latest.status === "RUNNING") {
+          const reclaimed = this.store.reclaimOrphanedRun(
+            latest.id,
+            this.orphanLeaseCutoff(),
+            this.actorId,
+          );
+          if (reclaimed) {
+            claimed = reclaimed;
+          } else {
             return {
-              kind: "already-dispatched",
+              kind: "in-flight",
               run: latest,
-              thread: link,
+              thread: null,
+              reason: `Another dispatcher owns run ${latest.id}.`,
             };
           }
+        } else {
           return {
             kind: isTerminal(latest.status) ? "terminal" : "in-flight",
             run: latest,
@@ -402,14 +444,27 @@ export class AgentDispatcher {
             reason: `Another dispatcher owns run ${latest.id}.`,
           };
         }
-        throw error;
+      }
+    } else if (current.status === "RUNNING") {
+      // A RUNNING row without a link is a dispatch claim. Once its bounded
+      // lease expires, reclaim it with a compare-and-set on startedAt before
+      // attempting another BB thread spawn.
+      const reclaimed = this.store.reclaimOrphanedRun(
+        current.id,
+        this.orphanLeaseCutoff(),
+        this.actorId,
+      );
+      if (reclaimed) {
+        claimed = reclaimed;
+      } else {
+        return {
+          kind: "in-flight",
+          run: current,
+          thread: null,
+          reason: `Run is ${current.status} and its dispatch lease has not expired.`,
+        };
       }
     } else {
-      // Only QUEUED rows are claimable here. A RUNNING row without a link may
-      // belong to another process between its atomic claim and BB's response;
-      // dispatching it again would create a duplicate thread. Recovery of a
-      // linked row is provided by sendPromptToLinkedRun, while an orphaned
-      // RUNNING row is deliberately left for an explicit reconciliation job.
       return {
         kind: isTerminal(current.status) ? "terminal" : "in-flight",
         run: current,
@@ -418,14 +473,25 @@ export class AgentDispatcher {
       };
     }
 
-    // A cancellation can win after the claim and before the network call.
+    const claimStartedAt = claimed.startedAt;
+    if (claimStartedAt === null) {
+      return this.failDispatch(
+        claimed.id,
+        "Agent run did not receive a dispatch lease.",
+      );
+    }
+
+    // A cancellation or a lease reclaim can win after the claim and before
+    // the network call.
     const beforeSpawn = this.store.getRunRequired(claimed.id);
-    if (beforeSpawn.status !== "RUNNING") {
+    if (beforeSpawn.status !== "RUNNING" || beforeSpawn.startedAt !== claimStartedAt) {
       return {
         kind: isTerminal(beforeSpawn.status) ? "terminal" : "in-flight",
         run: beforeSpawn,
         thread: null,
-        reason: `Run became ${beforeSpawn.status} before thread creation.`,
+        reason: beforeSpawn.status !== "RUNNING"
+          ? `Run became ${beforeSpawn.status} before thread creation.`
+          : "Run dispatch lease was reclaimed before thread creation.",
       };
     }
 
@@ -469,6 +535,7 @@ export class AgentDispatcher {
           summary: `CRM agent run ${claimed.id}`,
         },
         this.actorId,
+        claimStartedAt,
       );
       return {
         kind: "dispatched",
@@ -480,11 +547,32 @@ export class AgentDispatcher {
       if (spawnedThreadId !== null) {
         await this.cleanupThread(spawnedThreadId, this.visibility);
       }
+      const latest = this.store.getRunRequired(claimed.id);
+      if (latest.status === "RUNNING" && latest.startedAt !== claimStartedAt) {
+        return {
+          kind: "in-flight",
+          run: latest,
+          thread: this.linkForRun(latest.id),
+          reason: "Run dispatch lease was reclaimed while creating its BB thread.",
+        };
+      }
       return this.failDispatch(claimed.id, error);
     }
   }
 
-  /** Dispatch every queued CRM run visible at the time of the sweep. */
+  /**
+   * List stale unlinked RUNNING claims without changing them. The caller can
+   * first verify host capacity (for example, an available BB project) before
+   * asking dispatchQueuedRun to reclaim and retry each one.
+   */
+  listOrphanedRunningRunIds(limit = 100): string[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Agent orphan recovery limit must be an integer between 1 and 100.");
+    }
+    return this.store.listOrphanedRunningRunIds(this.orphanLeaseCutoff(), limit);
+  }
+
+  /** Dispatch queued runs and reclaim stale unlinked RUNNING claims. */
   async dispatchQueuedRuns(limit = 100): Promise<AgentDispatchBatchResult> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("Agent dispatch limit must be an integer between 1 and 100.");
@@ -495,17 +583,20 @@ export class AgentDispatcher {
       includeEvents: true,
       includeActions: true,
     });
+    const remaining = Math.max(0, limit - queued.length);
+    const orphaned = remaining === 0 ? [] : this.listOrphanedRunningRunIds(remaining);
+    const candidateIds = [...queued.map((run) => run.id), ...orphaned];
     const results: AgentDispatchResult[] = [];
-    for (const run of queued) {
+    for (const runId of candidateIds) {
       try {
-        results.push(await this.dispatchQueuedRun(run.id));
+        results.push(await this.dispatchQueuedRun(runId));
       } catch (error) {
         // A malformed persisted row or an unexpected AgentStore failure should
         // not prevent the rest of a sweep. If the claim succeeded, settle the
         // row as failed; otherwise preserve the store's original error.
-        const latest = this.store.getRun(run.id);
+        const latest = this.store.getRun(runId);
         if (latest && latest.status === "QUEUED") {
-          results.push(this.failDispatch(run.id, error));
+          results.push(this.failDispatch(runId, error));
         } else if (latest && latest.status === "RUNNING") {
           results.push({
             kind: "in-flight",
@@ -518,7 +609,7 @@ export class AgentDispatcher {
         }
       }
     }
-    return { attempted: queued.length, results };
+    return { attempted: candidateIds.length, results };
   }
 
   /**
@@ -816,6 +907,10 @@ export class AgentDispatcher {
   private linkForThread(threadId: string): AgentThreadLink | null {
     const id = threadLinkId(this.options.db, threadId);
     return id === null ? null : this.store.getThread(id);
+  }
+
+  private orphanLeaseCutoff(): Date {
+    return new Date(Date.now() - this.orphanLeaseMs);
   }
 
   private async resolveProjectId(): Promise<string> {

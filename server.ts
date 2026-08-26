@@ -7,6 +7,7 @@ import { CronExpressionParser } from "cron-parser";
 import { z } from "zod";
 import {
   createAgentDispatcher,
+  DEFAULT_AGENT_ORPHAN_LEASE_MS,
   type AgentDispatchResult,
 } from "./agent-dispatch.js";
 import {
@@ -86,6 +87,7 @@ export const CRM_PLUGIN_VERSION = "0.1.0";
  */
 export const CRM_AGENT_DISPATCH_INTERVAL_MS = 5_000;
 export const CRM_AGENT_DISPATCH_MAX_BATCH = 100;
+export const CRM_AGENT_DISPATCH_ORPHAN_LEASE_MS = DEFAULT_AGENT_ORPHAN_LEASE_MS;
 export const CRM_AGENT_DISPATCH_SERVICE_NAME = "crm-agent-dispatcher";
 
 const safeProjectIdSchema = z
@@ -699,6 +701,7 @@ export default async function plugin(bb: BbPluginApi) {
     db,
     projectId: lazyProjectResolver,
     cleanupHiddenThreads: true,
+    orphanLeaseMs: CRM_AGENT_DISPATCH_ORPHAN_LEASE_MS,
   });
 
   type DispatcherLifecycleEvent = "thread.idle" | "thread.failed" | "thread.deleted";
@@ -789,14 +792,17 @@ export default async function plugin(bb: BbPluginApi) {
     try {
       const updated = agents.updateTrigger(
         trigger.id,
-        { nextRunAt: null },
+        // Invalid schedules are operator/configuration errors. Persistently
+        // disable them so every background sweep does not retry the same bad
+        // expression until someone fixes and re-enables the trigger.
+        { enabled: false, nextRunAt: null },
         "crm-dispatcher",
       );
       changed("agent-trigger", "updated", updated.id);
       changed("agent", "trigger-updated", updated.agentId);
     } catch (error) {
       bb.log.warn(
-        `CRM agent schedule ${trigger.id} could not be paused: ${
+        `CRM agent schedule ${trigger.id} could not be disabled: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -964,7 +970,9 @@ export default async function plugin(bb: BbPluginApi) {
       includeEvents: true,
       includeActions: true,
     });
-    if (queued.length === 0) return;
+    const orphanedRunIds = dispatcher.listOrphanedRunningRunIds(CRM_AGENT_DISPATCH_MAX_BATCH);
+    const candidateRunIds = [...orphanedRunIds, ...queued.map((run) => run.id)];
+    if (candidateRunIds.length === 0) return;
 
     let projects: AvailableProject[];
     try {
@@ -978,12 +986,14 @@ export default async function plugin(bb: BbPluginApi) {
       return;
     }
     if (projects.length === 0) {
-      bb.log.warn(`${NO_PROJECT_DIAGNOSTIC} (${queued.length} queued run${queued.length === 1 ? "" : "s"}).`);
+      bb.log.warn(`${NO_PROJECT_DIAGNOSTIC} (${candidateRunIds.length} dispatch candidate${candidateRunIds.length === 1 ? "" : "s"}).`);
       return;
     }
 
-    for (const run of queued) {
+    for (const runId of candidateRunIds) {
       if (signal.aborted) return;
+      const run = agents.getRun(runId);
+      if (!run || (run.status !== "QUEUED" && run.status !== "RUNNING")) continue;
       let preferredId: string | null = null;
       try {
         preferredId = manifestProjectId(agents.getVersionRequired(run.versionId).manifest);
@@ -997,7 +1007,7 @@ export default async function plugin(bb: BbPluginApi) {
       }
       const projectId = chooseProject(projects, preferredId);
       if (projectId === null) {
-        bb.log.warn(`${NO_PROJECT_DIAGNOSTIC} Run ${run.id} remains QUEUED.`);
+        bb.log.warn(`${NO_PROJECT_DIAGNOSTIC} Run ${run.id} remains ${run.status}.`);
         continue;
       }
       preferredManifestProjectId = preferredId;
@@ -3283,24 +3293,37 @@ export default async function plugin(bb: BbPluginApi) {
 
   function exportRows(entity: CrmRecordEntity, args: ParsedCliArgs): Record<string, unknown>[] {
     const search = aliasedCliOption(args, "q", "search");
-    const limit = cliInteger(oneCliOption(args, "limit"), "limit", { min: 1, max: 1_000 }) ?? 1_000;
+    const requestedLimit = cliInteger(oneCliOption(args, "limit"), "limit", { min: 1, max: 1_000 });
     if (args.flags.has("all") && args.flags.has("archived")) {
       throw new CrmCliUsageError("Use either --all or --archived, not both.");
     }
-    const listOptions = {
-      search,
-      limit,
-      offset: 0,
-      archivedOnly: args.flags.has("archived"),
-      includeArchived: args.flags.has("all"),
-    };
-    if (entity === "company") {
-      return companies.list({ ...listOptions, sortBy: "name", sortDirection: "asc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
+    // Store list methods intentionally cap one query at 1,000 rows. Keep the
+    // explicit CLI limit as an optional output cap, but page the default export
+    // until the final short page so large exports never silently truncate.
+    const pageSize = 1_000;
+    const records: Record<string, unknown>[] = [];
+    let offset = 0;
+    while (requestedLimit === undefined || records.length < requestedLimit) {
+      const limit = requestedLimit === undefined
+        ? pageSize
+        : Math.min(pageSize, requestedLimit - records.length);
+      const listOptions = {
+        search,
+        limit,
+        offset,
+        archivedOnly: args.flags.has("archived"),
+        includeArchived: args.flags.has("all"),
+      };
+      const page = entity === "company"
+        ? companies.list({ ...listOptions, sortBy: "name", sortDirection: "asc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>))
+        : entity === "contact"
+          ? contacts.list({ ...listOptions, sortBy: "name", sortDirection: "asc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>))
+          : deals.list({ ...listOptions, sortBy: "createdAt", sortDirection: "desc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
+      records.push(...page);
+      if (page.length < limit) break;
+      offset += page.length;
     }
-    if (entity === "contact") {
-      return contacts.list({ ...listOptions, sortBy: "name", sortDirection: "asc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
-    }
-    return deals.list({ ...listOptions, sortBy: "createdAt", sortDirection: "desc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
+    return records;
   }
 
   function cliExport(argv: readonly string[]): PluginCliResult {

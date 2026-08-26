@@ -61,6 +61,12 @@ describe("connections and tracking wire contracts", () => {
     };
     expect(trackingEventInputSchema.safeParse(event).success).toBe(true);
     expect(trackingEventInputSchema.safeParse({ ...event, properties: { email: "ada@example.com" } }).success).toBe(false);
+    expect(trackingEventInputSchema.safeParse({ ...event, properties: { campaign: "Reach ada@example.com" } }).success).toBe(false);
+    expect(trackingEventInputSchema.safeParse({ ...event, properties: { checkout_reference: "4111 1111 1111 1111" } }).success).toBe(false);
+    expect(trackingEventInputSchema.safeParse({
+      ...event,
+      properties: { campaign: "spring", order_reference: "1234567890123456", seats: 4111 },
+    }).success).toBe(true);
     expect(trackingEventInputSchema.safeParse({ ...event, pageUrl: "https://www.example.com/pricing?email=ada@example.com" }).success).toBe(false);
     expect(trackingEventInputSchema.safeParse({ ...event, unknown: 1 }).success).toBe(false);
     expect(trackingEventBatchInputSchema.safeParse({ events: [event] }).success).toBe(true);
