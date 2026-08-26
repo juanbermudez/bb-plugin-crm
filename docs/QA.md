@@ -119,9 +119,11 @@ Observed in the live CRM panel:
   company/contact/deal/agent controls, searchable facet popovers, tooltip-backed
   icon actions, CRM settings registration in BB Settings, and an Agents builder
   composer that is hidden until its modal opens.
-- A fresh isolated BB path install of commit `5bb6d87` was inspected in the
+- A fresh isolated BB path install through commit `d710f5a` was inspected in the
   in-app browser at 1280×720. Only CRM appeared in the main sidebar; Overview,
-  Companies, Contacts, Deals, and Agents appeared as top tabs; Companies
+  Companies, Contacts, Deals, and Agents appeared directly beside the text-only
+  CRM title; the standalone desktop tab row was absent, and the sidebar used
+  the new contact-record icon. Companies
   rendered one non-wrapping toolbar with exactly one create entry point in the
   host New menu; the filter popover rendered grouped contextual options; the
   Save current view icon exposed its top hover tooltip; the title-bar Checklist

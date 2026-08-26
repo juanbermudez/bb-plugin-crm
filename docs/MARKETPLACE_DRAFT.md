@@ -17,12 +17,12 @@ Git repository.
 - Proposed immutable tag: `v0.1.0`
 - Proposed marketplace source range: `^0.1.0`
 - Current review branch: `codex/ui-simplification` (latest verified UI commit
-  `5bb6d87`; release tag remains intentionally uncreated)
+  `d710f5a`; release tag remains intentionally uncreated)
 - Declared engines: BB `>=0.39`; plugin SDK `>=0.4.8`
-- Current plugin icon: `assets/icon.svg` (784 bytes, SHA-256
-  `f1ddd8a46e88b19777e38d4a2cbc0fe222a4497d64f5b163248a3d78b91a61b1`)
+- Current plugin icon: `assets/icon.svg` (456 bytes, SHA-256
+  `d421a40f0ccda48a8cecdd5bdfb446f489ca89e852b6f8c04e09bb78a40f0d6f`)
 - Proposed vendored marketplace icon: copy `assets/icon.svg` to
-  `icons/crm-f1ddd8a4.svg` in the marketplace repository. The entry must
+  `icons/crm-d421a40f.svg` in the marketplace repository. The entry must
   reference only that copied file, never the plugin repository or a remote URL.
 
 The release commit and remote-mutating release commands remain placeholders
@@ -44,7 +44,7 @@ compatibility remains authoritative in the plugin manifest.
   "displayName": "CRM",
   "description": "Manage companies, contacts, deals, activities, custom fields, agent automation, connection health, and privacy-safe site tracking inside BB.",
   "icon": {
-    "url": "./icons/crm-f1ddd8a4.svg"
+    "url": "./icons/crm-d421a40f.svg"
   },
   "tags": [
     "crm",
@@ -161,9 +161,9 @@ operator-confirmed site authority.
 - The temporary `npm run check` reached the expected source-liveness gate and
   failed only because the approved release tag does not exist yet.
 - The temporary build validated entry id `crm`, its repository-root source
-  shape, and `icons/crm-f1ddd8a4.svg` against the strict schema.
+  shape, and `icons/crm-d421a40f.svg` against the strict schema.
 - The audited source icon is 784 bytes with SHA-256
-  `f1ddd8a46e88b19777e38d4a2cbc0fe222a4497d64f5b163248a3d78b91a61b1`.
+  `d421a40f0ccda48a8cecdd5bdfb446f489ca89e852b6f8c04e09bb78a40f0d6f`.
 
 ### Schema/build audit status
 
@@ -277,7 +277,7 @@ marketplace pass is claimed before that tag.
   only after verifying its remote URL and branch state.
 - [ ] Start `submit-crm` from the audited `upstream/main`; refresh it from
   current `get-bb/marketplace:main` immediately before editing.
-- [ ] Copy `assets/icon.svg` to `icons/crm-f1ddd8a4.svg`; verify it is SVG,
+- [ ] Copy `assets/icon.svg` to `icons/crm-d421a40f.svg`; verify it is SVG,
   under 256 KB, content-hashed, monochrome/currentColor, and free of scripts,
   external references, and private data.
 - [ ] Add only `entries/crm.json` and the vendored icon. Do not commit

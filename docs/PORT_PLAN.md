@@ -118,8 +118,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - One first-class `navPanel` registration exposes CRM in BB's main sidebar.
   BB SDK 0.4.x has no nested/grouped nav-panel contract, so Overview,
-  Companies, Contacts, Deals, and Agents are BB-styled tabs at the top of the
-  CRM panel and retain deep-link state through `subPath`.
+  Companies, Contacts, Deals, and Agents are BB-styled tabs beside the shared
+  CRM title on desktop, with an in-panel fallback below 1024px. Both placements
+  retain deep-link state through `subPath`.
 - One BB `settingsSection` owns workspace, currency, field, connection, and
   tracking configuration; settings is not advertised in CRM navigation.
 - BB's host-owned title bar mounts compact CRM search, enrichment, a modal
@@ -163,16 +164,17 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - No plugin-owned navigation rail or duplicate CRM breadcrumb/header.
 - One CRM destination lives in BB's sidebar; Overview, Companies, Contacts,
-  Deals, and Agents are top tabs inside that panel. Settings lives under BB
-  Settings → Plugins → CRM.
+  Deals, and Agents are title-bar tabs on desktop and compact in-panel tabs on
+  smaller layouts. Settings lives under BB Settings → Plugins → CRM.
 - Global search and quick switcher mount in BB's host-owned title bar.
 - Keyboard-accessible global New menu for company, contact, deal, note, task,
   and agent. Record-attached notes/tasks use a global picker and the existing
   activity contract rather than inventing an unscoped activity.
 - The host's right-panel toggle remains BB-owned and follows the New action in
-  the title bar. The public SDK cannot suppress the host CRM logo/title or
-  register nested sidebar children; the internal tabs are the supported
-  adaptation.
+  the title bar. The host still owns the CRM title; a narrowly scoped authored
+  stylesheet hides only the redundant CRM icon in that title row while keeping
+  the new contact-record mark in the sidebar. The public SDK cannot register
+  nested sidebar children, so the responsive tabs are the supported adaptation.
 - Loading, empty, disconnected, and migration-error states.
 
 ### Dashboard

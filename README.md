@@ -16,9 +16,9 @@ have actually run in [docs/QA.md](docs/QA.md).
 
 Currently working end to end:
 
-- one BB-native CRM sidebar destination with an in-panel tab bar for Overview,
-  Companies, Contacts, Deals, and Agents; BB Settings owns CRM configuration,
-  and BB retains its host-owned title and panel controls
+- one BB-native CRM sidebar destination; Overview, Companies, Contacts, Deals,
+  and Agents sit beside the host-owned CRM title on desktop and fall back to a
+  compact in-panel row below 1024px; BB Settings owns CRM configuration
 - source-shaped dashboard with Me (the installation-local
   owner)/Everyone scope,
   pipeline, performance, six-month trend, closing totals, overdue work, and
