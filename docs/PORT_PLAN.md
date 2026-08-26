@@ -198,7 +198,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
   share one size, ghost treatment, padding model, and top tooltip; redundant
   result counts are omitted above the table. Sort and saved-view menus use the
   locally ejected beUI Select primitive, themed with BB tokens and rendered in
-  a portal so the non-wrapping toolbar cannot clip them.
+  a portal so the non-wrapping toolbar cannot clip them. Filter uses a locally
+  ejected adaptation of beUI Combobox: search is always visible and grouped
+  multi-select options remain in one vertical list.
 - Saved views and column preferences.
 - Standard and custom field columns, with contextual facet counts and 7/30/90-day
   activity facets; custom-field facet keys are `field:<key>`.
@@ -222,9 +224,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Searchable, sortable, paginated table.
 - One compact toolbar above the table groups search/filter on the left and
   sort/direction, saved views, columns, and archived scope on the right. The
-  saved-view base option is labeled `All records`; no duplicate result count is
-  rendered above the table. Sort and saved-view dropdowns use the same locally
-  ejected, BB-themed beUI Select primitive as Companies.
+  saved-view reset option remains inside its icon menu rather than appearing as
+  an `All records` toolbar button; no duplicate result count is rendered above
+  the table. Sort and saved-view dropdowns use the same locally ejected,
+  BB-themed beUI Select primitive as Companies.
 - Saved views, contextual facets, standard fields, custom fields, and bulk
   actions. Activity facets use 7/30/90-day recency windows and custom-field
   keys use `field:<key>`.

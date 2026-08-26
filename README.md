@@ -32,8 +32,9 @@ Currently working end to end:
   while sorting, saved views, columns, and archive scope stay grouped on the
   right. Status, sort, and saved-view menus use a locally ejected beUI Select
   adapted to BB tokens and toolbar geometry—no beUI package or registry is
-  installed. BB-native facet popovers add search when option volume merits it,
-  while icon-only save-view, sort-direction, columns, and archive controls use
+  installed. Facets use a locally ejected adaptation of beUI Combobox with an
+  always-visible search and one vertical grouped option list,
+  while icon-only sort, saved-view, save-current-view, direction, columns, and archive controls use
   one ghost-button style and expose accessible top tooltips; pagination,
   standard/custom facets, saved-view restore/defaults, row
   selection, and bulk owner/company/stage/archive/restore/purge operations

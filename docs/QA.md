@@ -114,6 +114,14 @@ bundle reported app hash `dd8f433df71f490b` and runtime SDK `0.4.8`.
 
 Observed in the live CRM panel:
 
+- A second source-development toolbar audit inspected the closed and expanded
+  states of Companies, Contacts, Deals, and Agents at 1280×720. Company,
+  contact, and deal searches displayed their complete placeholders; no toolbar
+  contained a native select. Sort and saved views rendered as matching 36px
+  ghost icon menus, with `All records` available only inside the saved-view
+  menu. The BeUI Combobox-derived Filter surface kept search visible for every
+  facet count, rendered every grouped option in one vertical list, filtered
+  live, and showed a persistent checkbox frame plus animated selected check.
 - A source-development smoke for the ejected beUI Select pass inspected Deals,
   Contacts, Companies, and Agents at 1280×720. Deal status, shared sort,
   saved-view, and Agent status controls used the BB-themed local primitive;
