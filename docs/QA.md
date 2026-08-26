@@ -3,21 +3,25 @@
 This log records checks that have actually run. Planned checks remain in the
 port plan and marketplace draft and are not treated as passing evidence.
 
-## Automated foundation through deals and currency
+## Automated foundation through agent persistence
 
-Verified on 2026-08-25 against BB `0.39.0` and plugin SDK `0.4.8`:
+Verified on 2026-08-25 against BB `0.39.0` and plugin SDK `0.4.8` at clean
+pushed revision `8a1665b`:
 
-- `npm test`: 12 files and 44 tests passed.
+- `npm test -- --run`: 22 files and 102 tests passed.
 - `npm run typecheck`: passed.
 - `npm run build`: passed and emitted server/app bundles and metadata.
-- `git diff --check`: passed before the company-slice commit.
-- Backend harness uses a real temporary SQLite database.
+- Backend and agent-persistence harnesses use real temporary SQLite databases.
 - Frontend harness covers plugin registration, RPC rendering, navigation,
-  company/contact/deal tables, drawers, creation, stage changes, archive, and
-  restore.
+  dashboard scope and summary, company/contact/deal tables and drawers,
+  relationships, activity timeline/composer/task lifecycle, saved-view bar,
+  custom-field settings/editor, and currency settings.
 - Currency coverage uses real SQLite for manual/fetched precedence, audit
   history, exact minor-unit rounding, frozen deal money, and explicit re-rate
   behavior.
+- Agent-persistence coverage verifies schema migration v5 plus definition and
+  version state, triggers, runs, approvals, actions, thread links, audit rows,
+  and terminal lifecycle guards.
 
 ## Live BB browser smoke
 
@@ -27,6 +31,8 @@ Environment:
 - isolated data directory under `.work/bb-test-data`
 - plugin installed by local path and reloaded after build
 - local application at `http://127.0.0.1:38886`
+- captured live database is schema version `4`; agent lifecycle schema version
+  `5` is covered by the clean automated run above, not by this browser smoke
 
 Observed:
 
@@ -56,11 +62,23 @@ Observed:
 - Adding a manual USD/EUR rate of `1.17` with provider `Live QA treasury`
   persisted, became the effective override, and immediately produced a matching
   append-only audit row.
+- The company activity composer/timeline recorded a `Live activity note` on
+  `Live QA Labs` with body `Verified in packaged BB after plugin reload.`.
+- It also recorded a `Review live QA` task for that company; the stored task row
+  has a completion timestamp, covering the create/complete path in the captured
+  live plugin data.
+- The Companies saved-view control created `Live accounts` with query `Live`,
+  ascending name sort, active-only state, and persisted it as the COMPANY
+  default in plugin metadata.
 
 Still required before release:
 
 - light, dark, and custom-theme sweep across every completed view
 - compact viewport and keyboard-only sweep
+- dynamic list-control parity sweep (sort/direction, standard/custom facets,
+  columns, selection, and bulk actions); implementation remains `building`
 - Electron smoke
-- activity, agent, integration, and settings parity QA
+- activity, agent, integration, and remaining settings parity QA beyond the
+  timeline, saved-view, currency-setting, and automated agent-persistence
+  coverage above
 - clean public-tag installation and marketplace validation
