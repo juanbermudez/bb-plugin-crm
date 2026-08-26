@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "../../../components/ui/button.js";
 import { Icon } from "../../../components/ui/icon.js";
@@ -6,12 +6,18 @@ import { CurrencySettingsView } from "./currency/index.js";
 import type { CurrencyRpcClient } from "./currency/rpc.js";
 import { CustomFieldsSettingsView } from "./custom-fields/index.js";
 import type { CustomFieldsRpcClient } from "./custom-fields/rpc.js";
+import { ConnectionsSettingsView } from "./connections/index.js";
+import type { ConnectionsRpcClient } from "./connections/rpc.js";
+import { TrackingSettingsView } from "./tracking/index.js";
+import type { TrackingRpcClient } from "./tracking/rpc.js";
 
-export type SettingsSection = "currency" | "custom-fields";
+export type SettingsSection = "currency" | "custom-fields" | "connections" | "tracking";
 
 const SECTIONS = [
   { id: "currency", label: "Currency", icon: "ChartColumn" },
   { id: "custom-fields", label: "Custom fields", icon: "Edit" },
+  { id: "connections", label: "Connections", icon: "ElectricPlugs" },
+  { id: "tracking", label: "Tracking", icon: "Globe" },
 ] as const;
 
 export interface SettingsViewProps {
@@ -19,6 +25,8 @@ export interface SettingsViewProps {
   onSectionChange?: (section: SettingsSection) => void;
   currencyRpcClient?: CurrencyRpcClient;
   customFieldsRpcClient?: CustomFieldsRpcClient;
+  connectionsRpcClient?: ConnectionsRpcClient;
+  trackingRpcClient?: TrackingRpcClient;
 }
 
 export function SettingsView({
@@ -26,15 +34,21 @@ export function SettingsView({
   onSectionChange,
   currencyRpcClient,
   customFieldsRpcClient,
+  connectionsRpcClient,
+  trackingRpcClient,
 }: SettingsViewProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
 
   return (
     <div className="flex min-h-full min-w-0 flex-col">
       <header className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
         <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Configure reporting money and the fields shared by CRM records and agents.
+          Configure reporting money, shared fields, provider connections, and site tracking.
         </p>
         <div
           className="mt-4 flex flex-wrap items-center gap-1"
@@ -63,8 +77,12 @@ export function SettingsView({
       <div className="min-h-0 min-w-0 flex-1" role="tabpanel">
         {section === "currency" ? (
           <CurrencySettingsView rpcClient={currencyRpcClient} />
-        ) : (
+        ) : section === "custom-fields" ? (
           <CustomFieldsSettingsView rpcClient={customFieldsRpcClient} />
+        ) : section === "connections" ? (
+          <ConnectionsSettingsView rpcClient={connectionsRpcClient} />
+        ) : (
+          <TrackingSettingsView rpcClient={trackingRpcClient} />
         )}
       </div>
     </div>

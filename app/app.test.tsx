@@ -119,4 +119,44 @@ describe("CRM nav panel", () => {
     });
     slot.lifecycle.unmount();
   });
+
+  it("deep-links settings connections and tracking sections", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const panel = app.navPanels[0]!;
+    const connectionsSlot = renderSlot(
+      panel,
+      { subPath: "settings/connections" },
+      {
+        rpc: {
+          connections_list: () => [],
+        },
+      },
+    );
+    await connectionsSlot.findByRole("heading", { name: "Connections" });
+    expect(connectionsSlot.getByText(/OAuth authorization is not bundled/)).toBeDefined();
+    expect(connectionsSlot.inspection.rpcCalls).toContainEqual({
+      method: "connections_list",
+      input: {},
+    });
+    connectionsSlot.lifecycle.unmount();
+
+    const trackingSlot = renderSlot(
+      panel,
+      { subPath: "settings/tracking" },
+      {
+        rpc: {
+          tracking_sites_list: () => [],
+          tracking_tokens_list: () => [],
+          tracking_aggregates_list: () => [],
+        },
+      },
+    );
+    await trackingSlot.findByRole("heading", { name: "Tracking" });
+    expect(trackingSlot.getByText("No tracking sites configured")).toBeDefined();
+    expect(trackingSlot.inspection.rpcCalls).toContainEqual({
+      method: "tracking_sites_list",
+      input: { limit: 100, offset: 0 },
+    });
+    trackingSlot.lifecycle.unmount();
+  });
 });

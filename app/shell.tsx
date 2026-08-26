@@ -104,7 +104,15 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
           />
         ) : route.kind === "settings" ? (
           <SettingsView
-            initialSection={route.recordId === "custom-fields" ? "custom-fields" : "currency"}
+            initialSection={
+              route.recordId === "custom-fields"
+                ? "custom-fields"
+                : route.recordId === "connections"
+                  ? "connections"
+                  : route.recordId === "tracking"
+                    ? "tracking"
+                    : "currency"
+            }
             onSectionChange={(section: SettingsSection) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "settings", recordId: section }),
