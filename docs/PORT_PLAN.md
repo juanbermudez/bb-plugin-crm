@@ -9,7 +9,7 @@ typed RPC, CLI commands, agent tools, and BB threads.
 
 Source baselines:
 
-- BB: `get-bb/bb` at `2cfd2b5df57daeed51ea544b54a8869bbec1c478`.
+- BB: `get-bb/bb` current-main audit at `7dc6756e20ba749ad9d4d6d939b1dd7de363250b`.
 - CRM: `trycompai/crm` release branch at `6d4793dd6d7aeea91aa6a034e00b17d7408a2d08`.
 - BB application: `>=0.39`.
 - BB plugin SDK: `>=0.4.8`.
@@ -21,7 +21,7 @@ saved/dynamic columns, unified activity, enrichment, CRM-event/webhook
 automation, leased due-task dispatch, clarification prompts, bounded BB
 project attachments, agent definition/run lifecycle, and the BB-native
 natural-language builder conversation surface are implemented. The current
-append-only storage schema is version 10. The post-baseline audit closeout also
+append-only storage schema is version 11. The post-baseline audit closeout also
 covers contextual facets and activity windows, relation-aware search and count
 sorting, suppression/auto-company behavior, an aggregate enrichment queue,
 source-shaped related-record payloads, primary-contact validation, tracking
@@ -35,10 +35,12 @@ externally supplied provider/agent-tool credentials and host authorization and
 are not bundled. Phase 8 is implemented except for general API keys and
 per-user roles, which cannot be issued safely without a public BB
 current-user/RBAC authority or identity directory. Phase 9 has automated
-coverage and a focused packaged-browser smoke; Electron, complete keyboard,
-and full light/custom-theme passes remain open. Phase 10 is prepared through
-the public repository and marketplace draft, while the immutable tag and
-marketplace PR remain release-gated.
+coverage plus packaged-browser checks across wide/compact layouts, default
+dark, forced light, a custom Catppuccin palette, nested record workflows, and
+focused keyboard paths. Electron and an exhaustive keyboard-only/source-flow
+replay remain open. Phase 10 is prepared through the public repository and
+marketplace draft, while the immutable tag and marketplace PR remain
+release-gated.
 
 ## Product and interaction thesis
 
@@ -119,16 +121,18 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Native agent tools expose CRM search/read/write, activity/task, custom-field,
   evidence, and enrichment operations.
 - `bb crm` exposes status, doctor, list, show, create, update, archive, restore,
-  add-activity, tasks, import, and export commands.
+  purge, typed bulk operations, add-activity, tasks, import, and export commands.
 - Realtime `changed` signals invalidate affected frontend queries.
 
 ### Storage rules
 
 - UUID-like text IDs keep record types recognizable.
 - Foreign keys remain enabled.
-- `CRM_SCHEMA_VERSION` is 10. Migration 10 adds site-scoped cookie/rule
+- `CRM_SCHEMA_VERSION` is 11. Migration 10 adds site-scoped cookie/rule
   controls, observed tracking verification evidence, event medium storage, and
-  daily source/medium rollups without rewriting migrations 0–9.
+  daily source/medium rollups; migration 11 adds installation website/profile
+  identity. Durable due-task dispatch was introduced in migration 8.
+  Later closeout migrations are appended without rewriting prior migrations.
 - Soft archive fields preserve CRM restore and suppression behavior.
 - Money stores decimal minor-unit integers plus currency and frozen base values.
 - Custom field values use typed columns and strict boundary schemas.
@@ -175,7 +179,7 @@ CRM records, workflows, integrations, automation, or agent behavior.
   website history, enrichment, fields, and Agent tab.
 - Primary contact, owner, social links, source, enrichment status, and a
   deterministic `https://<normalized-domain>/favicon.ico` URL when a domain is
-  present. Company contact/all-deal count sorting uses source relation-count
+  present. Company contact/open-deal count sorting uses source relation-count
   semantics across active and archived relations; owner
   sorting uses stable local IDs.
 - Related contacts include archived rows ordered by last name/first name; related
@@ -324,7 +328,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Currency
 
 - Store source amount and source currency unchanged.
-- Store frozen base amount, base currency, rate, source, and rate timestamp.
+- Store frozen base amount, base currency, rate, source, and rate timestamp;
+  refresh the snapshot when source amount/currency changes and preserve it for
+  unrelated edits.
 - Sum and sort only compatible base amounts.
 - Support manual and fetched rates with manual precedence.
 - Re-rate only through an explicit operation.
@@ -476,7 +482,9 @@ Tasks:
 - Complete unified timeline and activity composer, including global record-
   attached note/task creation from the CRM header.
 - Complete global search and quick switcher.
-- Complete CSV import/export and versioned JSON backup/restore.
+- Complete CSV and versioned JSON record interchange for the supported company,
+  contact, and deal columns. Do not describe this narrow format as a lossless
+  database backup or restore.
 
 Exit criteria:
 
@@ -595,7 +603,7 @@ future work hidden behind the phase headings above.
 - Company, contact, and deal list queries now use contextual facet counts
   (current search plus active/archived scope), 7/30/90-day activity windows,
   and `field:<key>` custom-field keys. Contacts and deals search associated
-  company names; company contact/all-deal count sorting and null-last list and
+  company names; company contact/open-deal count sorting and null-last list and
   related-record ordering are deterministic. Initial company/contact lists use
   `createdAt DESC`, and deals open with source status `all`.
 - Contact purge suppression and eligible work-email auto-company resolution are
@@ -642,7 +650,7 @@ These are deliberate limits or release gates, not stale parity omissions:
 | Host-visible task and assignee semantics | Due-task dispatch is opt-in and CRM-local; it leases timeline TASK rows for one configured live agent and does not create a host-visible BB Task or infer an activity author as assignee. |
 | Agent attachment scope | Attachments are bounded bytes resolved through BB project-relative paths; arbitrary filesystem paths, traversal, oversized payloads, and unscoped projects are rejected. |
 | Linking pre-existing BB threads | Plugin records link atomically to threads the plugin spawns; the SDK does not expose a callback for attaching an arbitrary user-composed thread. |
-| Release-client QA and distribution | Automated coverage and focused packaged-browser smoke exist. Electron, complete keyboard, full light/custom-theme passes, immutable release tag, and marketplace PR remain release-gated. |
+| Release-client QA and distribution | Automated coverage and packaged-browser checks cover wide/compact layouts, dark/light/custom palettes, nested record workflows, and focused keyboard paths. Electron, exhaustive keyboard/source-flow replay, immutable release tag, and marketplace PR remain release-gated. |
 
 ## Commit and push slices
 

@@ -6,13 +6,15 @@ port plan and marketplace draft and are not treated as passing evidence.
 ## Current integrated release-candidate checks
 
 Verified on 2026-08-26 against the integrated release-candidate working tree,
-with CRM schema version 11, BB `0.39.0`, and plugin SDK `0.4.8`. These
+with CRM schema version 11, a BB `0.39.0` managed-install compatibility floor,
+and current plugin SDK `0.4.22` declarations. These
 checks are local working-tree evidence; they do not claim a public release,
 tag, or marketplace submission.
 
-- `npm test`: 54 test files and 268 tests passed.
+- `npm test`: 56 test files and 291 tests passed.
 - `npm run typecheck`: passed.
-- `./node_modules/.bin/bb plugin types --check .`: passed.
+- Current-BB `bb plugin types --check .`: passed; packaged BB `0.39.0`
+  compatibility is verified by the managed-install/build smoke below.
 - `npm run build`: passed and emitted identity-checked server/app bundles and
   metadata.
 - `git diff --check`: passed.
@@ -28,12 +30,11 @@ tag, or marketplace submission.
   release-candidate commit then completed the managed Git-install and browser
   smoke below.
 - BB `0.40.0` main's type-sync surface was audited at commit `7dc6756e`; its
-  advertised SDK `0.4.22` was not yet available from npm, so this release
-  remains pinned to the latest published `0.4.8` declarations while carrying
-  the 0.40 host-shim declarations as dev-only forward compatibility.
+  published SDK `0.4.22` declarations now drive local typecheck/build, while
+  the compatibility package and managed smoke retain the BB `0.39` floor.
 
-The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
-`0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite
+The old-host build metadata reports plugin id `crm`, plugin version `0.1.0`,
+SDK `0.4.8`, and BB `0.39.0`; current-host builds use SDK `0.4.22`. The automated suites use real temporary SQLite
 databases for migrations and persistence. They cover:
 
 - BB app registration, routing, dashboard Me (the installation-local owner)/Everyone scope, core record
@@ -74,7 +75,7 @@ databases for migrations and persistence. They cover:
   activity authors are never inferred as assignees, and persisted schema-9 to
   schema-11 migration upgrades.
 - Workspace website/profile persistence, website-only setup, source default
-  list states, null-last related ordering, all-deal count sorting, archived
+  list states, null-last related ordering, open-deal count sorting, archived
   dashboard semantics, manual-only field protection, and the source-named
   agent pipeline/outstanding-work/field/history/job-change/recheck workflows.
 - Stable focus restoration for global note/task drawers and capture-phase Tab
@@ -89,12 +90,13 @@ rather than this packaged evidence file. A public `v0.1.0` tag install remains
 approval-gated and must still be checked after the tag is created. No secret,
 one-time credential, or token value is recorded here.
 
-The final schema-11 release-candidate smoke loaded exact public commit
-`f69342c`; both
+The final schema-11 release-candidate smoke loaded exact public implementation
+and package commit `bc2c24ce72c947fd919d6ccd7c8d56ec13a803d6`; both
 `crm-agent-dispatcher` and `crm-archive-retention` background services were
 running, schema version 11 matched, SQLite integrity was `ok`, no foreign-key
 violations were found, the managed source resolved to the requested public
-commit, and the browser console reported zero errors.
+commit, and the browser console reported zero errors or warnings. The managed
+bundle reported app hash `dd8f433df71f490b` and runtime SDK `0.4.8`.
 
 Observed in the live CRM panel:
 
@@ -167,14 +169,32 @@ Observed in the live CRM panel:
   intact, and reported no browser-console errors. It also opened and closed the
   global New note drawer and verified focus returned to the persistent New
   button while the URL returned to `/dashboard`.
+- A fresh installation exposed the stable installation-local owner as `You`.
+  The first deal defaulted to that owner, picker choices remained available,
+  and list/detail projections rendered `You` rather than a raw owner id.
+- A company drawer completed its full nested workflow: create/link and open a
+  contact or deal, use each nested record's complete drawer surface, and return
+  to the parent company without losing navigation state. The activity timeline
+  and record-specific Agent tabs remained available at each level.
+- The global Agents page rendered BB's native builder home and thread composer,
+  including suggestion cards plus project, model, and permission controls. The
+  disposable host lacked a resolvable Codex executable/model, so live model
+  execution failed closed; successful spawn/link behavior remains covered by
+  server tests.
+- A 720×900 compact pass kept every deal-stage label readable in the fixed-width
+  horizontally scrollable stage rail. Catppuccin custom-palette, default dark,
+  and forced-light passes remained legible, and a final default-theme dashboard
+  load reported zero console errors or warnings.
+- Focused keyboard checks covered Escape drawer dismissal, global search result
+  traversal, and Enter opening the selected contact deep link.
 
 ## Release-gated or not run
 
 The following are not claimed as passing evidence in this log:
 
-- full light/custom-theme and every remaining source-workflow sweep; compact
-  dark-theme and focused keyboard paths are covered by the smokes above, but a
-  complete keyboard-only audit was not run;
+- an exhaustive keyboard-only audit and an exhaustive replay of every source
+  workflow; focused Escape/search/Enter paths, compact layouts, default dark,
+  forced light, and a custom Catppuccin palette are covered above;
 - Electron-specific smoke (no Electron QA was run for this update);
 - final production release tag creation, public-tag installation, or
   marketplace submission. No final tag, marketplace check, or PR is claimed.

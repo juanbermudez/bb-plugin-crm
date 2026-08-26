@@ -110,6 +110,8 @@ bb crm create company '{"name":"Acme","domain":"acme.example"}' --json
 bb crm update company <company-id> '{"industry":"Software"}' --json
 bb crm archive deal <deal-id> --json
 bb crm restore deal <deal-id> --json
+bb crm bulk deal set-stage --ids <deal-id>,<deal-id> --stage CONTRACT_SENT --json
+bb crm purge contact <contact-id> --json
 bb crm add-activity '{"type":"NOTE","companyId":"<company-id>","body":"Called"}' --json
 bb crm tasks upcoming --json
 bb crm export company --format csv
@@ -118,7 +120,10 @@ bb crm import company '<versioned-json-or-csv>' --format json --json
 
 `export` writes versioned JSON (`{version, entity, records}`) or CSV to
 stdout. Imports accept that JSON document, a JSON array, or CSV inline in the
-CLI argument. The CLI never reads or prints secret plugin settings.
+CLI argument. This is bounded CRM-record interchange, not a lossless database
+backup: activities, saved views, agents, connections, tracking data, and other
+related tables are intentionally excluded. The CLI never reads or prints
+secret plugin settings.
 
 ## Install
 
@@ -154,12 +159,12 @@ bb plugin types
 Vendored UI source lives in `components/ui`. Add version-matched components
 from BB's registry. `@radix-ui/react-dialog` is host-shimmed and type-only.
 BB-shimmed packages remain type-only `devDependencies`, as required by
-`bb plugin types`. The SDK stays pinned to the latest published BB 0.39 SDK
-(`0.4.8`); BB 0.40 main currently advertises an unpublished `0.4.22` pin, so
-that forward sync cannot be committed until the package exists. The local
+`bb plugin types`. Development declarations are pinned to the current
+published SDK (`0.4.22`), while the declared compatibility floor remains SDK
+`0.4.8` / BB `0.39` and is verified through a managed old-host install. The local
 `@bb-crm/bb-039-ui-runtime` compatibility package
 supplies exact `class-variance-authority`, `clsx`, and `tailwind-merge` pins to
-managed Git builds on the declared BB `0.39` minimum, whose published builder
+managed Git builds on that declared BB `0.39` minimum, whose published builder
 predates those shims. Current BB externalizes the same imports, so the
 compatibility package does not duplicate them in the extension bundle.
 

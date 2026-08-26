@@ -113,19 +113,21 @@ operator-confirmed site authority.
 ## Plugin checks
 
 - Integrated release-candidate checks in the local working tree (schema
-  version 11): `npm test` passed with 54 test files / 268 tests;
-  `npm run typecheck` passed; `./node_modules/.bin/bb plugin types --check .`
-  passed; `npm run build` passed and emitted identity-checked metadata; and
-  `git diff --check` passed.
+  version 11): `npm test` passed with 56 test files / 291 tests;
+  `npm run typecheck` passed; current-BB `bb plugin types --check .` passed;
+  `npm run build` passed and emitted identity-checked metadata; and `git diff
+  --check` passed. Development declarations use current published SDK `0.4.22`;
+  the managed compatibility smoke verifies the SDK `0.4.8` / BB `0.39` floor.
 - Release-boundary audit passed for the manifest, runtime dependencies, SDK
   imports, generated metadata, package contents, icon, migrations, security
   boundaries, and checked-in release claims. These are local working-tree
   checks and do not claim a public release.
 - A managed Git install and packaged-BB `0.39.0` panel smoke passed from the
   corrected exact public release-candidate commit after the integrated parity
-  work. The latest exact-public-SHA rehearsal used `f69342c`, reported schema
-  11, clean SQLite/FK
-  health, both background services running, and zero browser-console errors.
+  work. The latest exact-public-SHA rehearsal used
+  `bc2c24ce72c947fd919d6ccd7c8d56ec13a803d6`, reported schema 11, clean
+  SQLite/FK health, both background services running, app bundle hash
+  `dd8f433df71f490b`, and zero browser-console errors or warnings.
   A public-tag install is still required after approval; none is claimed yet.
 - The managed smoke covered Dashboard Me (installation-local owner)/Everyone,
   saved defaults, advanced Companies facets/selection, Agent creation,
@@ -136,10 +138,14 @@ operator-confirmed site authority.
   loader, bounded drawers, drawer-tab URL restoration, CRM keyboard search and
   entity selection, builder Conversation fail-closed behavior, closed-stage
   reasons, BB AlertDialogs, all six global creation actions, the enrichment
-  queue empty state/Escape behavior, and the Settings/Tracking deep link.
-- A complete keyboard-only sweep, light/custom-theme sweep, and
-  Electron-specific QA were not run. Final clean-tag package and BB smoke
-  evidence remains required.
+  queue empty state/Escape behavior, the Settings/Tracking deep link, a fresh
+  first-deal owner default rendered as `You`, full company-to-contact/deal
+  nested drawers, the native builder home, and readable horizontally scrolling
+  deal stages at 720×900.
+- Default dark, forced light, and custom Catppuccin palette checks passed.
+  Focused keyboard checks covered Escape plus search traversal/Enter. An
+  exhaustive keyboard-only/source-workflow replay and Electron-specific QA
+  were not run. Final clean-tag package and BB smoke evidence remains required.
 
 ## Marketplace checks
 
@@ -186,7 +192,8 @@ marketplace pass is claimed before that tag.
   secrets are displayed once at provisioning and are not returned by list/read
   views; optional integrations fail closed and secrets are not returned to the
   frontend.
-- BB SDK `0.4.8` exposes no plugin RBAC/current-user identity or blob API;
+- The declared BB SDK `0.4.8` compatibility floor exposes no plugin
+  RBAC/current-user identity or blob API;
   contact photos therefore keep an HTTPS source URL with initials fallback.
   Webhook triggers require external producers, a thread reported as
   `stopping` may remain pending because there is no public cancellation

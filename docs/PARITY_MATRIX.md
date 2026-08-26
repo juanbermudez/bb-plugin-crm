@@ -239,7 +239,7 @@ publicly reachable share requires BB Connect or an external relay.
 | API keys | No general-purpose keys are issued; BB exposes no safe current-user/RBAC authority | gap | 8 |
 | Members and role changes | Installation-local owner IDs; no BB identity directory or plugin RBAC API | gap | 8 |
 | SSO providers | BB authentication settings | host-owned | 8 |
-| Backup/export/import | Versioned JSON and CSV CLI | done | 5/8 |
+| Record export/import | Versioned JSON and CSV CLI for documented record columns; not a whole-database backup | done | 5/8 |
 | Diagnostics | `bb crm status` and doctor | done | 1/8 |
 
 The collector uses a rotatable site-scoped token that has no authority outside
@@ -247,14 +247,15 @@ tracking ingestion. The fixed loader never embeds the BB plugin token or a
 provisioned site token; an administrator supplies the one-time site token as a
 script data attribute on the authorized site.
 
-Fallback for API keys: no general-purpose key is issued. BB SDK `0.4.8` exposes
+Fallback for API keys: no general-purpose key is issued. The declared compatibility
+floor, BB SDK `0.4.8`, exposes
 the installation plugin token but no current-user/RBAC authority or identity
 directory, so delegating that token would grant unsafe installation-wide
 authority. Owner facets and sorting therefore use stable local owner IDs rather
 than a BB display-name directory.
 
 Fallback for members: the first marketplace release operates as one
-installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity, identity
+installation-wide CRM. The BB SDK `0.4.8` compatibility floor exposes no current-user identity, identity
 directory, or RBAC API, so role changes and per-user authorization are not
 implemented. Dashboard “Me” therefore filters by that installation-local owner
 rather than a BB user identity.
@@ -264,7 +265,7 @@ rather than a BB user identity.
 The following boundaries are intentional and remain release notes rather than
 parity claims:
 
-- BB SDK `0.4.8` has no plugin blob API; portraits and favicons are retained as
+- The BB SDK `0.4.8` compatibility floor has no plugin blob API; portraits and favicons are retained as
   validated HTTPS source URLs and other binary assets are not claimed as a
   hosted plugin capability.
 - Provider connection cards and health/metadata persistence are implemented,
@@ -314,6 +315,6 @@ parity claims:
 | Marketplace PR body draft | done |
 | Production release tag | planned |
 | Fresh public-tag install test | planned |
-| Browser parity QA | building; packaged-BB smoke covers dashboard, list controls, records/Agent tabs, enrichment controls, deal stage stepper, settings, tracking token flow, and focused compact dark-theme layout |
+| Browser parity QA | done for the release candidate; packaged-BB smoke covers dashboard, list controls, nested records/Agent tabs, builder home, enrichment controls, deal stage stepper, settings, tracking token flow, compact layouts, dark/light/custom palettes, and focused keyboard paths |
 | Electron parity QA | planned |
 | Marketplace PR submission | planned |
