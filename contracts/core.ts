@@ -36,6 +36,8 @@ const nonEmptyText = z.string().trim().min(1);
 const optionalText = z.string().trim().optional();
 const nullableText = z.string().trim().nullable();
 const optionalNullableText = nullableText.optional();
+const sourceUrl = z.string().trim().url("Use an absolute source URL.");
+const optionalNullableSourceUrl = sourceUrl.nullable().optional();
 
 /** Serialized timestamps are strings at the RPC boundary, never Date values. */
 export const timestampSchema = z.string().trim().min(1);
@@ -110,6 +112,31 @@ export const FACT_STATUSES = [
   "DISMISSED",
   "SUPERSEDED",
 ] as const;
+export const FACT_FIELDS = [
+  "name",
+  "title",
+  "linkedinUrl",
+  "twitterUrl",
+  "githubUrl",
+  "employer",
+  "seniority",
+  "function",
+  "location",
+  "tenure",
+] as const;
+export const EVIDENCE_KINDS = [
+  "profile.email-match",
+  "linkedin.employer-and-name",
+  "crm.thread-reply",
+  "crm.signature-block",
+  "github.account-identity",
+  "crm.meeting-attendance",
+  "web.cited-claim",
+  "handle.name-form",
+  "search.cites-profile",
+  "employer-only",
+  "contradiction",
+] as const;
 
 export const FIELD_ENTITIES = ["COMPANY", "CONTACT", "DEAL"] as const;
 export const FIELD_TYPES = [
@@ -174,6 +201,8 @@ export const enrichmentStatusSchema = z.enum(ENRICHMENT_STATUSES);
 export const recordSourceSchema = z.enum(RECORD_SOURCES);
 export const factBandSchema = z.enum(FACT_BANDS);
 export const factStatusSchema = z.enum(FACT_STATUSES);
+export const factFieldSchema = z.enum(FACT_FIELDS);
+export const evidenceKindSchema = z.enum(EVIDENCE_KINDS);
 export const fieldEntitySchema = z.enum(FIELD_ENTITIES);
 export const fieldTypeSchema = z.enum(FIELD_TYPES);
 export const rateSourceSchema = z.enum(RATE_SOURCES);
@@ -199,6 +228,8 @@ export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
 export type RecordSource = z.infer<typeof recordSourceSchema>;
 export type FactBand = z.infer<typeof factBandSchema>;
 export type FactStatus = z.infer<typeof factStatusSchema>;
+export type FactField = z.infer<typeof factFieldSchema>;
+export type EvidenceKind = z.infer<typeof evidenceKindSchema>;
 export type FieldEntity = z.infer<typeof fieldEntitySchema>;
 export type FieldType = z.infer<typeof fieldTypeSchema>;
 export type RateSource = z.infer<typeof rateSourceSchema>;
@@ -962,19 +993,112 @@ export const companyOutputSchema = companySchema;
 
 export const contactFactEvidenceSchema = z
   .object({
-    kind: nonEmptyText,
+    kind: evidenceKindSchema,
     detail: nonEmptyText,
-    sourceUrl: optionalText,
+    sourceUrl: optionalNullableSourceUrl,
   })
   .strict();
 export type ContactFactEvidence = z.infer<typeof contactFactEvidenceSchema>;
 
+export const contactFactEvidenceInputSchema = z
+  .object({
+    kind: evidenceKindSchema,
+    detail: nonEmptyText,
+    sourceUrl: optionalNullableSourceUrl,
+  })
+  .strict();
+export type ContactFactEvidenceInput = z.infer<
+  typeof contactFactEvidenceInputSchema
+>;
+
+const factScore = z.number().finite().min(0).max(1);
+const evidenceListLimit = z.number().int().finite().min(0).max(1_000);
+
+/** Complete persisted fact row used by evidence RPCs. */
+export const contactFactRecordSchema = z
+  .object({
+    id: idSchema,
+    contactId: idSchema,
+    field: factFieldSchema,
+    value: nonEmptyText,
+    score: factScore,
+    band: factBandSchema,
+    evidence: z.array(contactFactEvidenceSchema).min(1),
+    method: nonEmptyText,
+    sourceUrl: sourceUrl.nullable(),
+    sessionId: nullableText,
+    status: factStatusSchema,
+    decidedById: idSchema.nullable(),
+    decidedAt: timestampSchema.nullable(),
+    observedAt: timestampSchema,
+    supersededAt: timestampSchema.nullable(),
+    supersedesId: idSchema.nullable(),
+    supersededById: idSchema.nullable(),
+    createdAt: timestampSchema,
+  })
+  .strict();
+export type ContactFactRecord = z.infer<typeof contactFactRecordSchema>;
+
+export const contactFactCreateInputSchema = z
+  .object({
+    id: idSchema.optional(),
+    contactId: idSchema,
+    field: factFieldSchema,
+    value: nonEmptyText,
+    score: factScore,
+    band: factBandSchema,
+    evidence: z.array(contactFactEvidenceInputSchema).min(1),
+    method: nonEmptyText,
+    sourceUrl: optionalNullableSourceUrl,
+    sessionId: optionalNullableText,
+    status: factStatusSchema.optional(),
+    decidedById: idSchema.nullable().optional(),
+    decidedAt: timestampSchema.nullable().optional(),
+    observedAt: timestampSchema.optional(),
+    supersededAt: timestampSchema.nullable().optional(),
+    supersedesId: idSchema.nullable().optional(),
+  })
+  .strict();
+export type ContactFactCreateInput = z.infer<typeof contactFactCreateInputSchema>;
+
+export const contactFactListInputSchema = z
+  .object({
+    contactId: idSchema,
+    field: factFieldSchema.optional(),
+    statuses: z.array(factStatusSchema).optional(),
+    includeSuperseded: z.boolean().optional(),
+    limit: evidenceListLimit.optional(),
+  })
+  .strict();
+export type ContactFactListInput = z.infer<typeof contactFactListInputSchema>;
+
+export const contactFactDecisionInputSchema = z
+  .object({
+    id: idSchema,
+    decision: factDecisionSchema,
+    decidedById: idSchema.optional(),
+  })
+  .strict();
+export type ContactFactDecisionInput = z.infer<
+  typeof contactFactDecisionInputSchema
+>;
+
+export const contactFactSupersedeInputSchema = z
+  .object({
+    id: idSchema,
+    replacementId: idSchema.optional(),
+  })
+  .strict();
+export type ContactFactSupersedeInput = z.infer<
+  typeof contactFactSupersedeInputSchema
+>;
+
 export const contactFactSchema = z
   .object({
     id: idSchema,
-    field: nonEmptyText,
+    field: factFieldSchema,
     value: nonEmptyText,
-    score: z.number().finite().min(0).max(1),
+    score: factScore,
     band: factBandSchema,
     evidence: z.array(contactFactEvidenceSchema),
     method: nonEmptyText,
@@ -992,18 +1116,180 @@ export const contactBriefSchema = z
       .object({
         currentRole: optionalText,
         tenure: optionalText,
-        previousRoles: z.array(z.string()).optional(),
+        previousRoles: z.array(nonEmptyText).optional(),
         seniority: optionalText,
         function: optionalText,
         location: optionalText,
       })
       .strict(),
-    score: z.number().finite().min(0).max(1),
-    sourceUrl: nullableText,
+    score: factScore,
+    sourceUrl: sourceUrl.nullable(),
     refreshedAt: timestampSchema,
   })
   .strict();
 export type ContactBrief = z.infer<typeof contactBriefSchema>;
+
+export const contactBriefSectionsSchema = z
+  .object({
+    currentRole: optionalText,
+    tenure: optionalText,
+    previousRoles: z.array(nonEmptyText).optional(),
+    seniority: optionalText,
+    function: optionalText,
+    location: optionalText,
+  })
+  .strict();
+export type ContactBriefSections = z.infer<typeof contactBriefSectionsSchema>;
+
+/** Complete immutable brief version used by brief RPCs. */
+export const contactBriefRecordSchema = z
+  .object({
+    id: idSchema,
+    contactId: idSchema,
+    version: z.number().int().finite().min(1),
+    narrative: nonEmptyText,
+    sections: contactBriefSectionsSchema,
+    score: factScore,
+    sourceUrl: sourceUrl.nullable(),
+    sessionId: nullableText,
+    refreshedAt: timestampSchema,
+    createdAt: timestampSchema,
+  })
+  .strict();
+export type ContactBriefRecord = z.infer<typeof contactBriefRecordSchema>;
+
+export const contactBriefCreateInputSchema = z
+  .object({
+    id: idSchema.optional(),
+    contactId: idSchema,
+    version: z.number().int().finite().min(1).optional(),
+    narrative: nonEmptyText,
+    sections: contactBriefSectionsSchema,
+    score: factScore,
+    sourceUrl: optionalNullableSourceUrl,
+    sessionId: optionalNullableText,
+    refreshedAt: timestampSchema.optional(),
+  })
+  .strict();
+export type ContactBriefCreateInput = z.infer<typeof contactBriefCreateInputSchema>;
+
+export const contactBriefCurrentInputSchema = z
+  .object({ contactId: idSchema })
+  .strict();
+export type ContactBriefCurrentInput = z.infer<
+  typeof contactBriefCurrentInputSchema
+>;
+
+export const contactBriefVersionInputSchema = z
+  .object({
+    contactId: idSchema,
+    version: z.number().int().finite().min(1),
+  })
+  .strict();
+export type ContactBriefVersionInput = z.infer<
+  typeof contactBriefVersionInputSchema
+>;
+
+export const contactBriefListInputSchema = z
+  .object({
+    contactId: idSchema,
+    limit: evidenceListLimit.optional(),
+  })
+  .strict();
+export type ContactBriefListInput = z.infer<typeof contactBriefListInputSchema>;
+
+export const contactWorkHistorySchema = z
+  .object({
+    id: idSchema,
+    contactId: idSchema,
+    title: nullableText,
+    organizationName: nullableText,
+    organizationDomain: nullableText,
+    startDate: dateValueSchema.nullable(),
+    endDate: dateValueSchema.nullable(),
+    location: nullableText,
+    description: nullableText,
+    isCurrent: z.boolean(),
+    score: factScore,
+    band: factBandSchema,
+    evidence: z.array(contactFactEvidenceSchema).min(1),
+    method: nonEmptyText,
+    sourceUrl: sourceUrl.nullable(),
+    sessionId: nullableText,
+    status: factStatusSchema,
+    decidedById: idSchema.nullable(),
+    decidedAt: timestampSchema.nullable(),
+    observedAt: timestampSchema,
+    supersededAt: timestampSchema.nullable(),
+    supersedesId: idSchema.nullable(),
+    supersededById: idSchema.nullable(),
+    createdAt: timestampSchema,
+  })
+  .strict();
+export type ContactWorkHistory = z.infer<typeof contactWorkHistorySchema>;
+
+export const contactWorkHistoryCreateInputSchema = z
+  .object({
+    id: idSchema.optional(),
+    contactId: idSchema,
+    title: optionalNullableText,
+    organizationName: optionalNullableText,
+    organizationDomain: optionalNullableText,
+    startDate: dateValueSchema.nullable().optional(),
+    endDate: dateValueSchema.nullable().optional(),
+    location: optionalNullableText,
+    description: optionalNullableText,
+    isCurrent: z.boolean().optional(),
+    score: factScore,
+    band: factBandSchema,
+    evidence: z.array(contactFactEvidenceInputSchema).min(1),
+    method: nonEmptyText,
+    sourceUrl: optionalNullableSourceUrl,
+    sessionId: optionalNullableText,
+    status: factStatusSchema.optional(),
+    decidedById: idSchema.nullable().optional(),
+    decidedAt: timestampSchema.nullable().optional(),
+    observedAt: timestampSchema.optional(),
+    supersededAt: timestampSchema.nullable().optional(),
+    supersedesId: idSchema.nullable().optional(),
+  })
+  .strict();
+export type ContactWorkHistoryCreateInput = z.infer<
+  typeof contactWorkHistoryCreateInputSchema
+>;
+
+export const contactWorkHistoryListInputSchema = z
+  .object({
+    contactId: idSchema,
+    statuses: z.array(factStatusSchema).optional(),
+    includeSuperseded: z.boolean().optional(),
+    limit: evidenceListLimit.optional(),
+  })
+  .strict();
+export type ContactWorkHistoryListInput = z.infer<
+  typeof contactWorkHistoryListInputSchema
+>;
+
+export const contactWorkHistoryDecisionInputSchema = z
+  .object({
+    id: idSchema,
+    decision: factDecisionSchema,
+    decidedById: idSchema.optional(),
+  })
+  .strict();
+export type ContactWorkHistoryDecisionInput = z.infer<
+  typeof contactWorkHistoryDecisionInputSchema
+>;
+
+export const contactWorkHistorySupersedeInputSchema = z
+  .object({
+    id: idSchema,
+    replacementId: idSchema.optional(),
+  })
+  .strict();
+export type ContactWorkHistorySupersedeInput = z.infer<
+  typeof contactWorkHistorySupersedeInputSchema
+>;
 
 export const contactRelationshipSchema = z
   .object({
@@ -1056,6 +1342,7 @@ export const contactSchema = z
     isPrimaryContact: z.boolean().optional(),
     facts: z.array(contactFactSchema).optional(),
     brief: contactBriefSchema.nullable().optional(),
+    workHistory: z.array(contactWorkHistorySchema).optional(),
     relationship: contactRelationshipSchema.optional(),
     lastActivityAt: timestampSchema.nullable().optional(),
     createdAt: timestampSchema.optional(),
@@ -1801,3 +2088,20 @@ export const dashboardSummaryOutput = dashboardSummaryOutputSchema;
 export const archiveInput = archiveInputSchema;
 export const restoreInput = restoreInputSchema;
 export const purgeInput = purgeInputSchema;
+
+/* Evidence-backed contact surfaces. */
+export const contactFactCreateInput = contactFactCreateInputSchema;
+export const contactFactListInput = contactFactListInputSchema;
+export const contactFactDecisionInput = contactFactDecisionInputSchema;
+export const contactFactSupersedeInput = contactFactSupersedeInputSchema;
+export const contactFactOutput = contactFactRecordSchema;
+export const contactBriefCreateInput = contactBriefCreateInputSchema;
+export const contactBriefCurrentInput = contactBriefCurrentInputSchema;
+export const contactBriefVersionInput = contactBriefVersionInputSchema;
+export const contactBriefListInput = contactBriefListInputSchema;
+export const contactBriefOutput = contactBriefRecordSchema;
+export const contactWorkHistoryCreateInput = contactWorkHistoryCreateInputSchema;
+export const contactWorkHistoryListInput = contactWorkHistoryListInputSchema;
+export const contactWorkHistoryDecisionInput = contactWorkHistoryDecisionInputSchema;
+export const contactWorkHistorySupersedeInput = contactWorkHistorySupersedeInputSchema;
+export const contactWorkHistoryOutput = contactWorkHistorySchema;

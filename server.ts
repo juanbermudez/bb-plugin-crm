@@ -52,6 +52,7 @@ import {
   type SavedView as StoredSavedView,
 } from "./db/saved-views.js";
 import { createCustomFieldStore } from "./db/custom-fields.js";
+import { createEvidenceStore } from "./db/evidence.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
 
@@ -96,6 +97,7 @@ export default async function plugin(bb: BbPluginApi) {
   const activities = createActivityStore(db);
   const savedViews = createSavedViewStore(db);
   const customFields = createCustomFieldStore(db);
+  const evidenceStore = createEvidenceStore(db);
 
   function recordFieldValues(entity: FieldEntity, recordId: string): FieldValues {
     return Object.fromEntries(
@@ -264,11 +266,33 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   function changed(
-    entity: "company" | "contact" | "deal" | "currency" | "activity" | "saved-view" | "custom-field",
+    entity:
+      | "company"
+      | "contact"
+      | "deal"
+      | "currency"
+      | "activity"
+      | "saved-view"
+      | "custom-field"
+      | "contact-fact"
+      | "contact-brief"
+      | "contact-work-history",
     action: string,
     id: string,
   ): void {
     bb.realtime.publish("changed", { entity, action, id });
+  }
+
+  function changedContactEvidence(
+    entity: "contact-fact" | "contact-brief" | "contact-work-history",
+    action: string,
+    id: string,
+    contactId: string,
+  ): void {
+    changed(entity, action, id);
+    // Evidence is part of the contact detail projection. Publish a contact
+    // invalidation as well so a mounted record drawer refreshes immediately.
+    changed("contact", "evidence-updated", contactId);
   }
 
   function bulk(
@@ -297,7 +321,139 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  function contactOutput(contact: StoredContact): ContactOutput {
+  function contactRelationship(
+    contact: StoredContact,
+  ): NonNullable<ContactOutput["relationship"]> {
+    const emailSummary = db.prepare(`
+      SELECT
+        COALESCE(SUM(
+          CASE
+            WHEN json_type(a.meta, '$.messageCount') IN ('integer', 'real')
+              AND CAST(json_extract(a.meta, '$.messageCount') AS INTEGER) > 0
+            THEN CAST(json_extract(a.meta, '$.messageCount') AS INTEGER)
+            ELSE 1
+          END
+        ), 0) AS emails,
+        COUNT(DISTINCT COALESCE(a.email_thread_id, a.id)) AS threads,
+        MAX(COALESCE(a.occurred_at, a.created_at)) AS lastReplyAt
+      FROM activities AS a
+      WHERE a.contact_id = ? AND a.type = 'EMAIL'
+    `).get(contact.id) as {
+      emails: number;
+      threads: number;
+      lastReplyAt: string | null;
+    };
+    const meetings = Number(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM activities WHERE contact_id = ? AND type = 'MEETING'")
+        .pluck()
+        .get(contact.id),
+    );
+    const nextMeeting = db.prepare(`
+      SELECT
+        COALESCE(NULLIF(trim(subject), ''), 'Meeting') AS title,
+        COALESCE(occurred_at, created_at) AS startsAt
+      FROM activities
+      WHERE contact_id = ?
+        AND type = 'MEETING'
+        AND COALESCE(occurred_at, created_at) > ?
+      ORDER BY COALESCE(occurred_at, created_at) ASC, id ASC
+      LIMIT 1
+    `).get(contact.id, new Date().toISOString()) as
+      | { title: string; startsAt: string }
+      | undefined;
+    const colleagues = contact.companyId
+      ? db.prepare(`
+          SELECT id, first_name AS firstName, last_name AS lastName, title
+          FROM contacts
+          WHERE company_id = ? AND id <> ? AND archived_at IS NULL
+          ORDER BY (last_activity_at IS NULL), last_activity_at DESC,
+            last_name COLLATE NOCASE, first_name COLLATE NOCASE, id
+          LIMIT 4
+        `).all(contact.companyId, contact.id) as Array<{
+          id: string;
+          firstName: string;
+          lastName: string | null;
+          title: string | null;
+        }>
+      : [];
+
+    return {
+      emails: Number(emailSummary.emails ?? 0),
+      threads: Number(emailSummary.threads ?? 0),
+      lastReplyAt: emailSummary.lastReplyAt ?? null,
+      meetings,
+      nextMeeting: nextMeeting
+        ? { title: nextMeeting.title, startsAt: nextMeeting.startsAt }
+        : null,
+      colleagues: colleagues.map((colleague) => ({
+        id: colleague.id,
+        name: [colleague.firstName, colleague.lastName].filter(Boolean).join(" "),
+        title: colleague.title,
+      })),
+    };
+  }
+
+  function contactEvidenceOutput(contactId: string): Pick<
+    ContactOutput,
+    "facts" | "brief" | "workHistory" | "relationship"
+  > {
+    const facts: NonNullable<ContactOutput["facts"]> = evidenceStore.facts
+      .list(contactId, {
+        statuses: ["APPLIED", "PROPOSED"],
+        includeSuperseded: false,
+      })
+      .map((fact) => ({
+        id: fact.id,
+        field: fact.field,
+        value: fact.value,
+        score: fact.score,
+        band: fact.band,
+        evidence: fact.evidence.map((item) => ({
+          kind: item.kind,
+          detail: item.detail,
+          sourceUrl: item.sourceUrl,
+        })),
+        method: fact.method,
+        sourceUrl: fact.sourceUrl,
+        status: fact.status,
+        observedAt: fact.observedAt,
+      }));
+    const storedBrief = evidenceStore.briefs.latest(contactId);
+    const brief: ContactOutput["brief"] = storedBrief
+      ? {
+          narrative: storedBrief.narrative,
+          sections: storedBrief.sections,
+          score: storedBrief.score,
+          sourceUrl: storedBrief.sourceUrl,
+          refreshedAt: storedBrief.refreshedAt,
+        }
+      : null;
+    const workHistory: NonNullable<ContactOutput["workHistory"]> = evidenceStore.workHistory
+      .list(contactId, {
+        statuses: ["APPLIED", "PROPOSED"],
+        includeSuperseded: false,
+      })
+      .map((role) => ({
+        ...role,
+        evidence: role.evidence.map((item) => ({
+          kind: item.kind,
+          detail: item.detail,
+          sourceUrl: item.sourceUrl,
+        })),
+      }));
+    return {
+      facts,
+      brief,
+      workHistory,
+      relationship: contactRelationship(contacts.getRequired(contactId)),
+    };
+  }
+
+  function contactOutput(
+    contact: StoredContact,
+    includeEvidence = false,
+  ): ContactOutput {
     const company = contact.companyId
       ? (db.prepare(`
           SELECT id, name, domain, icon_url AS iconUrl, icon_dark_url AS iconDarkUrl,
@@ -325,13 +481,16 @@ export default async function plugin(bb: BbPluginApi) {
     const isPrimaryContact =
       db.prepare("SELECT 1 FROM companies WHERE primary_contact_id = ? LIMIT 1").get(contact.id) !==
       undefined;
-    return {
+    const output: ContactOutput = {
       ...contact,
       company: company ?? null,
       isPrimaryContact,
       deals,
       fields: recordFieldValues("CONTACT", contact.id),
     };
+    return includeEvidence
+      ? { ...output, ...contactEvidenceOutput(contact.id) }
+      : output;
   }
 
   function contactListOptions(input: ContactListInput): ContactListOptions {
@@ -817,13 +976,13 @@ export default async function plugin(bb: BbPluginApi) {
     contacts_list(input) {
       const options = contactListOptions(input);
       return {
-        rows: contacts.list(options).map(contactOutput),
+        rows: contacts.list(options).map((contact) => contactOutput(contact)),
         total: contacts.count(options),
         facetCounts: contactFacetCounts(),
       };
     },
     contacts_get({ id }) {
-      return contactOutput(contacts.getRequired(id));
+      return contactOutput(contacts.getRequired(id), true);
     },
     contacts_create(input) {
       const contact = contacts.create(input);
@@ -884,6 +1043,82 @@ export default async function plugin(bb: BbPluginApi) {
         contacts.purge(id);
         changed("contact", "purged", id);
       });
+    },
+    contacts_facts_list(input) {
+      return evidenceStore.facts.list(input.contactId, {
+        field: input.field,
+        statuses: input.statuses,
+        includeSuperseded: input.includeSuperseded,
+        limit: input.limit,
+      });
+    },
+    contacts_facts_get({ id }) {
+      return evidenceStore.facts.getRequired(id);
+    },
+    contacts_facts_create(input) {
+      const fact = evidenceStore.facts.create(input);
+      changedContactEvidence("contact-fact", "created", fact.id, fact.contactId);
+      return fact;
+    },
+    contacts_facts_decide({ id, decision, decidedById }) {
+      const fact = evidenceStore.facts.decide(
+        id,
+        decision,
+        decidedById ?? LOCAL_OWNER_ID,
+      );
+      changedContactEvidence("contact-fact", "decided", fact.id, fact.contactId);
+      return fact;
+    },
+    contacts_facts_supersede({ id, replacementId }) {
+      const fact = evidenceStore.facts.supersede(id, replacementId);
+      changedContactEvidence("contact-fact", "superseded", fact.id, fact.contactId);
+      return fact;
+    },
+    contacts_briefs_current({ contactId }) {
+      return evidenceStore.briefs.latest(contactId);
+    },
+    contacts_briefs_get({ id }) {
+      return evidenceStore.briefs.getRequired(id);
+    },
+    contacts_briefs_getVersion({ contactId, version }) {
+      return evidenceStore.briefs.getVersion(contactId, version);
+    },
+    contacts_briefs_list({ contactId, limit }) {
+      return evidenceStore.briefs.list(contactId, limit);
+    },
+    contacts_briefs_create(input) {
+      const brief = evidenceStore.briefs.create(input);
+      changedContactEvidence("contact-brief", "created", brief.id, brief.contactId);
+      return brief;
+    },
+    contacts_workHistory_list(input) {
+      return evidenceStore.workHistory.list(input.contactId, {
+        statuses: input.statuses,
+        includeSuperseded: input.includeSuperseded,
+        limit: input.limit,
+      });
+    },
+    contacts_workHistory_get({ id }) {
+      return evidenceStore.workHistory.getRequired(id);
+    },
+    contacts_workHistory_create(input) {
+      const role = evidenceStore.workHistory.create(input);
+      changedContactEvidence("contact-work-history", "created", role.id, role.contactId);
+      return role;
+    },
+    contacts_workHistory_decide({ id, decision, decidedById }) {
+      const role = evidenceStore.workHistory.decide(
+        id,
+        decision,
+        decidedById ?? LOCAL_OWNER_ID,
+      );
+      changedContactEvidence("contact-work-history", "decided", role.id, role.contactId);
+      return role;
+    },
+    contacts_workHistory_supersede({ id, replacementId }) {
+      const role = evidenceStore.workHistory.supersede(id, replacementId);
+      changedContactEvidence("contact-work-history", "superseded", role.id, role.contactId);
+      return role;
     },
     async deals_list(input) {
       const options = dealListOptions(input);
@@ -1299,7 +1534,7 @@ export default async function plugin(bb: BbPluginApi) {
       const record = entity === "company"
         ? companyOutput(companies.getRequired(id), true)
         : entity === "contact"
-          ? contactOutput(contacts.getRequired(id))
+          ? contactOutput(contacts.getRequired(id), true)
           : dealOutput(deals.getRequired(id));
       return JSON.stringify(record);
     },

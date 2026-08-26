@@ -17,7 +17,7 @@ describe("CRM plugin foundation", () => {
 
     await expect(harness.behavior.callRpc("status", null)).resolves.toEqual({
       version: "0.1.0",
-      schemaVersion: 4,
+      schemaVersion: 5,
       workspaceName: "Revenue",
       reportingCurrency: "EUR",
     });
@@ -189,6 +189,221 @@ describe("CRM plugin foundation", () => {
     await expect(harness.behavior.callRpc("contacts_get", { id })).resolves.toMatchObject({
       ownerId: "owner_2",
     });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("serves the contact evidence, brief, and work-history lifecycles", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Evidence Systems",
+    })) as { id: string };
+    const contact = (await harness.behavior.callRpc("contacts_create", {
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@evidence.example",
+      companyId: company.id,
+    })) as { id: string };
+    await harness.behavior.callRpc("contacts_create", {
+      firstName: "Grace",
+      lastName: "Hopper",
+      title: "Compiler Engineer",
+      companyId: company.id,
+    });
+    const evidence = [{
+      kind: "linkedin.employer-and-name",
+      detail: "The profile names Ada and her current employer.",
+      sourceUrl: "https://www.linkedin.com/in/ada",
+    }] as const;
+
+    const proposed = (await harness.behavior.callRpc("contacts_facts_create", {
+      id: "fact_title_server_1",
+      contactId: contact.id,
+      field: "title",
+      value: "Principal Engineer",
+      score: 0.85,
+      band: "VERIFIED",
+      evidence,
+      method: "linkedin",
+      sourceUrl: evidence[0].sourceUrl,
+      observedAt: "2026-08-20T12:00:00.000Z",
+    })) as { id: string; status: string };
+    expect(proposed).toMatchObject({ id: "fact_title_server_1", status: "PROPOSED" });
+    await expect(
+      harness.behavior.callRpc("contacts_facts_list", {
+        contactId: contact.id,
+        field: "title",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: proposed.id, contactId: contact.id })]);
+    await expect(
+      harness.behavior.callRpc("contacts_facts_get", { id: proposed.id }),
+    ).resolves.toMatchObject({ id: proposed.id, evidence });
+    await expect(
+      harness.behavior.callRpc("contacts_facts_decide", {
+        id: proposed.id,
+        decision: "accept",
+        decidedById: "reviewer-1",
+      }),
+    ).resolves.toMatchObject({ status: "APPLIED", decidedById: "reviewer-1" });
+
+    const replacement = (await harness.behavior.callRpc("contacts_facts_create", {
+      id: "fact_title_server_2",
+      contactId: contact.id,
+      field: "title",
+      value: "VP Engineering",
+      score: 0.95,
+      band: "VERIFIED",
+      evidence,
+      method: "linkedin-refresh",
+    })) as { id: string };
+    await expect(
+      harness.behavior.callRpc("contacts_facts_supersede", {
+        id: proposed.id,
+        replacementId: replacement.id,
+      }),
+    ).resolves.toMatchObject({ status: "SUPERSEDED", supersededById: replacement.id });
+    const dismissed = (await harness.behavior.callRpc("contacts_facts_create", {
+      contactId: contact.id,
+      field: "location",
+      value: "London",
+      score: 0.4,
+      band: "POSSIBLE",
+      evidence,
+      method: "profile",
+    })) as { id: string };
+    await expect(
+      harness.behavior.callRpc("contacts_facts_decide", {
+        id: dismissed.id,
+        decision: "dismiss",
+      }),
+    ).resolves.toMatchObject({ status: "DISMISSED" });
+
+    const firstBrief = (await harness.behavior.callRpc("contacts_briefs_create", {
+      id: "brief_server_1",
+      contactId: contact.id,
+      narrative: "Ada leads engineering at Evidence Systems.",
+      sections: {
+        currentRole: "Principal Engineer",
+        previousRoles: ["Software Engineer · Analytical Engines"],
+      },
+      score: 0.85,
+      sourceUrl: "https://example.com/ada-brief-1",
+      sessionId: "research-1",
+    })) as { id: string; version: number };
+    const secondBrief = (await harness.behavior.callRpc("contacts_briefs_create", {
+      id: "brief_server_2",
+      contactId: contact.id,
+      narrative: "Ada now serves as VP Engineering at Evidence Systems.",
+      sections: { currentRole: "VP Engineering" },
+      score: 0.95,
+      sourceUrl: "https://example.com/ada-brief-2",
+    })) as { id: string; version: number };
+    expect(firstBrief.version).toBe(1);
+    expect(secondBrief.version).toBe(2);
+    await expect(
+      harness.behavior.callRpc("contacts_briefs_current", { contactId: contact.id }),
+    ).resolves.toMatchObject({ id: secondBrief.id, version: 2 });
+    await expect(
+      harness.behavior.callRpc("contacts_briefs_getVersion", {
+        contactId: contact.id,
+        version: 1,
+      }),
+    ).resolves.toMatchObject({ id: firstBrief.id, version: 1 });
+    await expect(
+      harness.behavior.callRpc("contacts_briefs_list", { contactId: contact.id }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: secondBrief.id, version: 2 }),
+      expect.objectContaining({ id: firstBrief.id, version: 1 }),
+    ]);
+    await expect(
+      harness.behavior.callRpc("contacts_briefs_get", { id: firstBrief.id }),
+    ).resolves.toMatchObject({ contactId: contact.id, sessionId: "research-1" });
+
+    const oldRole = (await harness.behavior.callRpc("contacts_workHistory_create", {
+      id: "work_server_1",
+      contactId: contact.id,
+      title: "Software Engineer",
+      organizationName: "Analytical Engines",
+      organizationDomain: "https://engines.example",
+      startDate: "2020-01-01",
+      endDate: "2024-01-01",
+      isCurrent: false,
+      score: 0.7,
+      band: "PROBABLE",
+      evidence,
+      method: "profile",
+    })) as { id: string };
+    await expect(
+      harness.behavior.callRpc("contacts_workHistory_get", { id: oldRole.id }),
+    ).resolves.toMatchObject({ organizationDomain: "engines.example" });
+    await expect(
+      harness.behavior.callRpc("contacts_workHistory_decide", {
+        id: oldRole.id,
+        decision: "accept",
+      }),
+    ).resolves.toMatchObject({ status: "APPLIED" });
+    const currentRole = (await harness.behavior.callRpc("contacts_workHistory_create", {
+      id: "work_server_2",
+      contactId: contact.id,
+      title: "VP Engineering",
+      organizationName: "Evidence Systems",
+      startDate: "2024-01-01",
+      isCurrent: true,
+      score: 0.95,
+      band: "VERIFIED",
+      evidence,
+      method: "profile-refresh",
+    })) as { id: string };
+    await expect(
+      harness.behavior.callRpc("contacts_workHistory_supersede", {
+        id: oldRole.id,
+        replacementId: currentRole.id,
+      }),
+    ).resolves.toMatchObject({ status: "SUPERSEDED", supersededById: currentRole.id });
+    await expect(
+      harness.behavior.callRpc("contacts_workHistory_list", {
+        contactId: contact.id,
+        includeSuperseded: false,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: currentRole.id })]);
+
+    await harness.behavior.callRpc("activity_create", {
+      type: "EMAIL",
+      contactId: contact.id,
+      createdById: "local_user",
+      meta: { messageCount: 3, direction: "INBOUND" },
+      occurredAt: "2026-08-20T12:00:00.000Z",
+    });
+    await harness.behavior.callRpc("activity_create", {
+      type: "MEETING",
+      contactId: contact.id,
+      createdById: "local_user",
+      subject: "Planning session",
+      occurredAt: "2099-01-01T12:00:00.000Z",
+    });
+    const hydrated = await harness.behavior.callRpc("contacts_get", { id: contact.id });
+    expect(hydrated).toMatchObject({
+      facts: [expect.objectContaining({ id: replacement.id, status: "PROPOSED" })],
+      brief: expect.objectContaining({ narrative: expect.stringContaining("now serves") }),
+      workHistory: [expect.objectContaining({ id: currentRole.id, status: "PROPOSED" })],
+      relationship: {
+        emails: 3,
+        threads: 1,
+        lastReplyAt: "2026-08-20T12:00:00.000Z",
+        meetings: 1,
+        nextMeeting: { title: "Planning session", startsAt: "2099-01-01T12:00:00.000Z" },
+        colleagues: [expect.objectContaining({ name: "Grace Hopper" })],
+      },
+    });
+    expect(harness.realtimeSignals).toEqual(
+      expect.arrayContaining([
+        { channel: "changed", payload: { entity: "contact-fact", action: "created", id: proposed.id } },
+        { channel: "changed", payload: { entity: "contact-brief", action: "created", id: firstBrief.id } },
+        { channel: "changed", payload: { entity: "contact-work-history", action: "created", id: oldRole.id } },
+      ]),
+    );
 
     await harness.lifecycle.dispose();
   });

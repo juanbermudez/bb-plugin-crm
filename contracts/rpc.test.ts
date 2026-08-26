@@ -28,6 +28,21 @@ describe("CRM RPC contract", () => {
       "contacts_bulkArchive",
       "contacts_bulkRestore",
       "contacts_bulkPurge",
+      "contacts_facts_list",
+      "contacts_facts_get",
+      "contacts_facts_create",
+      "contacts_facts_decide",
+      "contacts_facts_supersede",
+      "contacts_briefs_current",
+      "contacts_briefs_get",
+      "contacts_briefs_getVersion",
+      "contacts_briefs_list",
+      "contacts_briefs_create",
+      "contacts_workHistory_list",
+      "contacts_workHistory_get",
+      "contacts_workHistory_create",
+      "contacts_workHistory_decide",
+      "contacts_workHistory_supersede",
       "deals_list",
       "deals_get",
       "deals_create",
@@ -110,6 +125,95 @@ describe("CRM RPC contract", () => {
       rpcContract.contacts_list.input.safeParse({
         page: 1,
         pageSize: 25,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps evidence, brief, and work-history RPC inputs strict", () => {
+    const evidence = {
+      kind: "linkedin.employer-and-name",
+      detail: "Profile names the person and employer.",
+      sourceUrl: "https://www.linkedin.com/in/ada",
+    };
+    expect(
+      rpcContract.contacts_facts_list.input.safeParse({
+        contactId: "contact-1",
+        statuses: ["PROPOSED"],
+        includeSuperseded: false,
+        limit: 25,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.contacts_facts_list.input.safeParse({
+        contactId: "contact-1",
+        statuses: ["UNKNOWN"],
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.contacts_facts_create.input.safeParse({
+        contactId: "contact-1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.9,
+        band: "VERIFIED",
+        evidence: [evidence],
+        method: "linkedin",
+        sourceUrl: "https://www.linkedin.com/in/ada",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.contacts_facts_create.input.safeParse({
+        contactId: "contact-1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.9,
+        band: "VERIFIED",
+        evidence: [],
+        method: "linkedin",
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.contacts_facts_decide.input.safeParse({
+        id: "fact-1",
+        decision: "accept",
+        decidedById: "user-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.contacts_facts_decide.input.safeParse({
+        id: "fact-1",
+        decision: "accept",
+        extra: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.contacts_briefs_getVersion.input.safeParse({
+        contactId: "contact-1",
+        version: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.contacts_briefs_getVersion.input.safeParse({
+        contactId: "contact-1",
+        version: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.contacts_workHistory_create.input.safeParse({
+        contactId: "contact-1",
+        organizationName: "Example Labs",
+        startDate: "2024-01-01",
+        score: 0.8,
+        band: "PROBABLE",
+        evidence: [evidence],
+        method: "profile",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.contacts_workHistory_list.input.safeParse({
+        contactId: "contact-1",
+        includeSuperseded: false,
         unexpected: true,
       }).success,
     ).toBe(false);

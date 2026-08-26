@@ -23,10 +23,25 @@ import {
   companySchema,
   companyUpdateInputSchema,
   contactCreateInputSchema,
+  contactFactCreateInputSchema,
+  contactFactDecisionInputSchema,
+  contactFactListInputSchema,
+  contactFactRecordSchema,
+  contactFactSupersedeInputSchema,
+  contactBriefCreateInputSchema,
+  contactBriefCurrentInputSchema,
+  contactBriefListInputSchema,
+  contactBriefRecordSchema,
+  contactBriefVersionInputSchema,
   contactListInputSchema,
   contactListOutputSchema,
   contactSchema,
   contactUpdateInputSchema,
+  contactWorkHistoryCreateInputSchema,
+  contactWorkHistoryDecisionInputSchema,
+  contactWorkHistoryListInputSchema,
+  contactWorkHistorySchema,
+  contactWorkHistorySupersedeInputSchema,
   currencyDealRerateAllInputSchema,
   currencyDealRerateInputSchema,
   currencyRateAuditListInputSchema,
@@ -193,6 +208,66 @@ export const rpcContract = defineRpcContract({
   contacts_bulkPurge: {
     input: bulkIdsInputSchema,
     output: bulkResultSchema,
+  },
+  contacts_facts_list: {
+    input: contactFactListInputSchema,
+    output: z.array(contactFactRecordSchema),
+  },
+  contacts_facts_get: {
+    input: recordIdInputSchema,
+    output: contactFactRecordSchema,
+  },
+  contacts_facts_create: {
+    input: contactFactCreateInputSchema,
+    output: contactFactRecordSchema,
+  },
+  contacts_facts_decide: {
+    input: contactFactDecisionInputSchema,
+    output: contactFactRecordSchema,
+  },
+  contacts_facts_supersede: {
+    input: contactFactSupersedeInputSchema,
+    output: contactFactRecordSchema,
+  },
+  contacts_briefs_current: {
+    input: contactBriefCurrentInputSchema,
+    output: contactBriefRecordSchema.nullable(),
+  },
+  contacts_briefs_get: {
+    input: recordIdInputSchema,
+    output: contactBriefRecordSchema,
+  },
+  contacts_briefs_getVersion: {
+    input: contactBriefVersionInputSchema,
+    output: contactBriefRecordSchema.nullable(),
+  },
+  contacts_briefs_list: {
+    input: contactBriefListInputSchema,
+    output: z.array(contactBriefRecordSchema),
+  },
+  contacts_briefs_create: {
+    input: contactBriefCreateInputSchema,
+    output: contactBriefRecordSchema,
+  },
+  contacts_workHistory_list: {
+    input: contactWorkHistoryListInputSchema,
+    output: z.array(contactWorkHistorySchema),
+  },
+  contacts_workHistory_get: {
+    input: recordIdInputSchema,
+    output: contactWorkHistorySchema,
+  },
+  contacts_workHistory_create: {
+    input: contactWorkHistoryCreateInputSchema,
+    output: contactWorkHistorySchema,
+  },
+  contacts_workHistory_decide: {
+    input: contactWorkHistoryDecisionInputSchema,
+    output: contactWorkHistorySchema,
+  },
+  contacts_workHistory_supersede: {
+    input: contactWorkHistorySupersedeInputSchema,
+    output: contactWorkHistorySchema,
   },
   deals_list: {
     input: dealListInputSchema,

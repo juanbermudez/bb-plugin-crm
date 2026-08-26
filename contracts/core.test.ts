@@ -9,6 +9,10 @@ import {
   companyCreateInputSchema,
   companyListInputSchema,
   companySchema,
+  contactBriefCreateInputSchema,
+  contactFactCreateInputSchema,
+  contactFactRecordSchema,
+  contactWorkHistoryCreateInputSchema,
   currencyCodeSchema,
   dealCreateInputSchema,
   dealSchema,
@@ -202,6 +206,124 @@ describe("CRM core contracts", () => {
         deal: null,
         emailThread: null,
         calendarEvent: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps evidence-backed contact inputs strict and source-valid", () => {
+    const evidence = {
+      kind: "linkedin.employer-and-name",
+      detail: "Profile names the person and employer.",
+      sourceUrl: "https://www.linkedin.com/in/ada",
+    };
+    expect(
+      contactFactCreateInputSchema.safeParse({
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.85,
+        band: "VERIFIED",
+        evidence: [evidence],
+        method: "linkedin",
+        sourceUrl: evidence.sourceUrl,
+      }).success,
+    ).toBe(true);
+    expect(
+      contactFactCreateInputSchema.safeParse({
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 1.1,
+        band: "VERIFIED",
+        evidence: [evidence],
+        method: "linkedin",
+      }).success,
+    ).toBe(false);
+    expect(
+      contactFactCreateInputSchema.safeParse({
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.85,
+        band: "CERTAIN",
+        evidence: [evidence],
+        method: "linkedin",
+      }).success,
+    ).toBe(false);
+    expect(
+      contactFactCreateInputSchema.safeParse({
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.85,
+        band: "VERIFIED",
+        evidence: [{ ...evidence, sourceUrl: "not-a-url" }],
+        method: "linkedin",
+      }).success,
+    ).toBe(false);
+    expect(
+      contactFactCreateInputSchema.safeParse({
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.85,
+        band: "VERIFIED",
+        evidence: [evidence],
+        method: "linkedin",
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      contactBriefCreateInputSchema.safeParse({
+        contactId: "con_1",
+        narrative: "A useful background.",
+        sections: { currentRole: "Principal Engineer" },
+        score: 0.8,
+        sourceUrl: "https://example.com/profile",
+      }).success,
+    ).toBe(true);
+    expect(
+      contactWorkHistoryCreateInputSchema.safeParse({
+        contactId: "con_1",
+        organizationName: "Example Labs",
+        startDate: "2024-01-01",
+        score: 0.8,
+        band: "PROBABLE",
+        evidence: [evidence],
+        method: "profile",
+      }).success,
+    ).toBe(true);
+    expect(
+      contactWorkHistoryCreateInputSchema.safeParse({
+        contactId: "con_1",
+        organizationName: "Example Labs",
+        startDate: "01/01/2024",
+        score: 0.8,
+        band: "PROBABLE",
+        evidence: [evidence],
+        method: "profile",
+      }).success,
+    ).toBe(false);
+    expect(
+      contactFactRecordSchema.safeParse({
+        id: "fact_1",
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.8,
+        band: "VERIFIED",
+        evidence: [{ ...evidence, sourceUrl: evidence.sourceUrl }],
+        method: "profile",
+        sourceUrl: evidence.sourceUrl,
+        sessionId: null,
+        status: "PROPOSED",
+        decidedById: null,
+        decidedAt: null,
+        observedAt: "2026-08-25T00:00:00.000Z",
+        supersededAt: null,
+        supersedesId: null,
+        supersededById: null,
+        createdAt: "2026-08-25T00:00:00.000Z",
       }).success,
     ).toBe(true);
   });
