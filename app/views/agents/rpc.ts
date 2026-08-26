@@ -13,6 +13,7 @@ import type {
   AgentListInput,
   AgentListItem,
   AgentRunDetail,
+  AgentThreadBuilderSpawnRequest,
   AgentThreadLink,
   AgentTrigger,
   AgentVersion,
@@ -120,7 +121,13 @@ export interface AgentsRpcClient {
   ): Promise<AgentThreadLink[]>;
   call(
     method: "agents_threads_createBuilder",
-    input: { agentId: string; versionId?: string; newConversation?: boolean },
+    input: {
+      agentId: string;
+      versionId?: string;
+      newConversation?: boolean;
+      initialPrompt?: string;
+      spawnRequest?: AgentThreadBuilderSpawnRequest;
+    },
   ): Promise<AgentThreadLink>;
   call(
     method: "agents_threads_deleteBuilder",

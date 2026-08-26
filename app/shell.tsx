@@ -13,6 +13,7 @@ import {
   type GlobalSearchResult,
 } from "./components/index.js";
 import type { EnrichmentQueueSubject } from "../contracts/enrichment-queue.js";
+import type { DealStage } from "../contracts/core.js";
 import {
   crmRouteToSubPath,
   parseCrmRoute,
@@ -143,11 +144,12 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
           kind: route.kind,
           recordId: route.recordId,
           ...(route.tab === undefined ? {} : { tab: route.tab }),
+          ...(route.stage === undefined ? {} : { stage: route.stage }),
         }),
       });
       queueMicrotask(focusCreateButton);
     },
-    [focusCreateButton, navigate, route.kind, route.recordId, route.tab],
+    [focusCreateButton, navigate, route.kind, route.recordId, route.stage, route.tab],
   );
   const openCreate = useMemo(
     () => (action: CrmCreateAction) => {
@@ -182,6 +184,40 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       }),
     });
   };
+
+  const openDashboardRecord = useMemo(
+    () => (kind: "company" | "contact" | "deal", id: string) => {
+      navigate.toPluginPanel("crm", {
+        subPath: crmRouteToSubPath({
+          kind: kind === "company" ? "companies" : kind === "contact" ? "contacts" : "deals",
+          recordId: id,
+        }),
+      });
+    },
+    [navigate],
+  );
+
+  const openDashboardDeals = useMemo(
+    () => (stage?: DealStage) => {
+      navigate.toPluginPanel("crm", {
+        subPath: crmRouteToSubPath({
+          kind: "deals",
+          recordId: null,
+          ...(stage === undefined ? {} : { stage }),
+        }),
+      });
+    },
+    [navigate],
+  );
+
+  const openDashboardCurrencySettings = useMemo(
+    () => () => {
+      navigate.toPluginPanel("crm", {
+        subPath: crmRouteToSubPath({ kind: "settings", recordId: "currency" }),
+      });
+    },
+    [navigate],
+  );
 
   const openQueueSubject = useMemo(
     () => (subject: EnrichmentQueueSubject) => {
@@ -314,7 +350,11 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : null}
         <div className="min-h-0 min-w-0 flex-1">
         {route.kind === "dashboard" ? (
-          <DashboardView />
+          <DashboardView
+            onOpenRecord={openDashboardRecord}
+            onOpenDeals={openDashboardDeals}
+            onOpenCurrencySettings={openDashboardCurrencySettings}
+          />
         ) : route.kind === "companies" ? (
           <CompaniesView
             initialRecordId={route.recordId}
@@ -368,6 +408,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "deals" ? (
           <DealsView
             initialRecordId={route.recordId}
+            initialStage={route.stage ?? null}
             initialCreate={route.create === "deal"}
             initialTab={route.tab}
             onCreateChange={route.create === "deal" ? clearCreateRoute : undefined}
@@ -405,6 +446,8 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                   ? "connections"
                   : route.recordId === "tracking"
                     ? "tracking"
+                    : route.recordId === "currency"
+                      ? "currency"
                     : "workspace"
             }
             onSectionChange={(section: SettingsSection) => {

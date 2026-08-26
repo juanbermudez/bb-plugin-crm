@@ -259,5 +259,24 @@ describe("CRM nav panel", () => {
       input: { limit: 100, offset: 0 },
     });
     trackingSlot.lifecycle.unmount();
+
+    const currencySlot = renderSlot(
+      panel,
+      { subPath: "settings/currency" },
+      {
+        rpc: {
+          status: () => ({ reportingCurrency: "USD" }),
+          currency_rates_listEffective: () => [],
+          currency_rates_listAudit: () => [],
+        },
+      },
+    );
+    const currencyTab = currencySlot.getByRole("tab", { name: "Currency" });
+    expect(currencyTab.getAttribute("aria-selected")).toBe("true");
+    expect(currencySlot.inspection.rpcCalls).toContainEqual({
+      method: "currency_rates_listEffective",
+      input: {},
+    });
+    currencySlot.lifecycle.unmount();
   });
 });

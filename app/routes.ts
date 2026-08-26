@@ -1,3 +1,5 @@
+import { DEAL_STAGES, type DealStage } from "../contracts/core.js";
+
 export type CrmRouteKind =
   | "dashboard"
   | "companies"
@@ -19,6 +21,8 @@ export interface CrmRoute {
   recordId: string | null;
   /** Optional record drawer tab/subview, persisted in the BB panel sub-path. */
   tab?: string;
+  /** Optional deal-list stage filter, persisted in the BB panel query. */
+  stage?: DealStage;
   /** Optional create action opened from the CRM header. */
   create?: CrmCreateAction;
 }
@@ -63,10 +67,16 @@ export function parseCrmRoute(rawSubPath: string): CrmRoute {
   const create = CREATE_ACTIONS.has(createCandidate as CrmCreateAction)
     ? (createCandidate as CrmCreateAction)
     : undefined;
+  const stageCandidate = new URLSearchParams(rawQuery).get("stage");
+  const stage =
+    kind === "deals" && stageCandidate !== null && DEAL_STAGES.includes(stageCandidate as DealStage)
+      ? (stageCandidate as DealStage)
+      : undefined;
   return {
     kind,
     recordId: isCreatePath ? null : segments[1] ?? null,
     ...(isCreatePath || segments[2] === undefined ? {} : { tab: segments[2] }),
+    ...(stage === undefined ? {} : { stage }),
     ...(create === undefined ? {} : { create }),
   };
 }
@@ -78,8 +88,11 @@ export function crmRouteToSubPath(route: CrmRoute): string {
   if (route.create !== undefined) {
     return `${route.kind}/create/${encodeURIComponent(route.create)}`;
   }
-  if (route.recordId === null) return route.kind;
+  const stage = route.kind === "deals" && route.stage?.trim()
+    ? `?stage=${encodeURIComponent(route.stage.trim())}`
+    : "";
+  if (route.recordId === null) return `${route.kind}${stage}`;
   const base = `${route.kind}/${encodeURIComponent(route.recordId)}`;
   const tab = route.tab?.trim();
-  return tab ? `${base}/${encodeURIComponent(tab)}` : base;
+  return `${tab ? `${base}/${encodeURIComponent(tab)}` : base}${stage}`;
 }

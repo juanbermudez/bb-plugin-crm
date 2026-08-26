@@ -97,9 +97,9 @@ type DealBulkRpcClient = {
 const SELECT_CLASS =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
-type DealTab = "overview" | "contacts" | "activity" | "agent";
+export type DealTab = "overview" | "contacts" | "activity" | "agent";
 
-const DEAL_TABS: ReadonlyArray<{ id: DealTab; label: string }> = [
+export const DEAL_TABS: ReadonlyArray<{ id: DealTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "contacts", label: "Contacts" },
   { id: "activity", label: "Activity" },
@@ -220,8 +220,8 @@ function formatMinorAmount(
   }
 }
 
-function stageLabel(stage: DealStage): string {
-  return STAGE_LABELS[stage];
+function stageLabel(stage: DealStage | null | undefined): string {
+  return stage === undefined || stage === null ? "—" : STAGE_LABELS[stage];
 }
 
 function dealColumnValue(
@@ -260,19 +260,25 @@ function isClosedStage(stage: DealStage): boolean {
   return stage === "CLOSED_WON" || stage === "CLOSED_LOST";
 }
 
-const STAGES_REQUIRING_REASON = new Set<DealStage>([
+export const STAGES_REQUIRING_REASON = new Set<DealStage>([
   "CLOSED_LOST",
   "UNQUALIFIED_TO_BUY",
 ]);
 
-interface DealStageMenuProps {
-  deal: Deal;
+export interface DealStageRecord {
+  id: string;
+  name: string;
+  stage?: DealStage | null;
+}
+
+export interface DealStageMenuProps {
+  deal: DealStageRecord;
   busy?: boolean;
   onSelect: (stage: DealStage) => void;
 }
 
 /** Compact table control matching the source's inline stage menu. */
-function DealStageMenu({ deal, busy = false, onSelect }: DealStageMenuProps) {
+export function DealStageMenu({ deal, busy = false, onSelect }: DealStageMenuProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -326,14 +332,14 @@ function DealStageMenu({ deal, busy = false, onSelect }: DealStageMenuProps) {
   );
 }
 
-interface DealStageReasonDialogProps {
+export interface DealStageReasonDialogProps {
   request: { dealId: string; dealName: string; stage: DealStage } | null;
   busy: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (reason: string) => void | Promise<void>;
 }
 
-function DealStageReasonDialog({
+export function DealStageReasonDialog({
   request,
   busy,
   onOpenChange,
@@ -418,7 +424,7 @@ function DealStageReasonDialog({
   );
 }
 
-function isDeal(value: unknown): value is Deal {
+export function isDeal(value: unknown): value is Deal {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -677,7 +683,7 @@ function DealForm({
   );
 }
 
-interface DealOverviewProps {
+export interface DealOverviewProps {
   deal: Deal;
   companyOptions: readonly EntityOption[];
   ownerOptions: readonly EntityOption[];
@@ -690,7 +696,7 @@ interface DealOverviewProps {
   onPurge: () => void;
 }
 
-function DealOverview({
+export function DealOverview({
   deal,
   companyOptions,
   ownerOptions,
@@ -1036,7 +1042,7 @@ function DealOverview({
   );
 }
 
-function DealContacts({
+export function DealContacts({
   deal,
   rpc,
   onChanged,
@@ -1312,6 +1318,8 @@ export interface DealsViewProps {
   rpcClient?: DealsRpcClient;
   /** Record selected by the BB panel sub-path or browser history. */
   initialRecordId?: string | null;
+  /** Optional stage filter selected by a dashboard pipeline route. */
+  initialStage?: DealStage | null;
   /** Open the create-deal drawer from a routed header action. */
   initialCreate?: boolean;
   /** Reflects record drawer changes back into the BB panel sub-path. */
@@ -1328,6 +1336,7 @@ export interface DealsViewProps {
 export function DealsView({
   rpcClient,
   initialRecordId = null,
+  initialStage = null,
   initialCreate = false,
   onRecordIdChange,
   onOpenRelatedRecord,
@@ -1342,7 +1351,9 @@ export function DealsView({
   const [status, setStatus] = useState<DealListStatus>("all");
   const [sort, setSort] = useState("createdAt");
   const [dir, setDir] = useState<SortDirection>("desc");
-  const [filters, setFilters] = useState<ListFilters>({});
+  const initialFilters: ListFilters = {};
+  if (initialStage !== null) initialFilters.stage = [initialStage];
+  const [filters, setFilters] = useState<ListFilters>(initialFilters);
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<DealListOutput>(EMPTY_LIST);
   const [companyOptions, setCompanyOptions] = useState<readonly EntityOption[]>([]);
@@ -1506,6 +1517,20 @@ export function DealsView({
   useEffect(() => {
     setRecordId(initialRecordId);
   }, [initialRecordId]);
+
+  useEffect(() => {
+    setFilters((current) => {
+      if (initialStage === null) {
+        if (current.stage === undefined) return current;
+        const next = { ...current };
+        delete next.stage;
+        return next;
+      }
+      if (current.stage?.length === 1 && current.stage[0] === initialStage) return current;
+      return { ...current, stage: [initialStage] };
+    });
+    setPage(1);
+  }, [initialStage]);
 
   useEffect(() => {
     setCreateError(null);
@@ -2514,6 +2539,13 @@ export function DealsView({
                 anchor={{ dealId: record.id }}
                 title="Deal activity"
                 description="Notes, touchpoints, and follow-up work for this deal."
+                onOpenRelatedRecord={
+                  onOpenRelatedRecord === undefined
+                    ? undefined
+                    : (kind, id) => {
+                        if (kind === "company" || kind === "contact") onOpenRelatedRecord(kind, id);
+                      }
+                }
               />
             ) : recordTab === "agent" ? (
               <RecordAgentTab

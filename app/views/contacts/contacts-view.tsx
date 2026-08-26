@@ -34,11 +34,20 @@ import type {
   ContactListInput,
   ContactListOutput,
   CompanyListOutput,
+  Deal,
+  DealStage,
   FieldDefinition,
   SavedViewFilters,
+  SetDealStageInput,
   SortDirection,
 } from "../../../contracts/core.js";
 import { useContactsRpc, type ContactsRpcClient } from "./rpc.js";
+import {
+  DealStageMenu,
+  DealStageReasonDialog,
+  isDeal,
+  STAGES_REQUIRING_REASON,
+} from "../deals/deals-view.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
@@ -82,9 +91,9 @@ type ContactBulkRpcClient = {
   call(method: string, input: unknown): Promise<unknown>;
 };
 
-type ContactTab = "overview" | "deals" | "activity" | "agent";
+export type ContactTab = "overview" | "deals" | "activity" | "agent";
 
-const CONTACT_TABS: ReadonlyArray<{ id: ContactTab; label: string }> = [
+export const CONTACT_TABS: ReadonlyArray<{ id: ContactTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "deals", label: "Deals" },
   { id: "activity", label: "Activity" },
@@ -214,7 +223,7 @@ function contactColumnValue(
   }
 }
 
-function isContact(value: unknown): value is Contact {
+export function isContact(value: unknown): value is Contact {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -458,8 +467,10 @@ function ContactForm({
 
 function ContactRelationshipSummary({
   relationship,
+  onOpenContact,
 }: {
   relationship?: Contact["relationship"];
+  onOpenContact?: (id: string) => void;
 }) {
   if (relationship === undefined) return null;
   return (
@@ -505,7 +516,17 @@ function ContactRelationshipSummary({
           <ul className="mt-2 divide-y divide-border rounded-lg border border-border" aria-label="Known colleagues">
             {relationship.colleagues.map((colleague) => (
               <li key={colleague.id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
-                <span className="truncate text-sm font-medium">{colleague.name}</span>
+                {onOpenContact === undefined ? (
+                  <span className="truncate text-sm font-medium">{colleague.name}</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="truncate rounded text-left text-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => onOpenContact(colleague.id)}
+                  >
+                    {colleague.name}
+                  </button>
+                )}
                 <span className="truncate text-xs text-muted-foreground">{displayValue(colleague.title)}</span>
               </li>
             ))}
@@ -518,7 +539,7 @@ function ContactRelationshipSummary({
   );
 }
 
-interface ContactOverviewProps {
+export interface ContactOverviewProps {
   contact: Contact;
   rpc: ContactsRpcClient;
   companyOptions: readonly EntityOption[];
@@ -532,9 +553,10 @@ interface ContactOverviewProps {
   onArchive: () => void;
   onRestore: () => void;
   onPurge: () => void;
+  onOpenContact?: (id: string) => void;
 }
 
-function ContactOverview({
+export function ContactOverview({
   contact,
   rpc,
   companyOptions,
@@ -548,6 +570,7 @@ function ContactOverview({
   onArchive,
   onRestore,
   onPurge,
+  onOpenContact,
 }: ContactOverviewProps) {
   return (
     <div className="space-y-6">
@@ -692,7 +715,10 @@ function ContactOverview({
           </dd>
         </div>
       </dl>
-      <ContactRelationshipSummary relationship={contact.relationship} />
+      <ContactRelationshipSummary
+        relationship={contact.relationship}
+        onOpenContact={onOpenContact}
+      />
       <section
         className="space-y-3 border-t border-border pt-5"
         aria-label="Contact enrichment"
@@ -779,14 +805,97 @@ function ContactOverview({
   );
 }
 
-function ContactDeals({
-  contact,
-  onOpenDeal,
-}: {
+export interface ContactDealsRpcClient {
+  call(method: "deals_setStage", input: SetDealStageInput): Promise<Deal>;
+}
+
+export interface ContactDealsProps {
   contact: Contact;
   onOpenDeal?: (id: string) => void;
-}) {
-  const deals = contact.deals ?? [];
+  rpc?: ContactDealsRpcClient;
+  onChanged?: () => void;
+}
+
+export function ContactDeals({
+  contact,
+  onOpenDeal,
+  rpc,
+  onChanged,
+}: ContactDealsProps) {
+  type ContactDeal = NonNullable<Contact["deals"]>[number];
+  const [deals, setDeals] = useState<ContactDeal[]>(() => [...(contact.deals ?? [])]);
+  const [stageRequest, setStageRequest] = useState<{
+    dealId: string;
+    dealName: string;
+    stage: DealStage;
+  } | null>(null);
+  const [stageBusyId, setStageBusyId] = useState<string | null>(null);
+  const [stageError, setStageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const incomingDeals = contact.deals ?? [];
+    setDeals((current) =>
+      JSON.stringify(current) === JSON.stringify(incomingDeals)
+        ? current
+        : [...incomingDeals],
+    );
+  }, [contact.deals, contact.id]);
+
+  const runStageChange = useCallback(
+    async (dealId: string, stage: DealStage, closedReason?: string) => {
+      if (rpc === undefined) return;
+      const previous = deals.find((deal) => deal.id === dealId);
+      if (previous === undefined) return;
+      setStageBusyId(dealId);
+      setStageError(null);
+      setDeals((current) =>
+        current.map((deal) => (deal.id === dealId ? { ...deal, stage } : deal)),
+      );
+      try {
+        const input: SetDealStageInput = {
+          id: dealId,
+          stage,
+          ...(STAGES_REQUIRING_REASON.has(stage) && closedReason?.trim()
+            ? { closedReason: closedReason.trim() }
+            : {}),
+        };
+        const result = await rpc.call("deals_setStage", input);
+        const settledStage = isDeal(result) ? result.stage : stage;
+        setDeals((current) =>
+          current.map((deal) =>
+            deal.id === dealId ? { ...deal, stage: settledStage } : deal,
+          ),
+        );
+        onChanged?.();
+      } catch (cause) {
+        setDeals((current) =>
+          current.map((deal) =>
+            deal.id === dealId ? { ...deal, stage: previous.stage } : deal,
+          ),
+        );
+        setStageError(errorMessage(cause));
+        throw cause;
+      } finally {
+        setStageBusyId(null);
+      }
+    },
+    [deals, onChanged, rpc],
+  );
+
+  const selectStage = useCallback(
+    (deal: ContactDeal, stage: DealStage) => {
+      if (rpc === undefined) return;
+      if (STAGES_REQUIRING_REASON.has(stage)) {
+        setStageRequest({ dealId: deal.id, dealName: deal.name, stage });
+        return;
+      }
+      void runStageChange(deal.id, stage).catch(() => {
+        // The inline error keeps the row actionable after a failed mutation.
+      });
+    },
+    [rpc, runStageChange],
+  );
+
   if (deals.length === 0) {
     return (
       <EmptyState
@@ -798,52 +907,79 @@ function ContactDeals({
     );
   }
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Contact deals">
-      {deals.map((deal) => (
-        <li key={deal.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,0.7fr))] sm:items-center">
-          <div className="min-w-0">
-            {onOpenDeal ? (
-              <button
-                type="button"
-                className="truncate rounded text-left text-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                onClick={() => onOpenDeal(deal.id)}
-              >
-                <span className="inline-flex min-w-0 items-center gap-2">
+    <>
+      <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Contact deals">
+        {deals.map((deal) => (
+          <li key={deal.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,0.7fr))] sm:items-center">
+            <div className="min-w-0">
+              {onOpenDeal ? (
+                <button
+                  type="button"
+                  className="truncate rounded text-left text-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={() => onOpenDeal(deal.id)}
+                >
+                  <span className="inline-flex min-w-0 items-center gap-2">
+                    <span className="truncate">{deal.name}</span>
+                    <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
+                  </span>
+                </button>
+              ) : (
+                <p className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">
                   <span className="truncate">{deal.name}</span>
                   <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
-                </span>
-              </button>
-            ) : (
-              <p className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">
-                <span className="truncate">{deal.name}</span>
-                <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
-              </p>
-            )}
-            <p className="truncate text-xs text-muted-foreground">{deal.id}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Role</p>
-            <p className="truncate text-sm">{displayValue(deal.role)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Stage</p>
-            <p className="truncate text-sm">{displayValue(deal.stage)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Amount</p>
-            <p className="truncate text-sm tabular-nums">{formatMinorAmount(deal.amountCents, deal.currency)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Owner</p>
-            <p className="truncate text-sm">{deal.owner?.name ?? displayValue(deal.ownerId)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Close date</p>
-            <p className="truncate text-sm">{formatDate(deal.expectedCloseDate)}</p>
-          </div>
-        </li>
-      ))}
-    </ul>
+                </p>
+              )}
+              <p className="truncate text-xs text-muted-foreground">{deal.id}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Role</p>
+              <p className="truncate text-sm">{displayValue(deal.role)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Stage</p>
+              {rpc === undefined ? (
+                <p className="truncate text-sm">{displayValue(deal.stage)}</p>
+              ) : (
+                <DealStageMenu
+                  deal={deal}
+                  busy={stageBusyId === deal.id}
+                  onSelect={(stage) => selectStage(deal, stage)}
+                />
+              )}
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Amount</p>
+              <p className="truncate text-sm tabular-nums">{formatMinorAmount(deal.amountCents, deal.currency)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Owner</p>
+              <p className="truncate text-sm">{deal.owner?.name ?? displayValue(deal.ownerId)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Close date</p>
+              <p className="truncate text-sm">{formatDate(deal.expectedCloseDate)}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {stageError === null ? null : (
+        <p className="mt-2 text-sm text-destructive" role="alert">
+          {stageError}
+        </p>
+      )}
+      <DealStageReasonDialog
+        request={stageRequest}
+        busy={stageBusyId === stageRequest?.dealId}
+        onOpenChange={(open) => {
+          if (!open) setStageRequest(null);
+        }}
+        onSubmit={async (reason) => {
+          if (stageRequest === null) return;
+          await runStageChange(stageRequest.dealId, stageRequest.stage, reason);
+          setStageRequest(null);
+        }}
+      />
+    </>
   );
 }
 
@@ -1180,6 +1316,32 @@ export function ContactsView({
     },
     [record, rpc],
   );
+
+  const makePrimaryContact = useCallback(async () => {
+    if (record === null || !record.companyId || record.isPrimaryContact) return;
+    setMutationBusy(true);
+    setMutationError(null);
+    try {
+      await rpc.call("companies_setPrimaryContact", {
+        companyId: record.companyId,
+        contactId: record.id,
+      });
+      setRecord((current) => current?.id === record.id
+        ? { ...current, isPrimaryContact: true }
+        : current);
+      setList((current) => ({
+        ...current,
+        rows: current.rows.map((row) => row.id === record.id
+          ? { ...row, isPrimaryContact: true }
+          : row),
+      }));
+      setRefreshKey((value) => value + 1);
+    } catch (cause) {
+      setMutationError(errorMessage(cause));
+    } finally {
+      setMutationBusy(false);
+    }
+  }, [record, rpc]);
 
   const requestRecordEnrichment = useCallback(
     async (
@@ -1896,6 +2058,47 @@ export function ContactsView({
             />
           )
         }
+        actions={
+          record === null ? undefined : (
+            <>
+              {record.isPrimaryContact ? (
+                <span className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                  Primary contact
+                </span>
+              ) : record.companyId ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={mutationBusy}
+                  onClick={() => void makePrimaryContact()}
+                >
+                  Make primary
+                </Button>
+              ) : null}
+              {record.companyId && onOpenRelatedRecord ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onOpenRelatedRecord("company", record.companyId!)}
+                >
+                  Company
+                </Button>
+              ) : null}
+              {record.email ? (
+                <Button asChild size="sm" variant="outline">
+                  <a href={`mailto:${record.email}`}>Email</a>
+                </Button>
+              ) : null}
+              {record.phone ? (
+                <Button asChild size="sm" variant="outline">
+                  <a href={`tel:${record.phone}`}>Call</a>
+                </Button>
+              ) : null}
+            </>
+          )
+        }
       >
         {recordLoading ? (
           <div className="flex min-h-56 items-center justify-center" role="status">
@@ -1955,10 +2158,16 @@ export function ContactsView({
                 onArchive={() => void runArchiveMutation("contacts_archive")}
                 onRestore={() => void runArchiveMutation("contacts_restore")}
                 onPurge={() => setPurgeOpen(true)}
+                onOpenContact={openRecord}
               />
             ) : recordTab === "deals" ? (
               <ContactDeals
                 contact={record}
+                rpc={rpc as unknown as ContactDealsRpcClient}
+                onChanged={() => {
+                  setRecordRefreshKey((value) => value + 1);
+                  setRefreshKey((value) => value + 1);
+                }}
                 onOpenDeal={
                   onOpenRelatedRecord === undefined
                     ? undefined
@@ -1970,6 +2179,13 @@ export function ContactsView({
                 anchor={{ contactId: record.id }}
                 title="Contact activity"
                 description="Notes, touchpoints, and follow-up work for this contact."
+                onOpenRelatedRecord={
+                  onOpenRelatedRecord === undefined
+                    ? undefined
+                    : (kind, id) => {
+                        if (kind === "company" || kind === "deal") onOpenRelatedRecord(kind, id);
+                      }
+                }
               />
             ) : recordTab === "agent" ? (
               <RecordAgentTab

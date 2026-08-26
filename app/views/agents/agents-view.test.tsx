@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 
 import type {
   AgentDetail,
@@ -22,6 +23,39 @@ import { AgentsView, type AgentsRpcClient } from "./index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
   useRpc: () => ({ call: vi.fn() }),
+  experimental_NewThreadComposer: ({
+    initialPrompt,
+    onSubmit,
+  }: {
+    initialPrompt?: string;
+    onSubmit: (request: unknown) => void | Promise<void>;
+  }) => {
+    const [value, setValue] = useState(initialPrompt ?? "");
+    return (
+      <div data-testid="bb-new-thread-composer">
+        <textarea
+          aria-label="Describe the CRM automation"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <button
+          type="button"
+          onClick={() => void onSubmit({
+            projectId: "project-builder",
+            providerId: "provider-codex",
+            model: "model-default",
+            reasoningLevel: "medium",
+            permissionMode: "accept-edits",
+            executionInputSources: {},
+            environment: { type: "project-default" },
+            input: [{ type: "text", text: value, mentions: [] }],
+          })}
+        >
+          Start building
+        </button>
+      </div>
+    );
+  },
   ThreadChat: ({
     threadId,
     messageActions,
@@ -194,6 +228,67 @@ function makeRpc(
 }
 
 describe("AgentsView", () => {
+  it("creates a natural-language draft and opens its visible builder conversation", async () => {
+    const created: AgentDetail = {
+      ...agent,
+      id: "agent_prompt_draft",
+      name: "Draft · Flag deals with no activity for 14 days",
+      description: "Flag deals with no activity for 14 days.",
+      status: "DRAFT",
+      currentVersion: null,
+      currentVersionId: null,
+      versions: [],
+      triggers: [],
+      runCount: 0,
+    };
+    const createdLink: AgentThreadLink = {
+      ...builderLink,
+      agentId: created.id,
+      threadId: "bb-builder-prompt-draft",
+      versionId: null,
+    };
+    const onTabChange = vi.fn();
+    const rpc = makeRpc(async (method) => {
+      if (method === "agents_list") return [listItem];
+      if (method === "agents_create") return created;
+      if (method === "agents_get") return created;
+      if (method === "agents_threads_createBuilder") return createdLink;
+      if (method === "agents_threads_list") return [createdLink];
+      return [];
+    });
+
+    render(<AgentsView rpcClient={rpc} onTabChange={onTabChange} />);
+    fireEvent.change(screen.getByLabelText("Describe the CRM automation"), {
+      target: { value: "Flag deals with no activity for 14 days." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start building" }));
+
+    await waitFor(() => expect(rpc.call).toHaveBeenNthCalledWith(1, "agents_list", expect.anything()));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_create", {
+      name: "Draft · Flag deals with no activity for 14 days",
+      description: "Flag deals with no activity for 14 days.",
+    }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_threads_createBuilder", {
+      agentId: created.id,
+      newConversation: false,
+      initialPrompt: "Flag deals with no activity for 14 days.",
+      spawnRequest: {
+        projectId: "project-builder",
+        providerId: "provider-codex",
+        model: "model-default",
+        reasoningLevel: "medium",
+        permissionMode: "accept-edits",
+        executionInputSources: {},
+        environment: { type: "project-default" },
+        input: [{ type: "text", text: "Flag deals with no activity for 14 days.", mentions: [] }],
+      },
+    }));
+    expect(onTabChange).toHaveBeenCalledWith("conversation", created.id);
+
+    const drawer = await screen.findByRole("dialog", { name: created.name });
+    expect(await within(drawer).findByTestId("agent-thread-chat")).toBeDefined();
+  });
+
   it("creates an agent and deep-links the new definition", async () => {
     const created = { ...agent, id: "agent_new", name: "New agent", description: null, currentVersion: null, versions: [], triggers: [], runCount: 0 };
     const onRecordIdChange = vi.fn();

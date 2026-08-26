@@ -14,6 +14,7 @@ import type {
   Contact,
   ContactListOutput,
   CompanyListOutput,
+  DealStage,
 } from "../../../contracts/core.js";
 import { ContactsView, type ContactsRpcClient } from "./index.js";
 
@@ -210,7 +211,8 @@ describe("ContactsView", () => {
       if (method === "contacts_get") return relatedContact;
       return relatedContact;
     });
-    render(<ContactsView rpcClient={rpc} />);
+    const onRecordIdChange = vi.fn();
+    render(<ContactsView rpcClient={rpc} onRecordIdChange={onRecordIdChange} />);
 
     fireEvent.click(await screen.findByRole("row", { name: /Open Ada Lovelace/ }));
     const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
@@ -220,6 +222,42 @@ describe("ContactsView", () => {
     expect(within(summary).getByText("Planning session · Jan 1, 2099")).toBeDefined();
     expect(within(summary).getByText("Grace Hopper")).toBeDefined();
     expect(within(summary).getByText("Compiler Engineer")).toBeDefined();
+    fireEvent.click(within(summary).getByRole("button", { name: "Grace Hopper" }));
+    expect(onRecordIdChange).toHaveBeenCalledWith("con_grace");
+  });
+
+  it("offers source contact actions and can make a company contact primary", async () => {
+    const rpc = makeRpc(async (method) => {
+      if (method === "contacts_list") return listResult();
+      if (method === "companies_list") return companyListResult();
+      if (method === "contacts_get") return contact;
+      if (method === "companies_setPrimaryContact") {
+        return { id: "cmp_acme", primaryContactId: contact.id };
+      }
+      return contact;
+    });
+    const onOpenRelatedRecord = vi.fn();
+    render(
+      <ContactsView
+        rpcClient={rpc}
+        onOpenRelatedRecord={onOpenRelatedRecord}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Ada Lovelace/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    expect(within(drawer).getByRole("link", { name: "Email" }).getAttribute("href"))
+      .toBe("mailto:ada@example.com");
+    expect(within(drawer).getByRole("link", { name: "Call" }).getAttribute("href"))
+      .toBe("tel:+1 555 0100");
+    fireEvent.click(within(drawer).getByRole("button", { name: "Company" }));
+    expect(onOpenRelatedRecord).toHaveBeenCalledWith("company", "cmp_acme");
+    fireEvent.click(within(drawer).getByRole("button", { name: "Make primary" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith(
+      "companies_setPrimaryContact",
+      { companyId: "cmp_acme", contactId: "con_ada" },
+    ));
+    expect(await within(drawer).findByText("Primary contact")).toBeDefined();
   });
 
   it("marks archived related deals while keeping them visible", async () => {
@@ -243,6 +281,62 @@ describe("ContactsView", () => {
     fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
     const deals = within(drawer).getByRole("list", { name: "Contact deals" });
     expect(within(deals).getByText("Archived")).toBeDefined();
+  });
+
+  it("changes related deal stages inline and requires a reason for terminal stages", async () => {
+    let current: Contact = {
+      ...contact,
+      deals: [{ id: "deal_1", name: "Expansion", stage: "DEMO_BOOKED" }],
+    };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "contacts_list") return listResult([current]);
+      if (method === "contacts_get") return current;
+      if (method === "deals_setStage") {
+        const request = input as { id: string; stage: DealStage };
+        current = {
+          ...current,
+          deals: current.deals?.map((deal) =>
+            deal.id === request.id ? { ...deal, stage: request.stage } : deal,
+          ),
+        };
+        return current;
+      }
+      return current;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Ada Lovelace/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
+    const deals = within(drawer).getByRole("list", { name: "Contact deals" });
+
+    fireEvent.click(within(deals).getByRole("button", { name: "Demo booked" }));
+    const stageMenu = await within(deals).findByRole("menu", {
+      name: "Change stage for Expansion",
+    });
+    expect(
+      within(stageMenu).getByRole("menuitemradio", { name: "Unqualified to buy" }),
+    ).toBeDefined();
+    fireEvent.click(
+      within(stageMenu).getByRole("menuitemradio", { name: "Closed lost" }),
+    );
+    const lostDialog = await screen.findByRole("dialog", { name: "Close as lost" });
+    const saveLost = within(lostDialog).getByRole("button", { name: "Save stage" });
+    expect((saveLost as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(lostDialog).getByLabelText(/Reason/), {
+      target: { value: "Budget" },
+    });
+    fireEvent.click(saveLost);
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
+        id: "deal_1",
+        stage: "CLOSED_LOST",
+        closedReason: "Budget",
+      }),
+    );
+    await waitFor(() =>
+      expect(within(deals).getByRole("button", { name: "Closed lost" })).toBeDefined(),
+    );
   });
 
   it("restores a deep-linked drawer tab and reports tab changes", async () => {

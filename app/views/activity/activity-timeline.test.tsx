@@ -192,6 +192,37 @@ describe("ActivityTimeline", () => {
     ).toContain("sticky");
   });
 
+  it("opens related records from timeline footnotes without linking the anchor", async () => {
+    const onOpenRelatedRecord = vi.fn();
+    const entry = activity({
+      company: { id: "cmp_acme", name: "Acme Corporation" },
+      contact: { id: "con_ada", firstName: "Ada", lastName: "Lovelace" },
+      deal: { id: "deal_engine", name: "Analytical Engine" },
+    });
+    const rpc = makeRpc(async (method) => {
+      if (method === "activity_timeline") {
+        return { entries: [entry], nextCursor: null } satisfies TimelineOutput;
+      }
+      if (method === "activity_timelineCounts") return { ...counts, all: 1 };
+      return entry;
+    });
+
+    render(
+      <ActivityTimeline
+        anchor={{ companyId: "cmp_acme" }}
+        rpcClient={rpc}
+        onOpenRelatedRecord={onOpenRelatedRecord}
+      />,
+    );
+
+    await screen.findByText("Kickoff notes");
+    expect(screen.queryByRole("button", { name: "Acme Corporation" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Analytical Engine" }));
+    expect(onOpenRelatedRecord).toHaveBeenNthCalledWith(1, "contact", "con_ada");
+    expect(onOpenRelatedRecord).toHaveBeenNthCalledWith(2, "deal", "deal_engine");
+  });
+
   it("loads an older cursor page when the timeline sentinel intersects", async () => {
     const current = activity();
     const older = activity({

@@ -178,6 +178,17 @@ describe("DealsView", () => {
     expect(rpc.call).toHaveBeenCalledWith("deals_get", { id: "deal_acme_expand" });
   });
 
+  it("applies a dashboard stage route to the deals list request", async () => {
+    const rpc = makeRpc();
+    render(<DealsView rpcClient={rpc} initialStage="QUALIFIED_TO_BUY" />);
+
+    expect(await screen.findByText("Acme Expansion")).toBeDefined();
+    expect(rpc.call).toHaveBeenCalledWith(
+      "deals_list",
+      expect.objectContaining({ stage: ["QUALIFIED_TO_BUY"] }),
+    );
+  });
+
   it("marks archived related contacts while keeping them visible", async () => {
     const relatedDeal: Deal = {
       ...deal,

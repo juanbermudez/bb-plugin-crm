@@ -31,6 +31,20 @@ describe("CRM panel routes", () => {
     expect(parseCrmRoute(crmRouteToSubPath(route))).toEqual(route);
   });
 
+  it("round-trips the routed deal stage filter", () => {
+    const route = {
+      kind: "deals" as const,
+      recordId: null,
+      stage: "DEMO_BOOKED" as const,
+    };
+    expect(crmRouteToSubPath(route)).toBe("deals?stage=DEMO_BOOKED");
+    expect(parseCrmRoute(crmRouteToSubPath(route))).toEqual(route);
+    expect(parseCrmRoute("deals?stage=not-a-stage")).toEqual({
+      kind: "deals",
+      recordId: null,
+    });
+  });
+
   it("round-trips a routed create action", () => {
     const route = {
       kind: "contacts" as const,

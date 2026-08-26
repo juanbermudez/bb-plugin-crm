@@ -8,6 +8,8 @@ import type {
   ContactUpdateInput,
   CompanyListInput,
   CompanyListOutput,
+  CompanySetPrimaryContactInput,
+  CompanySetPrimaryContactOutput,
   Id,
 } from "../../../contracts/core.js";
 import { rpcContract } from "../../../contracts/rpc.js";
@@ -22,6 +24,10 @@ export interface ContactsRpcClient {
   call(method: "contacts_restore", input: { id: Id }): Promise<Contact>;
   call(method: "contacts_purge", input: { id: Id }): Promise<Contact>;
   call(method: "companies_list", input: CompanyListInput): Promise<CompanyListOutput>;
+  call(
+    method: "companies_setPrimaryContact",
+    input: CompanySetPrimaryContactInput,
+  ): Promise<CompanySetPrimaryContactOutput>;
   call(
     method: "contacts_enrich",
     input: { id: Id; agentId?: Id },

@@ -12,7 +12,6 @@ import { Card } from "../../../components/ui/card.js";
 import { Icon, type IconName } from "../../../components/ui/icon.js";
 import type {
   DashboardBiggestOpenDeal,
-  DashboardOverdueTask,
   DashboardRecentActivity,
   DashboardScope,
   DashboardStageBucket,
@@ -253,7 +252,42 @@ function DashboardError({
   );
 }
 
-function PipelineSection({ data }: { data: DashboardSummaryOutput }) {
+export type DashboardRecordKind = "company" | "contact" | "deal";
+
+interface DashboardNavigationProps {
+  onOpenRecord?: (kind: DashboardRecordKind, id: Id) => void;
+  onOpenDeals?: (stage?: DealStage) => void;
+  onOpenCurrencySettings?: () => void;
+}
+
+function DashboardRecordButton({
+  kind,
+  id,
+  label,
+  onOpenRecord,
+}: {
+  kind: DashboardRecordKind;
+  id: Id;
+  label: string;
+  onOpenRecord?: (kind: DashboardRecordKind, id: Id) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="min-w-0 max-w-full truncate text-left underline decoration-border underline-offset-2 hover:text-foreground hover:decoration-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      aria-label={`Open ${kind} ${label}`}
+      onClick={() => onOpenRecord?.(kind, id)}
+    >
+      {label}
+    </button>
+  );
+}
+
+function PipelineSection({
+  data,
+  onOpenDeals,
+  onOpenCurrencySettings,
+}: DashboardNavigationProps & { data: DashboardSummaryOutput }) {
   const { pipeline, reportingCurrency, unconverted } = data;
   const maxStageValue = Math.max(...pipeline.stages.map((stage) => stage.valueCents), 0);
 
@@ -275,6 +309,19 @@ function PipelineSection({ data }: { data: DashboardSummaryOutput }) {
             <Icon name="Info" aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             <span>
               {pluralize(unconverted.count, "open deal")} in {unconverted.currencies.join(", ")} do not have a frozen {reportingCurrency} conversion and are excluded from totals.
+              {onOpenCurrencySettings ? (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="font-medium underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    aria-label="Set reporting currency"
+                    onClick={onOpenCurrencySettings}
+                  >
+                    Set one
+                  </button>
+                </>
+              ) : null}
             </span>
           </p>
         ) : null}
@@ -309,12 +356,17 @@ function PipelineSection({ data }: { data: DashboardSummaryOutput }) {
                   return (
                     <tr key={stage.stage} className="group">
                       <th scope="row" className="py-3 pr-4 font-medium">
-                        <div className="flex min-w-52 items-center gap-3">
+                        <button
+                          type="button"
+                          className="flex min-w-52 items-center gap-3 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          aria-label={`Open ${stageLabel(stage.stage)} deals`}
+                          onClick={() => onOpenDeals?.(stage.stage)}
+                        >
                           <span aria-hidden="true" className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-muted">
                             <span className="block h-full rounded-full bg-primary transition-[width] duration-300 group-hover:bg-foreground" style={barStyle} />
                           </span>
                           <span>{stageLabel(stage.stage)}</span>
-                        </div>
+                        </button>
                       </th>
                       <td className="py-3 pr-4 text-right tabular-nums text-muted-foreground">{formatNumber(stage.count)}</td>
                       <td className="py-3 tabular-nums">{formatMoney(stage.valueCents, reportingCurrency)}</td>
@@ -477,14 +529,22 @@ function CompanyMark({ deal }: { deal: DashboardBiggestOpenDeal }) {
   );
 }
 
-function BiggestOpenSection({ data }: { data: DashboardSummaryOutput }) {
+function BiggestOpenSection({
+  data,
+  onOpenRecord,
+  onOpenDeals,
+}: DashboardNavigationProps & { data: DashboardSummaryOutput }) {
   return (
     <Card className="overflow-hidden">
       <SectionHeading
         id="dashboard-biggest-open"
         title="Biggest open deals"
         description="The largest open opportunities by frozen reporting value."
-        action={<span>{pluralize(data.biggestOpen.length, "deal")}</span>}
+        action={
+          <Button type="button" variant="outline" size="sm" onClick={() => onOpenDeals?.()}>
+            Open deals
+          </Button>
+        }
       />
       {data.biggestOpen.length === 0 ? (
         <EmptyState
@@ -503,8 +563,13 @@ function BiggestOpenSection({ data }: { data: DashboardSummaryOutput }) {
               ? `Unconverted ${deal.currency} amount`
               : `Reporting value in ${data.reportingCurrency}`;
             return (
-              <li key={deal.id} className="group px-4 py-3.5 transition-colors hover:bg-state-hover sm:px-5">
-                <div className="flex min-w-0 items-start gap-3">
+              <li key={deal.id} className="group transition-colors hover:bg-state-hover">
+                <button
+                  type="button"
+                  className="flex w-full min-w-0 items-start gap-3 px-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:px-5"
+                  aria-label={`Open biggest deal ${deal.name}`}
+                  onClick={() => onOpenRecord?.("deal", deal.id)}
+                >
                   <CompanyMark deal={deal} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{deal.name}</p>
@@ -515,7 +580,7 @@ function BiggestOpenSection({ data }: { data: DashboardSummaryOutput }) {
                     <p className="text-sm font-semibold tabular-nums">{amount}</p>
                     <p className="mt-0.5 text-[10px] text-muted-foreground">{amountDescription}</p>
                   </div>
-                </div>
+                </button>
               </li>
             );
           })}
@@ -525,14 +590,16 @@ function BiggestOpenSection({ data }: { data: DashboardSummaryOutput }) {
   );
 }
 
-function recordContext(
-  task: DashboardOverdueTask,
-): string {
-  const context = [task.deal?.name, task.company?.name].filter(Boolean);
-  return context.length > 0 ? context.join(" · ") : "No linked record";
-}
-
-function OverdueTasksSection({ data }: { data: DashboardSummaryOutput }) {
+function OverdueTasksSection({
+  data,
+  onCompleteTask,
+  completingTaskId,
+  onOpenRecord,
+}: DashboardNavigationProps & {
+  data: DashboardSummaryOutput;
+  onCompleteTask?: (id: Id) => void | Promise<void>;
+  completingTaskId: Id | null;
+}) {
   return (
     <Card className="overflow-hidden">
       <SectionHeading
@@ -553,12 +620,41 @@ function OverdueTasksSection({ data }: { data: DashboardSummaryOutput }) {
           {data.overdueTasks.map((task) => (
             <li key={task.id} className="px-4 py-3.5 sm:px-5">
               <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={false}
+                  disabled={onCompleteTask === undefined || completingTaskId !== null}
+                  aria-label="Mark as done"
+                  className="mt-1 size-4 shrink-0 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onChange={(event) => {
+                    if (event.target.checked) void onCompleteTask?.(task.id);
+                  }}
+                />
                 <span aria-hidden="true" className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
                   <Icon name="Clock" className="size-3.5" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{task.subject?.trim() || "Untitled task"}</p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{recordContext(task)}</p>
+                  <p className="mt-0.5 flex min-w-0 flex-wrap gap-x-1 text-xs text-muted-foreground">
+                    {task.deal ? (
+                      <DashboardRecordButton
+                        kind="deal"
+                        id={task.deal.id}
+                        label={task.deal.name}
+                        onOpenRecord={onOpenRecord}
+                      />
+                    ) : null}
+                    {task.deal && task.company ? <span aria-hidden="true">·</span> : null}
+                    {task.company ? (
+                      <DashboardRecordButton
+                        kind="company"
+                        id={task.company.id}
+                        label={task.company.name}
+                        onOpenRecord={onOpenRecord}
+                      />
+                    ) : null}
+                    {!task.deal && !task.company ? "No linked record" : null}
+                  </p>
                 </div>
                 <time className="shrink-0 text-right text-xs tabular-nums text-destructive" dateTime={task.dueAt ?? undefined}>
                   {formatDate(task.dueAt)}
@@ -572,7 +668,10 @@ function OverdueTasksSection({ data }: { data: DashboardSummaryOutput }) {
   );
 }
 
-function RecentActivitySection({ data }: { data: DashboardSummaryOutput }) {
+function RecentActivitySection({
+  data,
+  onOpenRecord,
+}: DashboardNavigationProps & { data: DashboardSummaryOutput }) {
   return (
     <Card className="overflow-hidden">
       <SectionHeading
@@ -593,7 +692,6 @@ function RecentActivitySection({ data }: { data: DashboardSummaryOutput }) {
           {data.recentActivity.map((activity) => {
             const meta = ACTIVITY_META[activity.type];
             const subject = activity.subject?.trim() || `${meta.label} activity`;
-            const context = [activity.deal?.name, activity.company?.name].filter(Boolean).join(" · ");
             return (
               <li key={activity.id} className="px-4 py-3.5 sm:px-5">
                 <div className="flex items-start gap-3">
@@ -602,8 +700,30 @@ function RecentActivitySection({ data }: { data: DashboardSummaryOutput }) {
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{subject}</p>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {meta.label} · {activity.createdBy.name}{context ? ` · ${context}` : ""}
+                    <p className="mt-0.5 flex min-w-0 flex-wrap gap-x-1 text-xs text-muted-foreground">
+                      <span>{meta.label} · {activity.createdBy.name}</span>
+                      {activity.company ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <DashboardRecordButton
+                            kind="company"
+                            id={activity.company.id}
+                            label={activity.company.name}
+                            onOpenRecord={onOpenRecord}
+                          />
+                        </>
+                      ) : null}
+                      {activity.deal ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <DashboardRecordButton
+                            kind="deal"
+                            id={activity.deal.id}
+                            label={activity.deal.name}
+                            onOpenRecord={onOpenRecord}
+                          />
+                        </>
+                      ) : null}
                     </p>
                     {activity.body?.trim() ? (
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{activity.body}</p>
@@ -622,7 +742,18 @@ function RecentActivitySection({ data }: { data: DashboardSummaryOutput }) {
   );
 }
 
-function DashboardContent({ data }: { data: DashboardSummaryOutput }) {
+function DashboardContent({
+  data,
+  onOpenRecord,
+  onOpenDeals,
+  onOpenCurrencySettings,
+  onCompleteTask,
+  completingTaskId,
+}: DashboardNavigationProps & {
+  data: DashboardSummaryOutput;
+  onCompleteTask?: (id: Id) => void | Promise<void>;
+  completingTaskId: Id | null;
+}) {
   const wonChange = amountChange(
     data.wonThisMonth.valueCents,
     data.wonPrevMonth.valueCents,
@@ -682,7 +813,11 @@ function DashboardContent({ data }: { data: DashboardSummaryOutput }) {
       ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
-        <PipelineSection data={data} />
+        <PipelineSection
+          data={data}
+          onOpenDeals={onOpenDeals}
+          onOpenCurrencySettings={onOpenCurrencySettings}
+        />
         <PerformanceSection data={data} />
       </div>
 
@@ -710,12 +845,21 @@ function DashboardContent({ data }: { data: DashboardSummaryOutput }) {
             ) : null}
           </div>
         </Card>
-        <BiggestOpenSection data={data} />
+        <BiggestOpenSection
+          data={data}
+          onOpenRecord={onOpenRecord}
+          onOpenDeals={onOpenDeals}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <OverdueTasksSection data={data} />
-        <RecentActivitySection data={data} />
+        <OverdueTasksSection
+          data={data}
+          onCompleteTask={onCompleteTask}
+          completingTaskId={completingTaskId}
+          onOpenRecord={onOpenRecord}
+        />
+        <RecentActivitySection data={data} onOpenRecord={onOpenRecord} />
       </div>
     </div>
   );
@@ -728,6 +872,12 @@ export interface DashboardViewProps {
   ownerId?: Id | null;
   /** Initial scope for hosts that persist a dashboard preference. */
   initialScope?: DashboardScope;
+  /** Opens a dashboard-linked company, contact, or deal in the BB route. */
+  onOpenRecord?: (kind: DashboardRecordKind, id: Id) => void;
+  /** Opens the deals list, optionally filtered to one pipeline stage. */
+  onOpenDeals?: (stage?: DealStage) => void;
+  /** Opens the currency settings section for unconverted dashboard values. */
+  onOpenCurrencySettings?: () => void;
   className?: string;
 }
 
@@ -735,6 +885,9 @@ export function DashboardView({
   rpcClient,
   ownerId,
   initialScope = "me",
+  onOpenRecord,
+  onOpenDeals,
+  onOpenCurrencySettings,
   className,
 }: DashboardViewProps) {
   const contextRpc = useDashboardRpc();
@@ -744,6 +897,7 @@ export function DashboardView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [completingTaskId, setCompletingTaskId] = useState<Id | null>(null);
 
   const input = useMemo<DashboardSummaryInput>(() => {
     const next: DashboardSummaryInput = { scope };
@@ -754,6 +908,35 @@ export function DashboardView({
   const retry = useCallback(() => {
     setRefreshKey((current) => current + 1);
   }, []);
+
+  const completeTask = useCallback(
+    async (taskId: Id) => {
+      if (summary === null || completingTaskId !== null) return;
+      const previousSummary = summary;
+      setCompletingTaskId(taskId);
+      setError(null);
+      setSummary((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              overdueTasks: current.overdueTasks.filter((task) => task.id !== taskId),
+            },
+      );
+      try {
+        await rpc.call("activity_complete", { id: taskId, completed: true });
+        setRefreshKey((current) => current + 1);
+      } catch (cause: unknown) {
+        setSummary((current) =>
+          current?.scope === previousSummary.scope ? previousSummary : current,
+        );
+        setError(errorMessage(cause));
+      } finally {
+        setCompletingTaskId(null);
+      }
+    },
+    [completingTaskId, rpc, summary],
+  );
 
   useEffect(() => {
     let active = true;
@@ -824,7 +1007,14 @@ export function DashboardView({
               Updating dashboard…
             </p>
           ) : null}
-          <DashboardContent data={summary} />
+          <DashboardContent
+            data={summary}
+            onOpenRecord={onOpenRecord}
+            onOpenDeals={onOpenDeals}
+            onOpenCurrencySettings={onOpenCurrencySettings}
+            onCompleteTask={completeTask}
+            completingTaskId={completingTaskId}
+          />
         </>
       ) : null}
     </div>

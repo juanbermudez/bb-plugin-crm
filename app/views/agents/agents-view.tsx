@@ -34,6 +34,7 @@ import type {
 } from "../../../contracts/agents.js";
 import { useAgentsRpc, type AgentsRpcClient } from "./rpc.js";
 import { AgentAttachmentPicker } from "./agent-attachments.js";
+import { AgentBuilderHome } from "../../components/agent-builder-home.js";
 import { AgentBuilderConversation } from "../../components/agent-builder-conversation.js";
 
 const LIST_LIMIT = 100;
@@ -1714,6 +1715,7 @@ export function AgentsView({
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(initialRecordId);
+  const [selectedTab, setSelectedTab] = useState<AgentTab>(() => normalizeAgentTab(initialTab));
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -1753,6 +1755,10 @@ export function AgentsView({
   }, [initialRecordId]);
 
   useEffect(() => {
+    setSelectedTab(normalizeAgentTab(initialTab));
+  }, [initialTab]);
+
+  useEffect(() => {
     setCreateError(null);
     setCreateOpen(initialCreate);
   }, [initialCreate]);
@@ -1780,13 +1786,25 @@ export function AgentsView({
     void loadDetail(selectedId);
   }, [detailRefreshKey, loadDetail, selectedId]);
 
-  const openAgent = (id: string) => {
+  const openAgent = (id: string, tab: AgentTab = "overview") => {
     setSelectedId(id);
+    setSelectedTab(tab);
     onRecordIdChange?.(id);
+  };
+
+  const openBuilder = (id: string) => {
+    setSelectedId(id);
+    setSelectedTab("conversation");
+    // A tab callback carries both the record and the visible builder tab in
+    // one route update. A bare record callback remains a useful fallback for
+    // previews that do not wire tab-aware routing.
+    if (onTabChange) onTabChange("conversation", id);
+    else onRecordIdChange?.(id);
   };
 
   const closeAgent = () => {
     setSelectedId(null);
+    setSelectedTab("overview");
     setDetail(null);
     onRecordIdChange?.(null);
   };
@@ -1861,6 +1879,7 @@ export function AgentsView({
         }
       />
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
+        <AgentBuilderHome rpc={rpc} onOpenBuilder={openBuilder} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchField
             label="Search agents"
@@ -1946,8 +1965,11 @@ export function AgentsView({
             agent={detail}
             rpc={rpc}
             onChanged={reloadDetail}
-            initialTab={initialTab}
-            onTabChange={onTabChange}
+            initialTab={selectedTab}
+            onTabChange={(tab, recordId) => {
+              setSelectedTab(tab);
+              onTabChange?.(tab, recordId);
+            }}
           />
         ) : (
           <EmptyState icon="Brain" title="Agent not found" description="The selected agent may have been removed or archived." />

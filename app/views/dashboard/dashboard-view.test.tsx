@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  ActivityEntry,
+  CompleteActivityInput,
   DashboardSummaryInput,
   DashboardSummaryOutput,
 } from "../../../contracts/core.js";
@@ -107,12 +109,48 @@ function summary(scope: "me" | "everyone" = "me"): DashboardSummaryOutput {
 
 function makeRpc(
   implementation?: (input: DashboardSummaryInput) => Promise<DashboardSummaryOutput>,
+  completeImplementation?: (input: CompleteActivityInput) => Promise<ActivityEntry>,
 ) {
-  const call = vi.fn(async (_method: "dashboard_summary", input: DashboardSummaryInput) =>
-    implementation ? implementation(input) : summary(input.scope),
+  const call = vi.fn(
+    async (
+      method: "dashboard_summary" | "activity_complete",
+      input: DashboardSummaryInput | CompleteActivityInput,
+    ) => {
+      if (method === "activity_complete") {
+        return completeImplementation
+          ? completeImplementation(input)
+          : ({} as ActivityEntry);
+      }
+      return implementation
+        ? implementation(input as DashboardSummaryInput)
+        : summary((input as DashboardSummaryInput).scope);
+    },
   );
   return { call } as unknown as DashboardRpcClient & { call: typeof call };
 }
+
+const completedTask: ActivityEntry = {
+  id: "task_follow_up",
+  type: "TASK",
+  subject: "Follow up with Acme",
+  body: null,
+  occurredAt: "2026-08-20T12:00:00.000Z",
+  dueAt: "2026-08-20T12:00:00.000Z",
+  completedAt: "2026-08-26T12:00:00.000Z",
+  meta: {},
+  createdAt: "2026-08-20T12:00:00.000Z",
+  createdBy: {
+    id: "usr_local",
+    name: "Local user",
+    email: "local@example.com",
+    image: null,
+  },
+  company: { id: "cmp_acme", name: "Acme Corporation" },
+  contact: null,
+  deal: { id: "deal_acme", name: "Acme expansion" },
+  emailThread: null,
+  calendarEvent: null,
+};
 
 describe("DashboardView", () => {
   it("renders the typed summary and refreshes when scope changes", async () => {
@@ -125,7 +163,7 @@ describe("DashboardView", () => {
     expect(screen.getByText("Closed won vs. new pipeline")).toBeDefined();
     expect(screen.getByRole("table", { name: "Open pipeline by stage" })).toBeDefined();
     expect(screen.getByRole("table", { name: "Six-month deal value trend by month" })).toBeDefined();
-    expect(screen.getByText("Acme expansion")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Open biggest deal Acme expansion" })).toBeDefined();
     expect(screen.getByText("Follow up with Acme")).toBeDefined();
     expect(screen.getByText("Pricing discussion")).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith("dashboard_summary", { scope: "me" });
@@ -177,5 +215,70 @@ describe("DashboardView", () => {
     expect(screen.getByText("No open pipeline")).toBeDefined();
     expect(screen.getByText("No overdue tasks")).toBeDefined();
     expect(screen.getByText("No recent activity")).toBeDefined();
+  });
+
+  it("completes an overdue task optimistically and refreshes the summary", async () => {
+    let refreshed = false;
+    let resolveCompletion!: (activity: ActivityEntry) => void;
+    const completion = new Promise<ActivityEntry>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const rpc = makeRpc(
+      async (input) => ({
+        ...summary(input.scope),
+        overdueTasks: refreshed ? [] : summary(input.scope).overdueTasks,
+      }),
+      async () => completion.then((activity) => {
+        refreshed = true;
+        return activity;
+      }),
+    );
+    render(<DashboardView rpcClient={rpc} />);
+
+    expect(await screen.findByText("Follow up with Acme")).toBeDefined();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Mark as done" }));
+
+    await waitFor(() => expect(screen.queryByText("Follow up with Acme")).toBeNull());
+    expect(rpc.call).toHaveBeenCalledWith("activity_complete", {
+      id: "task_follow_up",
+      completed: true,
+    });
+
+    resolveCompletion(completedTask);
+    await waitFor(() => {
+      const summaryCalls = rpc.call.mock.calls.filter(
+        ([method]) => method === "dashboard_summary",
+      );
+      expect(summaryCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.getByText("No overdue tasks")).toBeDefined();
+  });
+
+  it("routes dashboard deal, stage, activity, and currency actions", async () => {
+    const onOpenRecord = vi.fn();
+    const onOpenDeals = vi.fn();
+    const onOpenCurrencySettings = vi.fn();
+    render(
+      <DashboardView
+        rpcClient={makeRpc()}
+        onOpenRecord={onOpenRecord}
+        onOpenDeals={onOpenDeals}
+        onOpenCurrencySettings={onOpenCurrencySettings}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Open biggest deal Acme expansion" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Open deals" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Demo booked deals" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open biggest deal Acme expansion" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Open deal Acme expansion" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Open company Acme Corporation" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Set reporting currency" }));
+
+    expect(onOpenDeals).toHaveBeenNthCalledWith(1);
+    expect(onOpenDeals).toHaveBeenNthCalledWith(2, "DEMO_BOOKED");
+    expect(onOpenRecord).toHaveBeenCalledWith("deal", "deal_acme");
+    expect(onOpenRecord).toHaveBeenCalledWith("company", "cmp_acme");
+    expect(onOpenCurrencySettings).toHaveBeenCalledTimes(1);
   });
 });

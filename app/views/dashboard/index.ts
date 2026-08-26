@@ -1,5 +1,6 @@
 export {
   DashboardView,
+  type DashboardRecordKind,
   type DashboardViewProps,
 } from "./dashboard-view.js";
 export {

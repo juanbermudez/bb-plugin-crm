@@ -54,6 +54,8 @@ export interface ActivityTimelineProps {
   title?: string;
   description?: string;
   className?: string;
+  /** Opens a related record while the owning view preserves its drawer/navigation model. */
+  onOpenRelatedRecord?: (kind: "company" | "contact" | "deal", id: Id) => void;
 }
 
 const SELECT_CLASS =
@@ -513,12 +515,16 @@ function Composer({
 
 function TimelineEntry({
   entry,
+  anchor,
   completingId,
   onComplete,
+  onOpenRelatedRecord,
 }: {
   entry: ActivityEntry;
+  anchor: AnchorInput;
   completingId: string | null;
   onComplete: (entry: ActivityEntry) => void;
+  onOpenRelatedRecord?: ActivityTimelineProps["onOpenRelatedRecord"];
 }) {
   const meta = ACTIVITY_TYPE_META[entry.type];
   const isTask = entry.type === "TASK";
@@ -526,6 +532,21 @@ function TimelineEntry({
   const subject = activityTitle(entry);
   const completionLabel = isComplete ? "Reopen task" : "Complete task";
   const completionBusy = completingId === entry.id;
+  const relations = [
+    entry.company && entry.company.id !== anchor.companyId
+      ? { kind: "company" as const, id: entry.company.id, label: entry.company.name }
+      : null,
+    entry.contact && entry.contact.id !== anchor.contactId
+      ? {
+          kind: "contact" as const,
+          id: entry.contact.id,
+          label: [entry.contact.firstName, entry.contact.lastName].filter(Boolean).join(" "),
+        }
+      : null,
+    entry.deal && entry.deal.id !== anchor.dealId
+      ? { kind: "deal" as const, id: entry.deal.id, label: entry.deal.name }
+      : null,
+  ].filter((relation): relation is NonNullable<typeof relation> => relation !== null);
 
   return (
     <li className="relative pl-10">
@@ -582,6 +603,18 @@ function TimelineEntry({
               {completionBusy ? "Saving…" : completionLabel}
             </Button>
           ) : null}
+          {onOpenRelatedRecord === undefined
+            ? null
+            : relations.map((relation) => (
+                <button
+                  key={`${relation.kind}-${relation.id}`}
+                  type="button"
+                  className="font-medium text-foreground underline-offset-2 hover:underline"
+                  onClick={() => onOpenRelatedRecord(relation.kind, relation.id)}
+                >
+                  {relation.label}
+                </button>
+              ))}
         </div>
       </article>
     </li>
@@ -604,6 +637,7 @@ export function ActivityTimeline({
   title = "Activity timeline",
   description = "Notes, touchpoints, and follow-up work for this record.",
   className,
+  onOpenRelatedRecord,
 }: ActivityTimelineProps) {
   const contextRpc = useActivityRpc();
   const rpc = rpcClient ?? contextRpc;
@@ -876,8 +910,10 @@ export function ActivityTimeline({
                 <TimelineEntry
                   key={entry.id}
                   entry={entry}
+                  anchor={anchorInput}
                   completingId={completingId}
                   onComplete={(value) => void onComplete(value)}
+                  onOpenRelatedRecord={onOpenRelatedRecord}
                 />
               ))}
             </ol>
@@ -922,8 +958,10 @@ export function ActivityTimeline({
                     <TimelineEntry
                       key={entry.id}
                       entry={entry}
+                      anchor={anchorInput}
                       completingId={completingId}
                       onComplete={(value) => void onComplete(value)}
+                      onOpenRelatedRecord={onOpenRelatedRecord}
                     />
                   ))}
                 </ol>

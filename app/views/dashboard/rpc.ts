@@ -1,21 +1,27 @@
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import type {
+  ActivityEntry,
+  CompleteActivityInput,
   DashboardSummaryInput,
   DashboardSummaryOutput,
 } from "../../../contracts/core.js";
 import { rpcContract } from "../../../contracts/rpc.js";
 
 /**
- * The dashboard only needs one read method. Keeping this adapter narrow makes
- * the view straightforward to preview and prevents accidental coupling to the
- * rest of the CRM RPC surface.
+ * Keep the dashboard adapter narrow to the summary read and its task lifecycle
+ * mutation so the view cannot accidentally couple to the rest of the RPC
+ * surface.
  */
 export interface DashboardRpcClient {
   call(
     method: "dashboard_summary",
     input: DashboardSummaryInput,
   ): Promise<DashboardSummaryOutput>;
+  call(
+    method: "activity_complete",
+    input: CompleteActivityInput,
+  ): Promise<ActivityEntry>;
 }
 
 /** Use BB's host client while retaining a small injectable surface for tests. */

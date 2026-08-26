@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Company,
   Contact,
+  Deal,
   CompanyListOutput,
   SavedView,
 } from "../../../contracts/core.js";
@@ -601,6 +602,170 @@ describe("CompaniesView", () => {
       expect(screen.queryByRole("dialog", { name: "Ada Lovelace" })).toBeNull(),
     );
     expect(screen.getByRole("dialog", { name: "Acme Corporation" })).toBeDefined();
+  });
+
+  it("keeps the company drawer open while nested contacts and deals use full record workflows", async () => {
+    let nestedContact: Contact = {
+      id: "con_ada",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+      companyId: company.id,
+      company: {
+        id: company.id,
+        name: company.name,
+        domain: company.domain ?? null,
+        iconUrl: null,
+        iconDarkUrl: null,
+        iconTone: null,
+        logoUrl: null,
+      },
+      deals: [{ id: "deal_expansion", name: "Expansion", stage: "DEMO_BOOKED" }],
+      fields: {},
+      archivedAt: null,
+    };
+    let nestedDeal: Deal = {
+      id: "deal_expansion",
+      name: "Expansion",
+      description: "Expand the Acme deployment.",
+      companyId: company.id,
+      company: {
+        id: company.id,
+        name: company.name,
+        domain: company.domain ?? null,
+        iconUrl: null,
+        iconDarkUrl: null,
+        iconTone: null,
+        logoUrl: null,
+      },
+      ownerId: "usr_juan",
+      owner: null,
+      stage: "DEMO_BOOKED",
+      currency: "USD",
+      amountCents: 125_000,
+      baseAmountCents: null,
+      closedReason: null,
+      expectedCloseDate: null,
+      closedAt: null,
+      fields: {},
+      contacts: [{
+        id: nestedContact.id,
+        firstName: nestedContact.firstName,
+        lastName: nestedContact.lastName ?? null,
+        email: nestedContact.email ?? null,
+        title: null,
+        imageUrl: null,
+        role: "Champion",
+      }],
+    };
+    let currentCompany: Company = {
+      ...company,
+      contacts: [{
+        id: nestedContact.id,
+        firstName: nestedContact.firstName,
+        lastName: nestedContact.lastName ?? null,
+        email: nestedContact.email ?? null,
+        title: null,
+        imageUrl: null,
+      }],
+      deals: [{ id: nestedDeal.id, name: nestedDeal.name, stage: nestedDeal.stage }],
+    };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "companies_list") return listResult([currentCompany]);
+      if (method === "companies_get") return currentCompany;
+      if (method === "contacts_get") return nestedContact;
+      if (method === "deals_get") return nestedDeal;
+      if (method === "deals_setStage") {
+        const request = input as {
+          id: string;
+          stage: Deal["stage"];
+          closedReason?: string;
+        };
+        nestedDeal = {
+          ...nestedDeal,
+          stage: request.stage,
+          closedReason: request.closedReason ?? null,
+        };
+        nestedContact = {
+          ...nestedContact,
+          deals: nestedContact.deals?.map((deal) =>
+            deal.id === request.id ? { ...deal, stage: request.stage } : deal,
+          ),
+        };
+        return nestedDeal;
+      }
+      if (method === "contacts_update") {
+        const data = (input as { data: Partial<Contact> }).data;
+        nestedContact = { ...nestedContact, ...data };
+        return nestedContact;
+      }
+      if (method === "contacts_archive") {
+        nestedContact = { ...nestedContact, archivedAt: "2026-08-26T00:00:00.000Z" };
+        return nestedContact;
+      }
+      if (method === "contacts_facts_list" || method === "contacts_workHistory_list" || method === "contacts_briefs_current") return [];
+      if (method === "fields_list" || method === "fields_values_list" || method === "agents_list") return [];
+      if (method === "activity_timeline") return { entries: [], nextCursor: null };
+      if (method === "activity_timelineCounts") return { all: 0, notes: 0, upcoming: 0, done: 0, email: 0, meetings: 0 };
+      return currentCompany;
+    });
+
+    render(<CompaniesView rpcClient={rpc} />);
+    await screen.findByText("Acme Corporation");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Corporation/ }));
+    const companyDrawer = await screen.findByRole("dialog", { name: "Acme Corporation" });
+    fireEvent.click(within(companyDrawer).getByRole("tab", { name: "Contacts" }));
+    fireEvent.click(within(companyDrawer).getByRole("button", { name: "Open Ada Lovelace" }));
+
+    const contactDrawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    expect(within(contactDrawer).getByRole("tab", { name: "Overview" })).toBeDefined();
+    expect(within(contactDrawer).getByRole("button", { name: "Archive contact" })).toBeDefined();
+
+    fireEvent.click(within(contactDrawer).getByRole("tab", { name: "Deals" }));
+    const contactDeals = within(contactDrawer).getByRole("list", { name: "Contact deals" });
+    fireEvent.click(within(contactDeals).getByRole("button", { name: "Demo booked" }));
+    const stageMenu = await within(contactDeals).findByRole("menu", {
+      name: "Change stage for Expansion",
+    });
+    fireEvent.click(within(stageMenu).getByRole("menuitemradio", { name: "Closed lost" }));
+    const reasonDialog = await screen.findByRole("dialog", { name: "Close as lost" });
+    fireEvent.change(within(reasonDialog).getByLabelText(/Reason/), {
+      target: { value: "Budget" },
+    });
+    fireEvent.click(within(reasonDialog).getByRole("button", { name: "Save stage" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
+        id: nestedDeal.id,
+        stage: "CLOSED_LOST",
+        closedReason: "Budget",
+      }),
+    );
+    fireEvent.click(within(contactDrawer).getByRole("button", { name: "Expansion" }));
+    const dealDrawer = await screen.findByRole("dialog", { name: "Expansion" });
+    fireEvent.click(within(dealDrawer).getByRole("tab", { name: "Contacts" }));
+    expect(within(dealDrawer).getByRole("button", { name: "Ada Lovelace" })).toBeDefined();
+
+    fireEvent.click(within(dealDrawer).getByRole("tab", { name: "Agent" }));
+    expect(await within(dealDrawer).findByRole("region", { name: "Expansion agent workspace" })).toBeDefined();
+
+    fireEvent.click(within(dealDrawer).getByRole("button", { name: "Back" }));
+    const contactAgain = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    fireEvent.click(within(contactAgain).getByRole("tab", { name: "Overview" }));
+    fireEvent.click(within(contactAgain).getByRole("button", { name: "First name" }));
+    const firstNameInput = within(contactAgain).getByLabelText("First name");
+    fireEvent.change(firstNameInput, { target: { value: "Grace" } });
+    fireEvent.keyDown(firstNameInput, { key: "Enter" });
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("contacts_update", {
+      id: nestedContact.id,
+      data: { firstName: "Grace" },
+    }));
+    await screen.findByRole("dialog", { name: "Grace Lovelace" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive contact" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restore contact" })).toBeDefined());
+    expect(rpc.call).toHaveBeenCalledWith("contacts_archive", { id: nestedContact.id });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("dialog", { name: "Acme Corporation" })).toBeDefined();
   });
 
   it("optimistically edits a company field and settles through the typed update RPC", async () => {

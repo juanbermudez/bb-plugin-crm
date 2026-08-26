@@ -123,6 +123,43 @@ function statusClass(status: string): string {
   return "text-destructive";
 }
 
+function BriefSections({ sections }: { sections: ContactBriefRecord["sections"] }) {
+  const lines = [
+    ["Current role", sections.currentRole],
+    ["Tenure", sections.tenure],
+    ["Seniority", sections.seniority],
+    ["Function", sections.function],
+    ["Based", sections.location],
+  ].filter((line): line is [string, string] => Boolean(line[1]));
+  const previousRoles = sections.previousRoles ?? [];
+
+  if (lines.length === 0 && previousRoles.length === 0) return null;
+  return (
+    <div className="mt-3 border-t border-border pt-3 text-xs">
+      {lines.length === 0 ? null : (
+        <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(6rem,auto)_1fr]">
+          {lines.map(([label, value]) => (
+            <div className="contents" key={label}>
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {previousRoles.length === 0 ? null : (
+        <details className="mt-3 rounded-md border border-border px-3 py-2">
+          <summary className="cursor-pointer font-medium">
+            Previously · {previousRoles.length} {previousRoles.length === 1 ? "role" : "roles"}
+          </summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-muted-foreground">
+            {previousRoles.map((role, index) => <li key={`${index}-${role}`}>{role}</li>)}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function ContactEvidence({ contact, rpc, onChanged }: ContactEvidenceProps) {
   const [facts, setFacts] = useState<ContactFactRecord[]>(() => fallbackFacts(contact));
   const [workHistory, setWorkHistory] = useState<ContactWorkHistory[]>(contact.workHistory ?? []);
@@ -318,7 +355,7 @@ export function ContactEvidence({ contact, rpc, onChanged }: ContactEvidenceProp
           <div className="rounded-lg border border-border px-3 py-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{brief.version === null ? "Current brief" : `Version ${brief.version}`}</span><span className="text-xs text-muted-foreground">Confidence {brief.score.toFixed(2)} · {formatDate(brief.refreshedAt)}</span></div>
             <p className="mt-2 whitespace-pre-wrap">{brief.narrative}</p>
-            {brief.sections.currentRole ? <p className="mt-2 text-xs text-muted-foreground">Current role: {brief.sections.currentRole}</p> : null}
+            <BriefSections sections={brief.sections} />
             {sourceLink(brief.sourceUrl) ? <p className="mt-2 text-xs">{sourceLink(brief.sourceUrl)}</p> : null}
           </div>
         ) : <p className="text-sm text-muted-foreground">No background brief yet.</p>}

@@ -42,7 +42,14 @@ const brief = {
   contactId: contact.id,
   version: 1,
   narrative: "Engineering leader with an active buying role.",
-  sections: { currentRole: "VP Engineering" },
+  sections: {
+    currentRole: "VP Engineering",
+    tenure: "4 years",
+    seniority: "Executive",
+    function: "Engineering",
+    location: "London",
+    previousRoles: ["Director of Engineering · Analytical Engines"],
+  },
   score: 0.8,
   sourceUrl: "https://example.com/ada",
   sessionId: null,
@@ -64,6 +71,12 @@ describe("ContactEvidence", () => {
 
     render(<ContactEvidence contact={contact} rpc={rpc} />);
     expect(await screen.findByText("title: VP Engineering")).toBeDefined();
+    expect(screen.getByText("4 years")).toBeDefined();
+    expect(screen.getByText("Executive")).toBeDefined();
+    expect(screen.getByText("Engineering")).toBeDefined();
+    expect(screen.getByText("London")).toBeDefined();
+    expect(screen.getByText("Previously · 1 role")).toBeDefined();
+    expect(screen.getByText("Director of Engineering · Analytical Engines")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("contacts_facts_decide", { id: "fact_1", decision: "accept" }));
 

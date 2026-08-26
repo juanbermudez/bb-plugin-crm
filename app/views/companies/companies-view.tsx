@@ -41,6 +41,21 @@ import { SavedViewBar, type SavedViewsRpcClient } from "../saved-views/index.js"
 import { RecordFieldsEditor } from "../record-fields/index.js";
 import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
 import {
+  RelatedRecordStack,
+  type RelatedRecord,
+} from "./related-record-stack.js";
+import {
+  ContactDeals,
+  ContactOverview,
+  type ContactDealsRpcClient,
+} from "../contacts/contacts-view.js";
+import type { ContactsRpcClient } from "../contacts/rpc.js";
+import {
+  DealContacts,
+  DealOverview,
+} from "../deals/deals-view.js";
+import type { DealsRpcClient } from "../deals/rpc.js";
+import {
   activityFacetOptions,
   customFieldFacets,
   facetOptionsFromCounts,
@@ -253,37 +268,13 @@ function isCompany(value: unknown): value is Company {
   );
 }
 
-type NestedCompanyRecord =
-  | { kind: "contact"; id: string; value: Contact | null }
-  | { kind: "deal"; id: string; value: Deal | null };
+type NestedCompanyRecord = RelatedRecord;
 
 function contactName(contact: Pick<Contact, "firstName" | "lastName">): string {
   return [contact.firstName, contact.lastName]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))
     .join(" ") || "Contact";
-}
-
-function isContact(value: unknown): value is Contact {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    "firstName" in value &&
-    typeof value.firstName === "string"
-  );
-}
-
-function isDeal(value: unknown): value is Deal {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    "name" in value &&
-    typeof value.name === "string"
-  );
 }
 
 function errorMessage(cause: unknown): string {
@@ -1209,104 +1200,6 @@ function StagedCompanyTab({ tab }: { tab: "agent" }) {
   );
 }
 
-function NestedCompanyRecordContent({
-  item,
-  onOpenDeal,
-}: {
-  item: NestedCompanyRecord;
-  onOpenDeal: (id: string) => void;
-}) {
-  if (item.value === null) return null;
-  if (item.kind === "contact") {
-    const contact = item.value;
-    return (
-      <div className="space-y-5">
-        <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Email</dt>
-            <dd className="mt-1 break-words text-sm">{displayValue(contact.email)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Phone</dt>
-            <dd className="mt-1 text-sm">{displayValue(contact.phone)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Title</dt>
-            <dd className="mt-1 text-sm">{displayValue(contact.title)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Company</dt>
-            <dd className="mt-1 text-sm">{contact.company?.name ?? displayValue(contact.companyId)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
-            <dd className="mt-1 text-sm">{contact.owner?.name ?? displayValue(contact.ownerId)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground">Status</dt>
-            <dd className="mt-1 text-sm">{contact.archivedAt ? "Archived" : "Active"}</dd>
-          </div>
-        </dl>
-        {contact.companyId ? (
-          <p className="border-t border-border pt-4 text-sm text-muted-foreground">
-            This contact is shown in the company record stack. Use Back to return to the company.
-          </p>
-        ) : null}
-        {contact.deals && contact.deals.length > 0 ? (
-          <section className="space-y-2 border-t border-border pt-4">
-            <h3 className="text-sm font-medium">Deals</h3>
-            <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Nested contact deals">
-              {contact.deals.map((deal) => (
-                <li key={deal.id} className="px-3 py-2.5">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-sm font-medium outline-none hover:bg-state-hover focus-visible:bg-state-hover"
-                    onClick={() => onOpenDeal(deal.id)}
-                  >
-                    <span className="min-w-0 truncate">{deal.name}</span>
-                    <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-      </div>
-    );
-  }
-  const deal = item.value;
-  return (
-    <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
-      <div>
-        <dt className="text-xs font-medium text-muted-foreground">Company</dt>
-        <dd className="mt-1 text-sm">{deal.company?.name ?? displayValue(deal.companyId)}</dd>
-      </div>
-      <div>
-        <dt className="text-xs font-medium text-muted-foreground">Stage</dt>
-        <dd className="mt-1 text-sm">{displayValue(deal.stage)}</dd>
-      </div>
-      <div>
-        <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
-        <dd className="mt-1 text-sm">{deal.owner?.name ?? displayValue(deal.ownerId)}</dd>
-      </div>
-      <div>
-        <dt className="text-xs font-medium text-muted-foreground">Close date</dt>
-        <dd className="mt-1 text-sm">{formatDate(deal.expectedCloseDate)}</dd>
-      </div>
-      <div>
-        <dt className="text-xs font-medium text-muted-foreground">Amount</dt>
-        <dd className="mt-1 text-sm">
-          {deal.amountCents == null ? "—" : `${deal.amountCents.toLocaleString()} ${deal.currency}`}
-        </dd>
-      </div>
-      <div>
-        <dt className="text-xs font-medium text-muted-foreground">Status</dt>
-        <dd className="mt-1 text-sm">{deal.archivedAt ? "Archived" : "Active"}</dd>
-      </div>
-    </dl>
-  );
-}
-
 export interface CompaniesViewProps {
   /** Optional client injection keeps component tests and host previews small. */
   rpcClient?: CompaniesRpcClient;
@@ -1365,8 +1258,6 @@ export function CompaniesView({
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState<"archive" | "purge" | null>(null);
   const [nestedStack, setNestedStack] = useState<NestedCompanyRecord[]>([]);
-  const [nestedLoading, setNestedLoading] = useState(false);
-  const [nestedError, setNestedError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(initialCreate);
   const [createValue, setCreateValue] = useState<CompanyCreateInput>({
     name: "",
@@ -1525,57 +1416,6 @@ export function CompaniesView({
       active = false;
     };
   }, [recordId, recordRefreshKey, rpc]);
-
-  const nestedTop = nestedStack[nestedStack.length - 1] ?? null;
-  const nestedKind = nestedTop?.kind ?? null;
-  const nestedId = nestedTop?.id ?? null;
-
-  useEffect(() => {
-    if (nestedKind === null || nestedId === null) {
-      setNestedLoading(false);
-      setNestedError(null);
-      return;
-    }
-    let active = true;
-    setNestedLoading(true);
-    setNestedError(null);
-    const method = nestedKind === "contact" ? "contacts_get" : "deals_get";
-    void listRpc(rpc)
-      .call(method, { id: nestedId })
-      .then((next) => {
-        if (!active) return;
-        const value =
-          nestedKind === "contact"
-            ? isContact(next)
-              ? next
-              : null
-            : isDeal(next)
-              ? next
-              : null;
-        if (value === null) {
-          setNestedError(`Could not load ${nestedKind}.`);
-          return;
-        }
-        setNestedStack((current) => {
-          const index = current.findIndex(
-            (item) => item.kind === nestedKind && item.id === nestedId,
-          );
-          if (index < 0) return current;
-          const nextStack = [...current];
-          nextStack[index] = { ...nextStack[index]!, value } as NestedCompanyRecord;
-          return nextStack;
-        });
-      })
-      .catch((cause: unknown) => {
-        if (active) setNestedError(errorMessage(cause));
-      })
-      .finally(() => {
-        if (active) setNestedLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [nestedId, nestedKind, rpc]);
 
   const closeRecord = useCallback(() => {
     setRecordId(null);
@@ -1752,7 +1592,6 @@ export function CompaniesView({
 
   const openNestedRecord = useCallback(
     (kind: NestedCompanyRecord["kind"], id: string) => {
-      setNestedError(null);
       setNestedStack((current) => [
         ...current,
         { kind, id, value: null } as NestedCompanyRecord,
@@ -1763,8 +1602,27 @@ export function CompaniesView({
 
   const popNestedRecord = useCallback(() => {
     setNestedStack((current) => current.slice(0, -1));
-    setNestedError(null);
   }, []);
+
+  const replaceNestedRecord = useCallback(
+    (kind: NestedCompanyRecord["kind"], id: string, value: Contact | Deal) => {
+      setNestedStack((current) => {
+        let index = -1;
+        for (let cursor = current.length - 1; cursor >= 0; cursor -= 1) {
+          const item = current[cursor];
+          if (item?.kind === kind && item.id === id) {
+            index = cursor;
+            break;
+          }
+        }
+        if (index < 0) return current;
+        const next = [...current];
+        next[index] = { ...next[index]!, value } as NestedCompanyRecord;
+        return next;
+      });
+    },
+    [],
+  );
 
   const setPrimaryContact = useCallback(
     async (contactId: string | null) => {
@@ -1827,6 +1685,26 @@ export function CompaniesView({
     () => ownerOptionsFromRecords(record ? [...list.rows, record] : list.rows),
     [list.rows, record],
   );
+  const relatedCompanyOptions = useMemo(() => {
+    const options: EntityOption[] = [];
+    if (record) {
+      options.push({
+        value: record.id,
+        label: record.name,
+        description: record.domain ?? record.id,
+      });
+    }
+    for (const item of nestedStack) {
+      const company = item.value?.company;
+      if (!company || options.some((option) => option.value === company.id)) continue;
+      options.push({
+        value: company.id,
+        label: company.name,
+        description: company.domain ?? company.id,
+      });
+    }
+    return options;
+  }, [nestedStack, record]);
   const openQuickAdd = useCallback(
     (kind: "contact" | "deal") => {
       if (record === null) return;
@@ -2506,6 +2384,9 @@ export function CompaniesView({
                 anchor={{ companyId: record.id }}
                 title="Company activity"
                 description="Notes, touchpoints, and follow-up work for this company."
+                onOpenRelatedRecord={(kind, id) => {
+                  if (kind === "contact" || kind === "deal") openNestedRecord(kind, id);
+                }}
               />
             ) : recordTab === "agent" ? (
               <RecordAgentTab
@@ -2519,57 +2400,38 @@ export function CompaniesView({
         )}
       </RecordDrawer>
 
-      <RecordDrawer
-        open={nestedTop !== null}
-        onOpenChange={(open) => {
-          if (!open) popNestedRecord();
+      <RelatedRecordStack
+        stack={nestedStack}
+        rpc={listRpc(rpc)}
+        companyOptions={relatedCompanyOptions}
+        ownerOptions={ownerOptions}
+        renderers={{
+          contactOverview: ({ rpc: relatedRpc, ...props }) => (
+            <ContactOverview
+              {...props}
+              rpc={relatedRpc as unknown as ContactsRpcClient}
+            />
+          ),
+          contactDeals: ({ contact, rpc: relatedRpc, onChanged, onOpenDeal }) => (
+            <ContactDeals
+              contact={contact}
+              rpc={relatedRpc as unknown as ContactDealsRpcClient}
+              onChanged={onChanged}
+              onOpenDeal={onOpenDeal}
+            />
+          ),
+          dealOverview: (props) => <DealOverview {...props} />,
+          dealContacts: ({ rpc: relatedRpc, ...props }) => (
+            <DealContacts
+              {...props}
+              rpc={relatedRpc as unknown as DealsRpcClient}
+            />
+          ),
         }}
-        title={
-          nestedTop?.value === null || nestedTop === null
-            ? nestedTop?.kind === "contact"
-              ? "Contact"
-              : "Deal"
-            : nestedTop.kind === "contact"
-              ? contactName(nestedTop.value)
-              : nestedTop.value.name
-        }
-        description={
-          nestedTop?.kind === "contact"
-            ? nestedTop.value && isContact(nestedTop.value)
-              ? nestedTop.value.email ?? "Contact record"
-              : "Contact record"
-            : nestedTop?.value && isDeal(nestedTop.value)
-              ? `${nestedTop.value.stage} · Deal record`
-              : "Deal record"
-        }
-        actions={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={nestedStack.length === 0}
-            onClick={popNestedRecord}
-          >
-            <Icon name="ChevronLeft" aria-hidden="true" />
-            Back
-          </Button>
-        }
-      >
-        {nestedLoading ? (
-          <div className="flex min-h-56 items-center justify-center" role="status">
-            Loading {nestedTop?.kind ?? "record"}…
-          </div>
-        ) : nestedError !== null ? (
-          <EmptyState title="Could not load record" description={nestedError} />
-        ) : nestedTop?.value === null ? (
-          <EmptyState title="Record not found" />
-        ) : nestedTop ? (
-          <NestedCompanyRecordContent
-            item={nestedTop}
-            onOpenDeal={(id) => openNestedRecord("deal", id)}
-          />
-        ) : null}
-      </RecordDrawer>
+        onPush={openNestedRecord}
+        onPop={popNestedRecord}
+        onReplace={replaceNestedRecord}
+      />
 
       <RecordDrawer
         open={createOpen}
