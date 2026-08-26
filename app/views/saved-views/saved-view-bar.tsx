@@ -20,6 +20,7 @@ import type {
   SavedViewUpdateInput,
 } from "../../../contracts/core.js";
 import { AlertDialog, RecordDrawer } from "../../components/index.js";
+import { TooltipIconButton } from "../../components/tooltip-icon-button.js";
 import { cn } from "../../../lib/utils.js";
 import { useSavedViewsRpc, type SavedViewsRpcClient } from "./rpc.js";
 
@@ -334,40 +335,28 @@ export function SavedViewBar({
             })}
           </select>
         </div>
-        <Button
-          type="button"
+        <TooltipIconButton
+          label="Reset saved view"
+          icon="RotateCcw"
           variant="ghost"
-          size="icon"
-          className="size-9"
           disabled={loading || selectedViewId === null}
-          aria-label="Reset saved view"
           onClick={resetFilters}
-        >
-          <Icon name="RotateCcw" aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
+        />
+        <TooltipIconButton
+          label="Manage saved view"
+          icon="MoreHorizontal"
           variant="ghost"
-          size="icon"
-          className="size-9"
           disabled={selectedView === null}
-          aria-label="Manage saved view"
           aria-expanded={manageOpen}
           onClick={() => setManageOpen((open) => !open)}
-        >
-          <Icon name="MoreHorizontal" aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
+        />
+        <TooltipIconButton
+          label="Save current view"
+          icon="Plus"
           variant="outline"
-          size="icon"
-          className="size-9"
           disabled={loading}
-          aria-label="Save current view"
           onClick={openSaveDrawer}
-        >
-          <Icon name="Plus" aria-hidden="true" />
-        </Button>
+        />
 
         {manageOpen && selectedView ? (
           <div

@@ -14,13 +14,9 @@ describe("CRM nav panel", () => {
 
   it("renders the operational dashboard and records BB navigation", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.navPanels).toHaveLength(5);
+    expect(app.navPanels).toHaveLength(1);
     expect(app.navPanels.map(({ title, path }) => ({ title, path }))).toEqual([
       { title: "CRM", path: "crm" },
-      { title: "Companies", path: "companies" },
-      { title: "Contacts", path: "contacts" },
-      { title: "Deals", path: "deals" },
-      { title: "Agents", path: "agents" },
     ]);
 
     const panel = app.navPanels.find(({ path }) => path === "crm")!;
@@ -71,7 +67,14 @@ describe("CRM nav panel", () => {
     await slot.findByText("Open pipeline");
     expect(slot.getByText("Your dashboard is clear")).toBeDefined();
     expect(slot.getByText(/0 open deals · EUR/)).toBeDefined();
-    expect(slot.queryByRole("navigation")).toBeNull();
+    expect(slot.getByRole("navigation", { name: "CRM sections" })).toBeDefined();
+    expect(slot.getByRole("tab", { name: "Overview" }).getAttribute("data-state")).toBe("active");
+    fireEvent.mouseDown(slot.getByRole("tab", { name: "Companies" }), { button: 0 });
+    expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "crm",
+      options: { subPath: "companies" },
+    });
     expect(slot.queryByText("CRM", { selector: "header *" })).toBeNull();
     expect(slot.inspection.rpcCalls).toContainEqual({
       method: "dashboard_summary",
@@ -109,13 +112,17 @@ describe("CRM nav panel", () => {
         },
       },
     );
+    const checklistDialog = headerSlot.getByRole("dialog", { name: "Set up your CRM workspace" });
+    expect(within(checklistDialog).getByText("0 of 4 complete")).toBeDefined();
+    fireEvent.click(within(checklistDialog).getByRole("button", { name: "Dismiss" }));
+    expect(headerSlot.getByRole("button", { name: "Checklist, 0 of 4 complete" })).toBeDefined();
     expect(headerSlot.getByRole("button", { name: /Enrichment queue/ })).toBeDefined();
     fireEvent.click(headerSlot.getByRole("button", { name: /Enrichment queue/ }));
     fireEvent.click(await headerSlot.findByRole("button", { name: "Open company Shell Queue Systems" }));
     expect(headerSlot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
-      path: "companies",
-      options: { subPath: "company_shell_queue" },
+      path: "crm",
+      options: { subPath: "companies/company_shell_queue" },
     });
 
     fireEvent.click(headerSlot.getByRole("button", { name: "New" }));
@@ -138,8 +145,8 @@ describe("CRM nav panel", () => {
     fireEvent.click(within(reopenedMenu).getByRole("menuitem", { name: "New company" }));
     expect(headerSlot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
-      path: "companies",
-      options: { subPath: "create/company" },
+      path: "crm",
+      options: { subPath: "companies/create/company" },
     });
 
     headerSlot.lifecycle.unmount();
@@ -148,10 +155,10 @@ describe("CRM nav panel", () => {
 
   it("renders the Agents workspace from the BB route", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const panel = app.navPanels.find(({ path }) => path === "agents")!;
+    const panel = app.navPanels[0]!;
     const slot = renderSlot(
       panel,
-      { subPath: "" },
+      { subPath: "agents" },
       {
         rpc: {
           agents_list: () => [
@@ -196,7 +203,7 @@ describe("CRM nav panel", () => {
 
   it("routes company drawer tabs with the opened record id", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const panel = app.navPanels.find(({ path }) => path === "companies")!;
+    const panel = app.navPanels[0]!;
     const company = {
       id: "cmp_acme",
       name: "Acme Corporation",
@@ -211,7 +218,7 @@ describe("CRM nav panel", () => {
     };
     const slot = renderSlot(
       panel,
-      { subPath: "cmp_acme" },
+      { subPath: "companies/cmp_acme" },
       {
         rpc: {
           companies_list: () => ({ rows: [company], total: 1, facetCounts: {} }),
@@ -227,8 +234,8 @@ describe("CRM nav panel", () => {
     fireEvent.click(slot.getByRole("tab", { name: "Contacts" }));
     expect(slot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
-      path: "companies",
-      options: { subPath: "cmp_acme/contacts" },
+      path: "crm",
+      options: { subPath: "companies/cmp_acme/contacts" },
     });
     slot.lifecycle.unmount();
   });

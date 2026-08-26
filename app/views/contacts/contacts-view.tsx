@@ -23,6 +23,7 @@ import {
   RecordDrawer,
   SearchField,
   TableShell,
+  TooltipIconButton,
   ownerOptionsFromRecords,
   type EntityOption,
   usePersistentColumnPreferences,
@@ -1597,23 +1598,7 @@ export function ContactsView({
 
   return (
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
-      <PageHeader
-        title="Contacts"
-        className="border-b-0 pb-2 sm:pb-2"
-        actions={
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              setCreateError(null);
-              setCreateOpen(true);
-            }}
-          >
-            <Icon name="Plus" aria-hidden="true" />
-            New contact
-          </Button>
-        }
-      />
+      <PageHeader title="Contacts" className="border-b-0 pb-2 sm:pb-2" />
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
         <ListToolbar
           aria-label="Contact table controls"
@@ -1683,20 +1668,16 @@ export function ContactsView({
             }}
           />
           <ColumnPreferences preference={columnPreferences} iconOnly />
-          <Button
-            type="button"
+          <TooltipIconButton
+            label="Archived contacts"
+            icon="Archive"
             variant={showArchived ? "secondary" : "outline"}
-            size="icon"
-            className="size-9"
-            aria-label="Archived"
             aria-pressed={showArchived}
             onClick={() => {
               setShowArchived((value) => !value);
               setPage(1);
             }}
-          >
-            <Icon name="Archive" aria-hidden="true" />
-          </Button>
+          />
         </ListToolbar>
         {listError === null ? null : (
           <div
@@ -1877,8 +1858,7 @@ export function ContactsView({
                   ? "Try a different search or clear the current filter."
                   : "Create a contact to start building your CRM workspace."
               }
-              action={
-                query ? (
+              action={query ? (
                   <Button
                     type="button"
                     variant="outline"
@@ -1890,13 +1870,7 @@ export function ContactsView({
                   >
                     Clear search
                   </Button>
-                ) : (
-                  <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-                    <Icon name="Plus" aria-hidden="true" />
-                    New contact
-                  </Button>
-                )
-              }
+                ) : undefined}
               className="min-h-48 rounded-none border-0 bg-transparent"
             />
           }

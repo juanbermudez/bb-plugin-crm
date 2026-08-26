@@ -5,12 +5,24 @@ import {
 } from "@get-bb/plugin-sdk/app";
 
 import { Button } from "../components/ui/button.js";
-import { Icon } from "../components/ui/icon.js";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog.js";
+import { Icon } from "../components/ui/icon.js";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs.js";
+import {
+  ChecklistProgressRing,
   EnrichmentQueue,
   GlobalSearch,
   WorkspaceChecklist,
+  WORKSPACE_CHECKLIST_CHANGE_EVENT,
+  dismissWorkspaceChecklist,
   readWorkspaceChecklistState,
+  workspaceChecklistProgress,
   type GlobalSearchResult,
 } from "./components/index.js";
 import { GlobalActivityCreate } from "./components/global-activity-create.js";
@@ -36,6 +48,14 @@ const CREATE_ITEMS: ReadonlyArray<{ action: CrmCreateAction; label: string }> = 
   { action: "note", label: "New note" },
   { action: "task", label: "New task" },
   { action: "agent", label: "New agent" },
+];
+
+const CRM_TABS: ReadonlyArray<{ kind: CrmPanelKind; label: string }> = [
+  { kind: "dashboard", label: "Overview" },
+  { kind: "companies", label: "Companies" },
+  { kind: "contacts", label: "Contacts" },
+  { kind: "deals", label: "Deals" },
+  { kind: "agents", label: "Agents" },
 ];
 
 export interface CrmPanelProps extends PluginNavPanelProps {
@@ -91,11 +111,31 @@ function routeForQueueSubject(subject: EnrichmentQueueSubject): CrmRoute | null 
 }
 
 /** Compact actions mounted in BB's host-owned title bar. */
-export function CrmHeaderContent({ subPath: _subPath }: CrmPanelProps) {
+export function CrmHeaderContent({ subPath }: CrmPanelProps) {
   const goRoute = useCrmRouteNavigation();
   const [createOpen, setCreateOpen] = useState(false);
+  const [checklistOpen, setChecklistOpen] = useState(
+    () => !readWorkspaceChecklistState().dismissed,
+  );
+  const [checklistProgress, setChecklistProgress] = useState(workspaceChecklistProgress);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const createMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const refresh = () => setChecklistProgress(workspaceChecklistProgress());
+    window.addEventListener(WORKSPACE_CHECKLIST_CHANGE_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(WORKSPACE_CHECKLIST_CHANGE_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
+  const closeChecklist = useCallback(() => {
+    dismissWorkspaceChecklist();
+    setChecklistOpen(false);
+    setChecklistProgress(workspaceChecklistProgress());
+  }, []);
 
   const focusCreateButton = useCallback(() => {
     const button = createButtonRef.current;
@@ -159,6 +199,19 @@ export function CrmHeaderContent({ subPath: _subPath }: CrmPanelProps) {
           if (route !== null) goRoute(route);
         }}
       />
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-label={`Checklist, ${checklistProgress.completed} of ${checklistProgress.total} complete`}
+        onClick={() => setChecklistOpen(true)}
+      >
+        <ChecklistProgressRing
+          completed={checklistProgress.completed}
+          total={checklistProgress.total}
+        />
+        Checklist
+      </Button>
       <div className="relative">
         <Button
           type="button"
@@ -200,6 +253,31 @@ export function CrmHeaderContent({ subPath: _subPath }: CrmPanelProps) {
           </div>
         ) : null}
       </div>
+      <Dialog
+        open={checklistOpen}
+        onOpenChange={(open) => {
+          if (open) setChecklistOpen(true);
+          else closeChecklist();
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Set up your CRM workspace</DialogTitle>
+            <DialogDescription>Complete the first steps for your CRM workspace.</DialogDescription>
+          </DialogHeader>
+          <WorkspaceChecklist
+            onNavigate={(kind) => {
+              closeChecklist();
+              if (kind === "settings") {
+                window.location.assign("/settings/plugins/crm");
+                return;
+              }
+              goRoute({ kind, recordId: null });
+            }}
+            onDismiss={closeChecklist}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -222,9 +300,6 @@ function MovedSettingsNotice() {
 export function CrmAppShell({ subPath, panelKind = "dashboard" }: CrmPanelProps) {
   const route = parseCrmPanelRoute(panelKind, subPath);
   const goRoute = useCrmRouteNavigation();
-  const [checklistOpen, setChecklistOpen] = useState(
-    () => route.kind === "dashboard" && !readWorkspaceChecklistState().dismissed,
-  );
 
   const clearCreateRoute = useCallback(() => {
     goRoute({
@@ -248,12 +323,27 @@ export function CrmAppShell({ subPath, panelKind = "dashboard" }: CrmPanelProps)
 
   return (
     <div className="@container flex h-full min-h-0 flex-col bg-background text-foreground">
-      {route.kind === "dashboard" && checklistOpen ? (
-        <WorkspaceChecklist
-          onNavigate={(kind) => goRoute({ kind, recordId: null })}
-          onDismiss={() => setChecklistOpen(false)}
-        />
-      ) : null}
+      <nav className="shrink-0 border-b border-border px-4 sm:px-5" aria-label="CRM sections">
+        <Tabs
+          value={route.kind === "settings" ? "dashboard" : route.kind}
+          onValueChange={(value) => {
+            const tab = CRM_TABS.find(({ kind }) => kind === value);
+            if (tab) goRoute({ kind: tab.kind, recordId: null });
+          }}
+        >
+          <TabsList className="h-11 w-full justify-start gap-5 overflow-x-auto rounded-none bg-transparent p-0">
+            {CRM_TABS.map((tab) => (
+              <TabsTrigger
+                key={tab.kind}
+                value={tab.kind}
+                className="h-11 rounded-none border-b-2 border-transparent px-0 text-sm shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </nav>
       <main className="min-h-0 min-w-0 flex-1 overflow-auto">
         {route.kind === "dashboard" ? (
           <DashboardView

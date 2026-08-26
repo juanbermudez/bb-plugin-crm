@@ -315,10 +315,9 @@ describe("AgentsView", () => {
       if (method === "agents_get") return created;
       return [];
     });
-    render(<AgentsView rpcClient={rpc} onRecordIdChange={onRecordIdChange} />);
+    render(<AgentsView rpcClient={rpc} onRecordIdChange={onRecordIdChange} initialCreate />);
 
     await screen.findByText("Renewal researcher");
-    fireEvent.click(screen.getByRole("button", { name: "New agent" }));
     fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "New agent" } });
     fireEvent.change(screen.getByLabelText("Description (optional)"), { target: { value: "A new workflow" } });
     fireEvent.click(screen.getByRole("button", { name: "Create agent" }));

@@ -386,10 +386,9 @@ describe("ContactsView", () => {
       if (method === "contacts_get") return contact;
       return contact;
     });
-    render(<ContactsView rpcClient={rpc} />);
+    render(<ContactsView rpcClient={rpc} initialCreate />);
     await screen.findByText("Ada Lovelace");
 
-    fireEvent.click(screen.getByRole("button", { name: "New contact" }));
     expect(screen.getByRole("dialog", { name: "New contact" })).toBeDefined();
     fireEvent.change(screen.getByLabelText("First name"), {
       target: { value: "Grace" },
@@ -463,7 +462,7 @@ describe("ContactsView", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Ada Lovelace" })).toBeNull(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Archived" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archived contacts" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "contacts_list",
@@ -536,7 +535,7 @@ describe("ContactsView", () => {
     fireEvent.change(screen.getByLabelText("Sort contacts"), {
       target: { value: "title" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     fireEvent.click(screen.getByLabelText("VP Engineering"));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
@@ -544,7 +543,7 @@ describe("ContactsView", () => {
         expect.objectContaining({ sort: "title", title: ["VP Engineering"] }),
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Clear all filters" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "contacts_list",

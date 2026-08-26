@@ -3,6 +3,7 @@ import * as React from "react";
 import { Button } from "../../components/ui/button.js";
 import { Icon } from "../../components/ui/icon.js";
 import { cn } from "../../lib/utils.js";
+import { TooltipIconButton } from "./tooltip-icon-button.js";
 
 /**
  * The small amount of metadata the record tables need to expose their
@@ -328,19 +329,27 @@ export function ColumnPreferences({
 
   return (
     <div className={cn("relative", className)}>
-      <Button
-        type="button"
-        variant="outline"
-        size={iconOnly ? "icon" : "sm"}
-        className={iconOnly ? "size-9" : undefined}
-        aria-label={iconOnly ? label : undefined}
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <Icon name="Columns2" aria-hidden="true" />
-        {iconOnly ? null : label}
-      </Button>
+      {iconOnly ? (
+        <TooltipIconButton
+          label={label}
+          icon="Columns2"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((current) => !current)}
+        />
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <Icon name="Columns2" aria-hidden="true" />
+          {label}
+        </Button>
+      )}
       {open ? (
         <div
           id={panelId}
@@ -355,15 +364,14 @@ export function ColumnPreferences({
                 Choose fields and arrange their order.
               </p>
             </div>
-            <Button
-              type="button"
+            <TooltipIconButton
+              label="Close column settings"
+              icon="X"
               variant="ghost"
-              size="icon"
-              aria-label="Close column settings"
+              className="size-8"
+              iconClassName="size-3.5"
               onClick={() => setOpen(false)}
-            >
-              <Icon name="X" aria-hidden="true" className="size-3.5" />
-            </Button>
+            />
           </div>
           <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto" aria-label="Table columns">
             {preference.orderedColumns.map((column, index) => {
@@ -383,28 +391,24 @@ export function ColumnPreferences({
                     onChange={(event) => preference.toggle(column.id, event.target.checked)}
                   />
                   <span className={cn("min-w-0 flex-1 truncate text-sm", !visible && "text-muted-foreground")}>{column.label}</span>
-                  <Button
-                    type="button"
+                  <TooltipIconButton
+                    label={`Move ${text} up`}
+                    icon="ChevronUp"
                     variant="ghost"
-                    size="icon"
                     className="size-7"
-                    aria-label={`Move ${text} up`}
+                    iconClassName="size-3.5"
                     disabled={index === 0}
                     onClick={() => preference.move(column.id, "up")}
-                  >
-                    <Icon name="ChevronUp" aria-hidden="true" className="size-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
+                  />
+                  <TooltipIconButton
+                    label={`Move ${text} down`}
+                    icon="ChevronDown"
                     variant="ghost"
-                    size="icon"
                     className="size-7"
-                    aria-label={`Move ${text} down`}
+                    iconClassName="size-3.5"
                     disabled={index === preference.orderedColumns.length - 1}
                     onClick={() => preference.move(column.id, "down")}
-                  >
-                    <Icon name="ChevronDown" aria-hidden="true" className="size-3.5" />
-                  </Button>
+                  />
                 </li>
               );
             })}

@@ -19,10 +19,12 @@ import {
 import {
   EmptyState,
   AlertDialog,
+  ListToolbar,
   PageHeader,
   RecordDrawer,
   SearchField,
   TableShell,
+  TooltipIconButton,
 } from "../../components/index.js";
 import type {
   AgentAttachment,
@@ -1863,67 +1865,51 @@ export function AgentsView({
         title="Agents"
         description="Build, version, and monitor the CRM agents that operate in your workspace."
         actions={
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setBuilderOpen(true)}
-            >
-              <Icon name="Brain" aria-hidden="true" />
-              Build with BB
-            </Button>
-            <Button
-              type="button"
-              variant={includeArchived ? "secondary" : "outline"}
-              size="sm"
-              aria-pressed={includeArchived}
-              onClick={() => setIncludeArchived((current) => !current)}
-            >
-              <Icon name="Archive" aria-hidden="true" />
-              {includeArchived ? "Showing archived" : "Include archived"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                setCreateError(null);
-                setCreateOpen(true);
-              }}
-            >
-              <Icon name="Plus" aria-hidden="true" />
-              New agent
-            </Button>
-          </>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setBuilderOpen(true)}
+          >
+            <Icon name="Brain" aria-hidden="true" />
+            Build with BB
+          </Button>
         }
       />
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 sm:p-5">
+        <ListToolbar
+          aria-label="Agent table controls"
+          summary={<p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {agents.length} {agents.length === 1 ? "agent" : "agents"}
+          </p>}
+        >
           <SearchField
             label="Search agents"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onClear={() => setQuery("")}
             placeholder="Search agents…"
-            containerClassName="w-full sm:w-80"
+            containerClassName="w-full sm:w-64"
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="sr-only" htmlFor="agent-status-filter">Filter agents by status</label>
-            <select
-              id="agent-status-filter"
-              className={`${SELECT_CLASS} w-auto min-w-36`}
-              aria-label="Filter agents by status"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as AgentDefinitionStatus | "ALL")}
-            >
-              <option value="ALL">All statuses</option>
-              {AGENT_STATUSES.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
-            </select>
-            <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-              {agents.length} {agents.length === 1 ? "agent" : "agents"}
-            </p>
-          </div>
-        </div>
+          <label className="sr-only" htmlFor="agent-status-filter">Filter agents by status</label>
+          <select
+            id="agent-status-filter"
+            className={`${SELECT_CLASS} w-auto min-w-36`}
+            aria-label="Filter agents by status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as AgentDefinitionStatus | "ALL")}
+          >
+            <option value="ALL">All statuses</option>
+            {AGENT_STATUSES.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
+          </select>
+          <TooltipIconButton
+            label="Include archived agents"
+            icon="Archive"
+            variant={includeArchived ? "secondary" : "outline"}
+            aria-pressed={includeArchived}
+            onClick={() => setIncludeArchived((current) => !current)}
+          />
+        </ListToolbar>
         {listError ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">
             <span>{listError}</span>
@@ -1943,15 +1929,11 @@ export function AgentsView({
           empty={
             <EmptyState
               icon="Brain"
-              title={query || statusFilter !== "ALL" ? "No matching agents" : "No agents yet"}
-              description={query || statusFilter !== "ALL" ? "Try a different search or status filter." : "Create an agent to start versioning CRM automation."}
-              action={
-                query || statusFilter !== "ALL" ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => { setQuery(""); setStatusFilter("ALL"); }}>Clear filters</Button>
-                ) : (
-                  <Button type="button" size="sm" onClick={() => setCreateOpen(true)}><Icon name="Plus" aria-hidden="true" />New agent</Button>
-                )
-              }
+              title={query || statusFilter !== "ALL" || includeArchived ? "No matching agents" : "No agents yet"}
+              description={query || statusFilter !== "ALL" || includeArchived ? "Try a different search or status filter." : "Use New in the BB action bar to create your first agent."}
+              action={query || statusFilter !== "ALL" || includeArchived ? (
+                <Button type="button" variant="outline" size="sm" onClick={() => { setQuery(""); setStatusFilter("ALL"); setIncludeArchived(false); }}>Clear filters</Button>
+              ) : undefined}
               className="min-h-48 rounded-none border-0 bg-transparent"
             />
           }

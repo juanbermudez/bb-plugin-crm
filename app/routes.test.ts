@@ -94,16 +94,16 @@ describe("CRM panel routes", () => {
 
   it("maps logical routes to the panel that owns them", () => {
     expect(crmRouteToPanelTarget({ kind: "companies", recordId: "cmp/acme" })).toEqual({
-      path: "companies",
-      subPath: "cmp%2Facme",
+      path: "crm",
+      subPath: "companies/cmp%2Facme",
     });
     expect(crmRouteToPanelTarget({ kind: "deals", recordId: null, stage: "DEMO_BOOKED" })).toEqual({
-      path: "deals",
-      subPath: "?stage=DEMO_BOOKED",
+      path: "crm",
+      subPath: "deals?stage=DEMO_BOOKED",
     });
     expect(crmRouteToPanelTarget({ kind: "dashboard", recordId: null, create: "task" })).toEqual({
       path: "crm",
-      subPath: "create/task",
+      subPath: "dashboard/create/task",
     });
   });
 });

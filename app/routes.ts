@@ -18,10 +18,10 @@ export interface CrmPanelTarget {
 
 export const CRM_PANEL_PATHS: Readonly<Record<CrmPanelKind, string>> = {
   dashboard: "crm",
-  companies: "companies",
-  contacts: "contacts",
-  deals: "deals",
-  agents: "agents",
+  companies: "crm",
+  contacts: "crm",
+  deals: "crm",
+  agents: "crm",
 };
 
 export type CrmCreateAction =
@@ -133,19 +133,5 @@ export function parseCrmPanelRoute(
 /** Translate a logical CRM route into the BB panel that should own it. */
 export function crmRouteToPanelTarget(route: CrmRoute): CrmPanelTarget {
   const fullSubPath = crmRouteToSubPath(route);
-  if (route.kind === "settings") {
-    // Settings is no longer advertised in CRM navigation, but this legacy
-    // target preserves old URLs and gives callers a safe fallback.
-    return { path: CRM_PANEL_PATHS.dashboard, subPath: fullSubPath };
-  }
-  const path = CRM_PANEL_PATHS[route.kind];
-  const prefix = route.kind;
-  const subPath = fullSubPath === prefix
-    ? ""
-    : fullSubPath.startsWith(`${prefix}/`)
-      ? fullSubPath.slice(prefix.length + 1)
-      : fullSubPath.startsWith(`${prefix}?`)
-        ? fullSubPath.slice(prefix.length)
-        : fullSubPath;
-  return { path, subPath };
+  return { path: CRM_PANEL_PATHS.dashboard, subPath: fullSubPath };
 }

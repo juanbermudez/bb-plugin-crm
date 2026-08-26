@@ -277,10 +277,9 @@ describe("CompaniesView", () => {
         if (method === "companies_get") return company;
         return company;
       });
-    render(<CompaniesView rpcClient={rpc} />);
+    render(<CompaniesView rpcClient={rpc} initialCreate />);
     await screen.findByText("Acme Corporation");
 
-    fireEvent.click(screen.getByRole("button", { name: "New company" }));
     expect(screen.getByRole("dialog", { name: "New company" })).toBeDefined();
     fireEvent.change(screen.getByLabelText("Company name"), {
       target: { value: "Newco" },
@@ -331,7 +330,7 @@ describe("CompaniesView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close record drawer" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Acme Corporation" })).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Archived" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archived companies" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "companies_list",
@@ -410,7 +409,7 @@ describe("CompaniesView", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     await screen.findByLabelText("Enterprise");
     const segmentFacet = screen.getByText("Segment").closest("fieldset");
     expect(segmentFacet).not.toBeNull();

@@ -367,10 +367,9 @@ describe("DealsView", () => {
       if (method === "deals_get") return deal;
       return deal;
     });
-    render(<DealsView rpcClient={rpc} />);
+    render(<DealsView rpcClient={rpc} initialCreate />);
     await screen.findByText("Acme Expansion");
 
-    fireEvent.click(screen.getByRole("button", { name: "New deal" }));
     expect(screen.getByRole("dialog", { name: "New deal" })).toBeDefined();
     fireEvent.change(screen.getByLabelText("Deal name"), {
       target: { value: "New Expansion" },
@@ -536,7 +535,7 @@ describe("DealsView", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Acme Expansion" })).toBeNull(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Archived" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archived deals" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "deals_list",
@@ -666,7 +665,7 @@ describe("DealsView", () => {
     fireEvent.change(screen.getByLabelText("Sort deals"), {
       target: { value: "amount" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
     fireEvent.click(screen.getByLabelText("Demo booked"));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(

@@ -2,9 +2,11 @@ import { useState } from "react";
 
 import { Button } from "../../components/ui/button.js";
 import { Icon } from "../../components/ui/icon.js";
+import { cn } from "../../lib/utils.js";
 import type { CrmRouteKind } from "../routes.js";
 
 export const WORKSPACE_CHECKLIST_STORAGE_KEY = "crm:workspace-checklist:v1";
+export const WORKSPACE_CHECKLIST_CHANGE_EVENT = "crm:workspace-checklist-change";
 
 export interface WorkspaceChecklistItem {
   id: string;
@@ -78,6 +80,7 @@ function persistChecklistState(completed: readonly string[], dismissed: boolean)
       WORKSPACE_CHECKLIST_STORAGE_KEY,
       JSON.stringify({ completed: [...completed], dismissed }),
     );
+    window.dispatchEvent(new Event(WORKSPACE_CHECKLIST_CHANGE_EVENT));
   } catch {
     // The checklist remains usable if browser storage is unavailable.
   }
@@ -91,10 +94,54 @@ export function dismissWorkspaceChecklist(): void {
 export interface WorkspaceChecklistProps {
   onNavigate: (kind: CrmRouteKind) => void;
   onDismiss: () => void;
+  className?: string;
+}
+
+export function workspaceChecklistProgress(): { completed: number; total: number } {
+  const completed = new Set(readWorkspaceChecklistState().completed);
+  return {
+    completed: WORKSPACE_CHECKLIST_ITEMS.filter((item) => completed.has(item.id)).length,
+    total: WORKSPACE_CHECKLIST_ITEMS.length,
+  };
+}
+
+export function ChecklistProgressRing({
+  completed,
+  total,
+  className,
+}: {
+  completed: number;
+  total: number;
+  className?: string;
+}) {
+  const ratio = total === 0 ? 0 : Math.min(1, completed / total);
+  const radius = 7;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <svg
+      viewBox="0 0 18 18"
+      className={cn("size-4 -rotate-90", className)}
+      aria-hidden="true"
+    >
+      <circle cx="9" cy="9" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground/30" />
+      <circle
+        cx="9"
+        cy="9"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - ratio)}
+        className="text-foreground transition-[stroke-dashoffset] duration-300"
+      />
+    </svg>
+  );
 }
 
 /** First-open orientation for a new installation, kept light and dismissible. */
-export function WorkspaceChecklist({ onNavigate, onDismiss }: WorkspaceChecklistProps) {
+export function WorkspaceChecklist({ onNavigate, onDismiss, className }: WorkspaceChecklistProps) {
   const initial = readWorkspaceChecklistState();
   const [completed, setCompleted] = useState<string[]>(initial.completed);
   const completedSet = new Set(completed);
@@ -117,13 +164,13 @@ export function WorkspaceChecklist({ onNavigate, onDismiss }: WorkspaceChecklist
 
   return (
     <section
-      className="mx-4 mt-4 shrink-0 rounded-lg border border-border bg-card p-4 shadow-sm sm:mx-5 sm:p-5"
+      className={cn("p-1", className)}
       aria-labelledby="workspace-checklist-title"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Icon name="Check" aria-hidden="true" className="size-4" />
+          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <ChecklistProgressRing completed={progress} total={WORKSPACE_CHECKLIST_ITEMS.length} />
           </span>
           <div className="min-w-0">
             <h2 id="workspace-checklist-title" className="text-sm font-semibold">

@@ -55,6 +55,7 @@ import {
   RecordDrawer,
   SearchField,
   TableShell,
+  TooltipIconButton,
   ownerOptionsFromRecords,
   type EntityOption,
   usePersistentColumnPreferences,
@@ -1940,23 +1941,7 @@ export function DealsView({
 
   return (
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
-      <PageHeader
-        title="Deals"
-        className="border-b-0 pb-2 sm:pb-2"
-        actions={
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              setCreateError(null);
-              setCreateOpen(true);
-            }}
-          >
-            <Icon name="Plus" aria-hidden="true" />
-            New deal
-          </Button>
-        }
-      />
+      <PageHeader title="Deals" className="border-b-0 pb-2 sm:pb-2" />
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
         <ListToolbar
           aria-label="Deal table controls"
@@ -2049,20 +2034,16 @@ export function DealsView({
             }}
           />
           <ColumnPreferences preference={columnPreferences} iconOnly />
-          <Button
-            type="button"
+          <TooltipIconButton
+            label="Archived deals"
+            icon="Archive"
             variant={showArchived ? "secondary" : "outline"}
-            size="icon"
-            className="size-9"
-            aria-label="Archived"
             aria-pressed={showArchived}
             onClick={() => {
               setShowArchived((value) => !value);
               setPage(1);
             }}
-          >
-            <Icon name="Archive" aria-hidden="true" />
-          </Button>
+          />
         </ListToolbar>
         {unconverted.count > 0 ? (
           <div
@@ -2261,8 +2242,7 @@ export function DealsView({
                   ? "Try a different search or clear the current filter."
                   : "Create a deal to start building your pipeline."
               }
-              action={
-                query ? (
+              action={query ? (
                   <Button
                     type="button"
                     variant="outline"
@@ -2274,13 +2254,7 @@ export function DealsView({
                   >
                     Clear search
                   </Button>
-                ) : (
-                  <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-                    <Icon name="Plus" aria-hidden="true" />
-                    New deal
-                  </Button>
-                )
-              }
+                ) : undefined}
               className="min-h-48 rounded-none border-0 bg-transparent"
             />
           }

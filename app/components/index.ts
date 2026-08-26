@@ -17,6 +17,10 @@ export {
 export { SearchField, type SearchFieldProps } from "./search-field.js";
 export { ListToolbar, type ListToolbarProps } from "./list-toolbar.js";
 export {
+  TooltipIconButton,
+  type TooltipIconButtonProps,
+} from "./tooltip-icon-button.js";
+export {
   COMPANY_PICKER_INPUT,
   LOCAL_OWNER_ID,
   EntityPicker,
@@ -60,11 +64,14 @@ export {
   type EnrichmentQueueRpcClient,
 } from "./enrichment-queue.js";
 export {
+  ChecklistProgressRing,
+  WORKSPACE_CHECKLIST_CHANGE_EVENT,
   WORKSPACE_CHECKLIST_ITEMS,
   WORKSPACE_CHECKLIST_STORAGE_KEY,
   WorkspaceChecklist,
   dismissWorkspaceChecklist,
   readWorkspaceChecklistState,
+  workspaceChecklistProgress,
   type WorkspaceChecklistItem,
   type WorkspaceChecklistProps,
 } from "./workspace-checklist.js";
