@@ -167,7 +167,7 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Custom fields and saved views
 
 - Field definitions for company, contact, and deal.
-- Text, number, boolean, date, URL, select, and multi-select field types.
+- Text, long text, number, boolean, date, URL, email, phone, select, and user field types.
 - Field options, archive, ordering, required state, and validation.
 - Table column integration and record field editing.
 - Saved filters, sort, columns, ownership, default view, rename, and delete.
