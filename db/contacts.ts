@@ -50,9 +50,17 @@ export type ContactUpdateInput = Partial<Omit<Contact, "id" | "createdAt" | "upd
 
 export interface ContactListOptions extends ListOptions {
   companyId?: string | null;
+  companyIds?: readonly string[];
   ownerId?: string | null;
+  ownerIds?: readonly string[];
+  titles?: readonly string[];
+  seniorities?: readonly string[];
+  functions?: readonly string[];
+  sources?: readonly RecordSource[];
   source?: RecordSource;
   enrichmentStatus?: EnrichmentStatus;
+  sortBy?: "name" | "email" | "title" | "company" | "owner" | "createdAt" | "lastActivity";
+  sortDirection?: "asc" | "desc";
 }
 
 const CONTACT_SELECT = `
@@ -214,6 +222,39 @@ export class ContactStore {
   }
 
   list(options: ContactListOptions = {}): Contact[] {
+    const { where, params } = this.listWhere(options);
+    params.limit = normalizeLimit(options.limit);
+    params.offset = normalizeOffset(options.offset);
+    const sortColumns: Record<NonNullable<ContactListOptions["sortBy"]>, string> = {
+      name: "last_name",
+      email: "email",
+      title: "title",
+      company: "company_id",
+      owner: "owner_id",
+      createdAt: "created_at",
+      lastActivity: "last_activity_at",
+    };
+    const sortColumn = sortColumns[options.sortBy ?? "name"];
+    const direction = options.sortDirection === "desc" ? "DESC" : "ASC";
+    return this.db
+      .prepare(`${CONTACT_SELECT}${where} ORDER BY ${sortColumn} COLLATE NOCASE ${direction}, first_name COLLATE NOCASE ${direction}, id ${direction} LIMIT @limit OFFSET @offset`)
+      .all(params)
+      .map(row);
+  }
+
+  count(options: Omit<ContactListOptions, "limit" | "offset"> = {}): number {
+    const { where, params } = this.listWhere(options);
+    return (
+      this.db.prepare(`SELECT COUNT(*) AS count FROM contacts${where}`).get(params) as {
+        count: number;
+      }
+    ).count;
+  }
+
+  private listWhere(options: ContactListOptions): {
+    where: string;
+    params: Record<string, string | number>;
+  } {
     const clauses: string[] = [];
     const params: Record<string, string | number> = {};
     if (options.archivedOnly) clauses.push("archived_at IS NOT NULL");
@@ -223,15 +264,75 @@ export class ContactStore {
       clauses.push("company_id = @companyId");
       params.companyId = options.companyId;
     }
+    if (options.companyIds !== undefined && options.companyIds.length > 0) {
+      const conditions: string[] = [];
+      const assigned = options.companyIds.filter((value) => value !== "unassigned");
+      if (options.companyIds.includes("unassigned")) conditions.push("company_id IS NULL");
+      if (assigned.length > 0) {
+        const placeholders = assigned.map((value, index) => {
+          const key = `company${index}`;
+          params[key] = value;
+          return `@${key}`;
+        });
+        conditions.push(`company_id IN (${placeholders.join(", ")})`);
+      }
+      clauses.push(`(${conditions.join(" OR ")})`);
+    }
     if (options.ownerId === null) clauses.push("owner_id IS NULL");
     else if (options.ownerId !== undefined) {
       clauses.push("owner_id = @ownerId");
       params.ownerId = options.ownerId;
     }
+    if (options.ownerIds !== undefined && options.ownerIds.length > 0) {
+      const conditions: string[] = [];
+      const assigned = options.ownerIds.filter((value) => value !== "unassigned");
+      if (options.ownerIds.includes("unassigned")) conditions.push("owner_id IS NULL");
+      if (assigned.length > 0) {
+        const placeholders = assigned.map((value, index) => {
+          const key = `owner${index}`;
+          params[key] = value;
+          return `@${key}`;
+        });
+        conditions.push(`owner_id IN (${placeholders.join(", ")})`);
+      }
+      clauses.push(`(${conditions.join(" OR ")})`);
+    }
+    if (options.titles !== undefined && options.titles.length > 0) {
+      const placeholders = options.titles.map((value, index) => {
+        const key = `title${index}`;
+        params[key] = value;
+        return `@${key}`;
+      });
+      clauses.push(`title IN (${placeholders.join(", ")})`);
+    }
+    if (options.seniorities !== undefined && options.seniorities.length > 0) {
+      const placeholders = options.seniorities.map((value, index) => {
+        const key = `seniority${index}`;
+        params[key] = value;
+        return `@${key}`;
+      });
+      clauses.push(`seniority IN (${placeholders.join(", ")})`);
+    }
+    if (options.functions !== undefined && options.functions.length > 0) {
+      const placeholders = options.functions.map((value, index) => {
+        const key = `function${index}`;
+        params[key] = value;
+        return `@${key}`;
+      });
+      clauses.push(`function IN (${placeholders.join(", ")})`);
+    }
     if (options.source !== undefined) {
       assertEnum(options.source, RECORD_SOURCES, "source");
       clauses.push("source = @source");
       params.source = options.source;
+    }
+    if (options.sources !== undefined && options.sources.length > 0) {
+      const placeholders = options.sources.map((value, index) => {
+        const key = `source${index}`;
+        params[key] = assertEnum(value, RECORD_SOURCES, "source");
+        return `@${key}`;
+      });
+      clauses.push(`source IN (${placeholders.join(", ")})`);
     }
     if (options.enrichmentStatus !== undefined) {
       assertEnum(options.enrichmentStatus, ENRICHMENT_STATUSES, "enrichment status");
@@ -248,13 +349,10 @@ export class ContactStore {
       )`);
       params.search = `%${search}%`;
     }
-    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-    params.limit = normalizeLimit(options.limit);
-    params.offset = normalizeOffset(options.offset);
-    return this.db
-      .prepare(`${CONTACT_SELECT}${where} ORDER BY last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ASC, id ASC LIMIT @limit OFFSET @offset`)
-      .all(params)
-      .map(row);
+    return {
+      where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
+      params,
+    };
   }
 
   update(id: string, input: ContactUpdateInput): Contact {
