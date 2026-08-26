@@ -531,6 +531,16 @@ describe("CRM plugin foundation", () => {
     await expect(
       harness.behavior.callRpc("companies_get", { id: company.id }),
     ).resolves.toMatchObject({ fields: { [field.key]: enterprise.id } });
+    await expect(
+      harness.behavior.callRpc("companies_list", {
+        fields: { [field.key]: [enterprise.id] },
+      }),
+    ).resolves.toMatchObject({ total: 1 });
+    await expect(
+      harness.behavior.callRpc("companies_list", {
+        fields: { [field.key]: [field.options[1]?.id] },
+      }),
+    ).resolves.toMatchObject({ total: 0 });
     const value = (await harness.behavior.callRpc("fields_values_create", {
       entity: "COMPANY",
       recordId: company.id,

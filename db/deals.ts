@@ -265,6 +265,17 @@ export class DealStore {
   } {
     const clauses: string[] = [];
     const params: Record<string, string | number> = {};
+    if (options.recordIds !== undefined) {
+      if (options.recordIds.length === 0) clauses.push("1 = 0");
+      else {
+        const placeholders = options.recordIds.map((value, index) => {
+          const key = `recordId${index}`;
+          params[key] = value;
+          return `@${key}`;
+        });
+        clauses.push(`id IN (${placeholders.join(", ")})`);
+      }
+    }
     if (options.archivedOnly) clauses.push("archived_at IS NOT NULL");
     else if (!options.includeArchived) clauses.push("archived_at IS NULL");
     if (options.companyId !== undefined) {

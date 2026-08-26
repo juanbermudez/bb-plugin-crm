@@ -122,6 +122,66 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
+  function customFieldRecordIds(
+    entity: FieldEntity,
+    filters: Record<string, string[]>,
+  ): string[] | undefined {
+    const activeFilters = Object.entries(filters).filter(([, values]) => values.length > 0);
+    if (activeFilters.length === 0) return undefined;
+    const recordColumn = entity === "COMPANY"
+      ? "company_id"
+      : entity === "CONTACT"
+        ? "contact_id"
+        : "deal_id";
+    let matches: Set<string> | null = null;
+    for (const [key, rawValues] of activeFilters) {
+      const definition = customFields.byKey(entity, key);
+      if (definition.archived) return [];
+      const valueColumn = definition.type === "CHECKBOX"
+        ? "bool"
+        : definition.type === "NUMBER"
+          ? "number"
+          : definition.type === "DATE"
+            ? "date"
+            : definition.type === "SELECT"
+              ? "option_id"
+              : definition.type === "USER"
+                ? "user_id"
+                : "text";
+      const values: Array<string | number> = rawValues.map((value) => {
+        if (definition.type === "CHECKBOX") return value === "true" || value === "1" ? 1 : 0;
+        if (definition.type === "NUMBER") {
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed)) throw new Error(`Invalid number filter for ${key}.`);
+          return parsed;
+        }
+        return value;
+      });
+      const params: Record<string, string | number> = { fieldId: definition.id };
+      const placeholders = values.map((value, index) => {
+        params[`value${index}`] = value;
+        return `@value${index}`;
+      });
+      const rows = db.prepare(`
+        SELECT ${recordColumn} AS recordId
+        FROM field_values
+        WHERE field_id = @fieldId
+          AND ${recordColumn} IS NOT NULL
+          AND ${valueColumn} IN (${placeholders.join(", ")})
+      `).all(params) as Array<{ recordId: string }>;
+      const current = new Set(rows.map((row) => row.recordId));
+      if (matches === null) matches = current;
+      else {
+        const previous: Set<string> = matches;
+        matches = new Set<string>(
+          [...previous].filter((id: string) => current.has(id)),
+        );
+      }
+      if (matches.size === 0) return [];
+    }
+    return [...(matches ?? new Set<string>())];
+  }
+
   function companyOutput(
     company: StoredCompany,
     includeRelations = false,
@@ -178,6 +238,7 @@ export default async function plugin(bb: BbPluginApi) {
       industries: input.industry,
       sources: input.source,
       enrichmentStatuses: input.enrichment,
+      recordIds: customFieldRecordIds("COMPANY", input.fields),
       sortBy,
       sortDirection: input.dir,
       limit: input.pageSize,
@@ -292,6 +353,7 @@ export default async function plugin(bb: BbPluginApi) {
       titles: input.title,
       seniorities: input.seniority,
       functions: input.persona,
+      recordIds: customFieldRecordIds("CONTACT", input.fields),
       sortBy,
       sortDirection: input.dir,
       limit: input.pageSize,
@@ -370,6 +432,7 @@ export default async function plugin(bb: BbPluginApi) {
       ownerIds: input.owner,
       stages: input.stage,
       closings: input.closing,
+      recordIds: customFieldRecordIds("DEAL", input.fields),
       sortBy,
       sortDirection: input.dir,
       limit: input.pageSize,

@@ -72,6 +72,8 @@ export interface ListOptions {
   /** Return only archived rows. Takes precedence over includeArchived. */
   archivedOnly?: boolean;
   search?: string;
+  /** Optional pre-filtered record IDs, including an empty set for no matches. */
+  recordIds?: readonly string[];
   limit?: number;
   offset?: number;
 }
