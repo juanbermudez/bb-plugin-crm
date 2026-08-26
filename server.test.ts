@@ -83,4 +83,49 @@ describe("CRM plugin foundation", () => {
 
     await harness.lifecycle.dispose();
   });
+
+  it("persists contact relationships and supports contact bulk operations", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Analytical Engines",
+      domain: "engines.example",
+    })) as { id: string };
+    const contact = await harness.behavior.callRpc("contacts_create", {
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ADA@EXAMPLE.COM",
+      title: "Founder",
+      companyId: company.id,
+      ownerId: null,
+    });
+    expect(contact).toMatchObject({
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+      company: { id: company.id, name: "Analytical Engines" },
+      fields: {},
+      deals: [],
+    });
+
+    const listed = await harness.behavior.callRpc("contacts_list", {
+      q: "ada@example.com",
+      company: [company.id],
+    });
+    expect(listed).toMatchObject({ total: 1 });
+
+    const id = (contact as { id: string }).id;
+    await expect(
+      harness.behavior.callRpc("contacts_bulkAssignOwner", {
+        ids: [id],
+        ownerId: "owner_2",
+      }),
+    ).resolves.toMatchObject({ requested: 1, succeeded: 1, failed: 0 });
+    await expect(harness.behavior.callRpc("contacts_get", { id })).resolves.toMatchObject({
+      ownerId: "owner_2",
+    });
+
+    await harness.lifecycle.dispose();
+  });
 });

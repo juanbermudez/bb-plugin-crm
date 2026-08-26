@@ -872,6 +872,8 @@ export const contactSchema = z
     source: recordSourceSchema.optional(),
     enrichmentStatus: enrichmentStatusSchema.optional(),
     enrichmentError: optionalNullableText,
+    enrichedAt: timestampSchema.nullable().optional(),
+    socialsCheckedAt: timestampSchema.nullable().optional(),
     queued: z.boolean().optional(),
     isPrimaryContact: z.boolean().optional(),
     facts: z.array(contactFactSchema).optional(),
