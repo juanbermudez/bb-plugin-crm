@@ -53,20 +53,20 @@ Status meanings:
 
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
-| Company list | Paginated CRM table | planned | 2 |
-| Search name/domain | Typed list query | planned | 2 |
-| Sort and pagination | Typed list state | planned | 2 |
+| Company list | Paginated CRM table | done | 2 |
+| Search name/domain | Typed list query | done | 2 |
+| Sort and pagination | Typed list state | building | 2 |
 | Owner, industry, enrichment facets | Filter bar | planned | 2 |
 | Activity and custom-field facets | Filter bar | planned | 5 |
 | Saved views | Saved-view rows | planned | 5 |
 | Column preferences | Client preference plus field definitions | planned | 5 |
 | Row selection | Table selection | planned | 2 |
-| Bulk owner | Bulk RPC and CLI | planned | 2 |
+| Bulk owner | Bulk RPC and CLI | building | 2 |
 | Bulk enrichment | Bulk RPC and CLI | planned | 2 |
-| Bulk archive/restore/purge | Bulk RPC and CLI | planned | 2 |
-| Create company | Wide responsive drawer | planned | 2 |
-| Company record header | Shared record drawer | planned | 2 |
-| Company overview | Record tab | planned | 2 |
+| Bulk archive/restore/purge | Bulk RPC and CLI | building | 2 |
+| Create company | Wide responsive drawer | done | 2 |
+| Company record header | Shared record drawer | done | 2 |
+| Company overview | Record tab | done | 2 |
 | Related contacts | Record tab | planned | 2 |
 | Related deals | Record tab | planned | 2 |
 | Company activity | Record tab | planned | 5 |
@@ -228,6 +228,6 @@ installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity or RBAC A
 | Marketplace PR body draft | done |
 | Production release tag | planned |
 | Fresh public-tag install test | planned |
-| Browser parity QA | building |
+| Browser parity QA | building; company lifecycle smoke passed |
 | Electron parity QA | planned |
 | Marketplace PR submission | planned |
