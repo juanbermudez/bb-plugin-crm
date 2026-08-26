@@ -150,6 +150,7 @@ export const TIMELINE_FILTERS = [
 ] as const;
 export const TASK_WINDOWS = ["overdue", "upcoming", "all"] as const;
 export const FACT_DECISIONS = ["accept", "dismiss"] as const;
+export const DASHBOARD_SCOPES = ["me", "everyone"] as const;
 
 /** The supported CRM currency catalog from the source application. */
 export const CURRENCY_CODES = [
@@ -186,6 +187,7 @@ export const recordKindSchema = z.enum(RECORD_KINDS);
 export const timelineFilterSchema = z.enum(TIMELINE_FILTERS);
 export const taskWindowSchema = z.enum(TASK_WINDOWS);
 export const factDecisionSchema = z.enum(FACT_DECISIONS);
+export const dashboardScopeSchema = z.enum(DASHBOARD_SCOPES);
 export const currencyCodeSchema = z.enum(CURRENCY_CODES);
 
 export type DealStage = z.infer<typeof dealStageSchema>;
@@ -210,6 +212,7 @@ export type RecordKind = z.infer<typeof recordKindSchema>;
 export type TimelineFilter = z.infer<typeof timelineFilterSchema>;
 export type TaskWindow = z.infer<typeof taskWindowSchema>;
 export type FactDecision = z.infer<typeof factDecisionSchema>;
+export type DashboardScope = z.infer<typeof dashboardScopeSchema>;
 export type CurrencyCode = z.infer<typeof currencyCodeSchema>;
 
 /* Upper-case aliases make the canonical enum schemas discoverable to callers
@@ -502,6 +505,7 @@ export const fieldDefinitionSchema = z
   })
   .strict();
 export type FieldDefinition = z.infer<typeof fieldDefinitionSchema>;
+export const fieldDefinitionOutputSchema = fieldDefinitionSchema;
 
 /** A normalized value row, useful when a store returns one value at a time. */
 export const fieldValueDtoSchema = z
@@ -515,6 +519,7 @@ export const fieldValueDtoSchema = z
   })
   .strict();
 export type FieldValueDto = z.infer<typeof fieldValueDtoSchema>;
+export const fieldValueOutputSchema = fieldValueDtoSchema;
 
 export const fieldDefinitionCreateInputSchema = z
   .object({
@@ -1333,6 +1338,175 @@ export const activityOutputSchema = activityEntrySchema;
 export type ActivityListInput = TimelineInput;
 export type ActivityListOutput = TimelineOutput;
 
+/**
+ * The source dashboard uses the authenticated user for the `me` scope. BB
+ * does not expose that identity to every plugin surface, so callers may pass
+ * an explicit ownerId; the server may otherwise resolve its local fallback.
+ */
+export const dashboardSummaryInputSchema = z
+  .object({
+    scope: dashboardScopeSchema.default("me"),
+    ownerId: idSchema.nullable().optional(),
+  })
+  .strict();
+export type DashboardSummaryInput = z.infer<
+  typeof dashboardSummaryInputSchema
+>;
+
+const dashboardCountSchema = z
+  .number()
+  .int()
+  .finite()
+  .min(0);
+const dashboardAmountSchema = dashboardCountSchema;
+
+export const dashboardOwnerSchema = z
+  .object({
+    id: idSchema,
+    name: nonEmptyText,
+    email: z.email(),
+    image: nullableText,
+  })
+  .strict();
+export type DashboardOwner = z.infer<typeof dashboardOwnerSchema>;
+
+export const dashboardCompanyBriefSchema = z
+  .object({
+    id: idSchema,
+    name: nonEmptyText,
+    iconUrl: nullableText,
+    iconDarkUrl: nullableText,
+    iconTone: nullableText,
+  })
+  .strict();
+export type DashboardCompanyBrief = z.infer<typeof dashboardCompanyBriefSchema>;
+
+export const dashboardLinkedRecordSchema = z
+  .object({ id: idSchema, name: nonEmptyText })
+  .strict();
+export type DashboardLinkedRecord = z.infer<typeof dashboardLinkedRecordSchema>;
+
+export const dashboardMonthlyTotalSchema = z
+  .object({
+    count: dashboardCountSchema,
+    valueCents: dashboardAmountSchema,
+  })
+  .strict();
+export type DashboardMonthlyTotal = z.infer<typeof dashboardMonthlyTotalSchema>;
+
+export const dashboardStageBucketSchema = z
+  .object({
+    stage: dealStageSchema,
+    count: dashboardCountSchema,
+    valueCents: dashboardAmountSchema,
+  })
+  .strict();
+export type DashboardStageBucket = z.infer<typeof dashboardStageBucketSchema>;
+
+export const dashboardTrendPointSchema = z
+  .object({
+    month: nonEmptyText,
+    won: dashboardAmountSchema,
+    created: dashboardAmountSchema,
+  })
+  .strict();
+export type DashboardTrendPoint = z.infer<typeof dashboardTrendPointSchema>;
+
+export const dashboardUnconvertedSchema = z
+  .object({
+    count: dashboardCountSchema,
+    currencies: z.array(currencyCodeSchema),
+  })
+  .strict();
+export type DashboardUnconverted = z.infer<typeof dashboardUnconvertedSchema>;
+
+export const dashboardBiggestOpenDealSchema = z
+  .object({
+    id: idSchema,
+    name: nonEmptyText,
+    stage: dealStageSchema,
+    currency: currencyCodeSchema,
+    company: dashboardCompanyBriefSchema,
+    owner: dashboardOwnerSchema,
+    amountCents: dashboardAmountSchema.nullable(),
+    baseAmountCents: dashboardAmountSchema.nullable(),
+    expectedCloseDate: timestampSchema.nullable(),
+    stageChangedAt: timestampSchema,
+  })
+  .strict();
+export type DashboardBiggestOpenDeal = z.infer<typeof dashboardBiggestOpenDealSchema>;
+
+export const dashboardOverdueTaskSchema = z
+  .object({
+    id: idSchema,
+    subject: nullableText,
+    company: dashboardLinkedRecordSchema.nullable(),
+    deal: dashboardLinkedRecordSchema.nullable(),
+    dueAt: timestampSchema.nullable(),
+  })
+  .strict();
+export type DashboardOverdueTask = z.infer<typeof dashboardOverdueTaskSchema>;
+
+export const dashboardRecentActivitySchema = z
+  .object({
+    id: idSchema,
+    type: activityTypeSchema,
+    subject: nullableText,
+    body: nullableText,
+    createdBy: dashboardOwnerSchema,
+    company: dashboardLinkedRecordSchema.nullable(),
+    deal: dashboardLinkedRecordSchema.nullable(),
+    createdAt: timestampSchema,
+    meta: activityMetaSchema,
+  })
+  .strict();
+export type DashboardRecentActivity = z.infer<typeof dashboardRecentActivitySchema>;
+
+export const dashboardPipelineSchema = z
+  .object({
+    stages: z.array(dashboardStageBucketSchema),
+    totalCents: dashboardAmountSchema,
+    totalDeals: dashboardCountSchema,
+  })
+  .strict();
+export type DashboardPipeline = z.infer<typeof dashboardPipelineSchema>;
+
+export const dashboardPerformanceSchema = z
+  .object({
+    windowDays: dashboardCountSchema,
+    wins: dashboardCountSchema,
+    losses: dashboardCountSchema,
+    winRate: z.number().finite().min(0).max(1).nullable(),
+    avgDealCents: dashboardAmountSchema.nullable(),
+    avgCycleDays: z.number().finite().min(0).nullable(),
+  })
+  .strict();
+export type DashboardPerformance = z.infer<typeof dashboardPerformanceSchema>;
+
+/** The source service always returns the six most recent calendar months. */
+export const DASHBOARD_TREND_MONTHS = 6;
+
+export const dashboardSummaryOutputSchema = z
+  .object({
+    scope: dashboardScopeSchema,
+    reportingCurrency: currencyCodeSchema,
+    unconverted: dashboardUnconvertedSchema,
+    pipeline: dashboardPipelineSchema,
+    wonThisMonth: dashboardMonthlyTotalSchema,
+    wonPrevMonth: dashboardMonthlyTotalSchema,
+    performance: dashboardPerformanceSchema,
+    trend: z
+      .array(dashboardTrendPointSchema)
+      .length(DASHBOARD_TREND_MONTHS),
+    closingThisMonthTotal: dashboardMonthlyTotalSchema,
+    biggestOpen: z.array(dashboardBiggestOpenDealSchema).max(6),
+    overdueTasks: z.array(dashboardOverdueTaskSchema).max(10),
+    recentActivity: z.array(dashboardRecentActivitySchema).max(12),
+  })
+  .strict();
+export type DashboardSummaryOutput = z.infer<typeof dashboardSummaryOutputSchema>;
+export const dashboardSummarySchema = dashboardSummaryOutputSchema;
+
 export const savedViewFiltersSchema = z
   .object({
     q: z.string().default(""),
@@ -1354,6 +1528,8 @@ export const savedViewSchema = z
     filters: savedViewFiltersSchema,
     ownerId: idSchema.nullable().optional(),
     mine: z.boolean().optional(),
+    /** The active default is stored as a BB preference, not in saved_views. */
+    isDefault: z.boolean().optional(),
     createdAt: timestampSchema.optional(),
     updatedAt: timestampSchema.optional(),
   })
@@ -1397,6 +1573,33 @@ export type SavedViewUpdateInput = z.infer<
 export const savedViewListOutputSchema = z.array(savedViewSchema);
 export type SavedViewListOutput = z.infer<typeof savedViewListOutputSchema>;
 
+export const savedViewDeleteInputSchema = z
+  .object({ id: idSchema })
+  .strict();
+export type SavedViewDeleteInput = z.infer<
+  typeof savedViewDeleteInputSchema
+>;
+
+export const savedViewDeleteOutputSchema = z
+  .object({ id: idSchema })
+  .strict();
+export type SavedViewDeleteOutput = z.infer<
+  typeof savedViewDeleteOutputSchema
+>;
+
+export const savedViewSetDefaultInputSchema = z
+  .object({ id: idSchema })
+  .strict();
+export type SavedViewSetDefaultInput = z.infer<
+  typeof savedViewSetDefaultInputSchema
+>;
+
+/** The selected view is returned so clients can update their active state. */
+export const savedViewSetDefaultOutputSchema = savedViewSchema;
+export type SavedViewSetDefaultOutput = z.infer<
+  typeof savedViewSetDefaultOutputSchema
+>;
+
 export const fieldDefinitionListOutputSchema = z.array(fieldDefinitionSchema);
 export type FieldDefinitionListOutput = z.infer<
   typeof fieldDefinitionListOutputSchema
@@ -1414,6 +1617,130 @@ export const dealIdInputSchema = recordIdInputSchema;
 export const fieldIdInputSchema = recordIdInputSchema;
 export const savedViewIdInputSchema = recordIdInputSchema;
 export const activityIdInputSchema = recordIdInputSchema;
+
+/*
+ * Custom-field subresources are kept explicit at the BB RPC boundary even
+ * though the source API embeds options in a field definition and values in a
+ * record update. This lets the extension expose the same editor surfaces
+ * without leaking SQLite's typed value columns over the wire.
+ */
+export const fieldDefinitionArchiveInputSchema = fieldIdInputSchema;
+export const fieldDefinitionRestoreInputSchema = fieldIdInputSchema;
+export const fieldDefinitionDeleteInputSchema = fieldIdInputSchema;
+
+const fieldOptionPositionSchema = z
+  .number()
+  .int()
+  .finite()
+  .min(0);
+
+export const fieldOptionListInputSchema = z
+  .object({
+    fieldId: idSchema,
+    includeArchived: z.boolean().default(false),
+  })
+  .strict();
+export type FieldOptionListInput = z.infer<typeof fieldOptionListInputSchema>;
+
+export const fieldOptionCreateInputSchema = z
+  .object({
+    fieldId: idSchema,
+    label: nonEmptyText.max(120),
+    position: fieldOptionPositionSchema.optional(),
+  })
+  .strict();
+export type FieldOptionCreateInput = z.infer<
+  typeof fieldOptionCreateInputSchema
+>;
+
+export const fieldOptionUpdateDataSchema = z
+  .object({
+    label: nonEmptyText.max(120).optional(),
+    position: fieldOptionPositionSchema.optional(),
+  })
+  .strict();
+export type FieldOptionUpdateData = z.infer<
+  typeof fieldOptionUpdateDataSchema
+>;
+
+export const fieldOptionUpdateInputSchema = z
+  .object({ id: idSchema, data: fieldOptionUpdateDataSchema })
+  .strict();
+export type FieldOptionUpdateInput = z.infer<
+  typeof fieldOptionUpdateInputSchema
+>;
+
+export const fieldOptionArchiveInputSchema = fieldIdInputSchema;
+export const fieldOptionRestoreInputSchema = fieldIdInputSchema;
+export const fieldOptionDeleteInputSchema = fieldIdInputSchema;
+export type FieldOptionArchiveInput = z.infer<
+  typeof fieldOptionArchiveInputSchema
+>;
+export type FieldOptionRestoreInput = z.infer<
+  typeof fieldOptionRestoreInputSchema
+>;
+export type FieldOptionDeleteInput = z.infer<
+  typeof fieldOptionDeleteInputSchema
+>;
+
+export const fieldOptionOutputSchema = fieldOptionSchema;
+export const fieldOptionListOutputSchema = z.array(fieldOptionOutputSchema);
+export type FieldOptionListOutput = z.infer<
+  typeof fieldOptionListOutputSchema
+>;
+export const fieldOptionDeleteOutputSchema = z
+  .object({ id: idSchema })
+  .strict();
+export type FieldOptionDeleteOutput = z.infer<
+  typeof fieldOptionDeleteOutputSchema
+>;
+
+const fieldValueTargetShape = {
+  entity: fieldEntitySchema,
+  recordId: idSchema,
+  fieldId: idSchema,
+};
+
+export const fieldValueListInputSchema = z
+  .object({
+    entity: fieldEntitySchema,
+    recordId: idSchema,
+    includeArchived: z.boolean().default(false),
+  })
+  .strict();
+export type FieldValueListInput = z.infer<typeof fieldValueListInputSchema>;
+
+export const fieldValueCreateInputSchema = z
+  .object({ ...fieldValueTargetShape, value: fieldValueSchema })
+  .strict();
+export type FieldValueCreateInput = z.infer<
+  typeof fieldValueCreateInputSchema
+>;
+
+export const fieldValueUpdateInputSchema = z
+  .object({ id: idSchema, ...fieldValueTargetShape, value: fieldValueSchema })
+  .strict();
+export type FieldValueUpdateInput = z.infer<
+  typeof fieldValueUpdateInputSchema
+>;
+
+export const fieldValueDeleteInputSchema = z
+  .object({ id: idSchema, ...fieldValueTargetShape })
+  .strict();
+export type FieldValueDeleteInput = z.infer<
+  typeof fieldValueDeleteInputSchema
+>;
+
+export const fieldValueListOutputSchema = z.array(fieldValueOutputSchema);
+export type FieldValueListOutput = z.infer<
+  typeof fieldValueListOutputSchema
+>;
+export const fieldValueDeleteOutputSchema = z
+  .object({ id: idSchema })
+  .strict();
+export type FieldValueDeleteOutput = z.infer<
+  typeof fieldValueDeleteOutputSchema
+>;
 
 export const fieldListInputSchema = z
   .object({ entity: fieldEntitySchema, includeArchived: z.boolean().default(false) })
@@ -1469,6 +1796,8 @@ export const fieldReorderInput = fieldDefinitionReorderInputSchema;
 export const savedViewListInput = savedViewListInputSchema;
 export const savedViewCreateInput = savedViewCreateInputSchema;
 export const savedViewUpdateInput = savedViewUpdateInputSchema;
+export const dashboardSummaryInput = dashboardSummaryInputSchema;
+export const dashboardSummaryOutput = dashboardSummaryOutputSchema;
 export const archiveInput = archiveInputSchema;
 export const restoreInput = restoreInputSchema;
 export const purgeInput = purgeInputSchema;

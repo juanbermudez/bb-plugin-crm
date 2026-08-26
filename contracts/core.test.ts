@@ -154,6 +154,7 @@ describe("CRM core contracts", () => {
       activityCreateInputSchema.safeParse({
         type: "NOTE",
         companyId: "co_1",
+        createdById: "local_user",
         body: "hello",
       }).success,
     ).toBe(true);

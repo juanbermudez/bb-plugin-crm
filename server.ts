@@ -2,6 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   currencyCodeSchema,
   type ActivityEntry as ActivityOutput,
+  type DashboardSummaryOutput,
   type CurrencyCode,
   type DealStage,
   type Company as CompanyOutput,
@@ -33,6 +34,11 @@ import {
   createActivityStore,
   type Activity as StoredActivity,
 } from "./db/activities.js";
+import {
+  createSavedViewStore,
+  type SavedView as StoredSavedView,
+} from "./db/saved-views.js";
+import { createCustomFieldStore } from "./db/custom-fields.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
 
@@ -75,6 +81,8 @@ export default async function plugin(bb: BbPluginApi) {
   const deals = createDealStore(db);
   const currency = createCurrencyStore(db);
   const activities = createActivityStore(db);
+  const savedViews = createSavedViewStore(db);
+  const customFields = createCustomFieldStore(db);
 
   function companyOutput(
     company: StoredCompany,
@@ -157,7 +165,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   function changed(
-    entity: "company" | "contact" | "deal" | "currency" | "activity",
+    entity: "company" | "contact" | "deal" | "currency" | "activity" | "saved-view" | "custom-field",
     action: string,
     id: string,
   ): void {
@@ -389,6 +397,35 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
+  const LOCAL_OWNER_ID = "local_user";
+
+  function savedViewDefaultKey(entity: StoredSavedView["entity"]): string {
+    return `saved_view_default_${entity}`;
+  }
+
+  function defaultSavedViewId(entity: StoredSavedView["entity"]): string | null {
+    const value = db.prepare("SELECT value FROM crm_metadata WHERE key = ?")
+      .pluck()
+      .get(savedViewDefaultKey(entity));
+    return typeof value === "string" && value.trim() ? value : null;
+  }
+
+  function savedViewOutput(view: StoredSavedView) {
+    return {
+      ...view,
+      isDefault: defaultSavedViewId(view.entity) === view.id,
+    };
+  }
+
+  function localOwner(id: string) {
+    return {
+      id,
+      name: id,
+      email: "crm-user@bb.invalid",
+      image: null,
+    };
+  }
+
   bb.rpc.register(rpcContract, {
     async status() {
       const { workspaceName, reportingCurrency } = await settings.get();
@@ -398,6 +435,218 @@ export default async function plugin(bb: BbPluginApi) {
         workspaceName,
         reportingCurrency,
       };
+    },
+    async dashboard_summary({ scope, ownerId }) {
+      const { reportingCurrency: configuredCurrency } = await settings.get();
+      const reportingCurrency = currencyCodeSchema.parse(configuredCurrency);
+      const effectiveOwnerId = ownerId ?? LOCAL_OWNER_ID;
+      const ownerSql = scope === "me" ? " AND d.owner_id = @ownerId" : "";
+      const activityOwnerSql = scope === "me" ? " AND a.created_by_id = @ownerId" : "";
+      const params = { reportingCurrency, ownerId: effectiveOwnerId };
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const previousMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      const cutoff90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1_000);
+
+      const stageRows = db.prepare(`
+        SELECT d.stage, COUNT(*) AS count,
+          COALESCE(SUM(CASE WHEN d.base_currency = @reportingCurrency
+            THEN d.base_amount_cents ELSE 0 END), 0) AS valueCents
+        FROM deals d
+        WHERE d.archived_at IS NULL
+          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')${ownerSql}
+        GROUP BY d.stage
+        ORDER BY d.stage
+      `).all(params) as DashboardSummaryOutput["pipeline"]["stages"];
+      const unconvertedRows = db.prepare(`
+        SELECT d.currency, COUNT(*) AS count
+        FROM deals d
+        WHERE d.archived_at IS NULL
+          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+          AND d.amount_cents IS NOT NULL AND d.base_amount_cents IS NULL${ownerSql}
+        GROUP BY d.currency ORDER BY d.currency
+      `).all(params) as Array<{ currency: string; count: number }>;
+
+      const monthlyWon = (from: Date, to: Date) => db.prepare(`
+        SELECT COUNT(*) AS count,
+          COALESCE(SUM(CASE WHEN d.base_currency = @reportingCurrency
+            THEN d.base_amount_cents ELSE 0 END), 0) AS valueCents
+        FROM deals d
+        WHERE d.archived_at IS NULL AND d.stage = 'CLOSED_WON'
+          AND d.closed_at >= @from AND d.closed_at < @to${ownerSql}
+      `).get({ ...params, from: from.toISOString(), to: to.toISOString() }) as {
+        count: number;
+        valueCents: number;
+      };
+
+      const performance = db.prepare(`
+        SELECT
+          SUM(CASE WHEN d.stage = 'CLOSED_WON' THEN 1 ELSE 0 END) AS wins,
+          SUM(CASE WHEN d.stage = 'CLOSED_LOST' THEN 1 ELSE 0 END) AS losses,
+          AVG(CASE WHEN d.stage = 'CLOSED_WON'
+            AND d.base_currency = @reportingCurrency THEN d.base_amount_cents END) AS avgDealCents,
+          AVG(CASE WHEN d.stage = 'CLOSED_WON'
+            THEN MAX(0, julianday(d.closed_at) - julianday(d.created_at)) END) AS avgCycleDays
+        FROM deals d
+        WHERE d.archived_at IS NULL
+          AND d.stage IN ('CLOSED_WON', 'CLOSED_LOST')
+          AND d.closed_at >= @cutoff${ownerSql}
+      `).get({ ...params, cutoff: cutoff90.toISOString() }) as {
+        wins: number | null;
+        losses: number | null;
+        avgDealCents: number | null;
+        avgCycleDays: number | null;
+      };
+      const wins = Number(performance.wins ?? 0);
+      const losses = Number(performance.losses ?? 0);
+
+      const trend = Array.from({ length: 6 }, (_, index) => {
+        const offset = index - 5;
+        const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
+        const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset + 1, 1));
+        const row = db.prepare(`
+          SELECT
+            COALESCE(SUM(CASE WHEN d.stage = 'CLOSED_WON'
+              AND d.closed_at >= @from AND d.closed_at < @to
+              AND d.base_currency = @reportingCurrency THEN d.base_amount_cents ELSE 0 END), 0) AS won,
+            COALESCE(SUM(CASE WHEN d.created_at >= @from AND d.created_at < @to
+              AND d.base_currency = @reportingCurrency THEN d.base_amount_cents ELSE 0 END), 0) AS created
+          FROM deals d
+          WHERE d.archived_at IS NULL${ownerSql}
+        `).get({ ...params, from: from.toISOString(), to: to.toISOString() }) as {
+          won: number;
+          created: number;
+        };
+        return {
+          month: new Intl.DateTimeFormat("en", { month: "short", year: "numeric", timeZone: "UTC" }).format(from),
+          won: Number(row.won),
+          created: Number(row.created),
+        };
+      });
+
+      const closingThisMonthTotal = db.prepare(`
+        SELECT COUNT(*) AS count,
+          COALESCE(SUM(CASE WHEN d.base_currency = @reportingCurrency
+            THEN d.base_amount_cents ELSE 0 END), 0) AS valueCents
+        FROM deals d
+        WHERE d.archived_at IS NULL
+          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+          AND d.expected_close_date >= @fromDate AND d.expected_close_date < @toDate${ownerSql}
+      `).get({
+        ...params,
+        fromDate: monthStart.toISOString().slice(0, 10),
+        toDate: nextMonth.toISOString().slice(0, 10),
+      }) as { count: number; valueCents: number };
+
+      const biggestRows = db.prepare(`
+        SELECT d.id, d.name, d.stage, d.currency, d.amount_cents AS amountCents,
+          d.base_amount_cents AS baseAmountCents,
+          d.expected_close_date AS expectedCloseDate,
+          d.stage_changed_at AS stageChangedAt,
+          d.owner_id AS ownerId,
+          c.id AS companyId, c.name AS companyName, c.icon_url AS iconUrl,
+          c.icon_dark_url AS iconDarkUrl, c.icon_tone AS iconTone
+        FROM deals d JOIN companies c ON c.id = d.company_id
+        WHERE d.archived_at IS NULL
+          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')${ownerSql}
+        ORDER BY (d.base_amount_cents IS NULL), d.base_amount_cents DESC,
+          d.amount_cents DESC, d.id DESC LIMIT 6
+      `).all(params) as Array<Record<string, unknown>>;
+
+      const overdueIds = db.prepare(`
+        SELECT a.id FROM activities a
+        WHERE a.type = 'TASK' AND a.completed_at IS NULL
+          AND a.due_at IS NOT NULL AND a.due_at < @now${activityOwnerSql}
+        ORDER BY a.due_at ASC, a.id ASC LIMIT 10
+      `).pluck().all({ ...params, now: now.toISOString() }) as string[];
+      const recentIds = db.prepare(`
+        SELECT a.id FROM activities a
+        WHERE 1 = 1${activityOwnerSql}
+        ORDER BY (a.occurred_at IS NULL), a.occurred_at DESC, a.id DESC LIMIT 12
+      `).pluck().all(params) as string[];
+
+      const totalDeals = stageRows.reduce((sum, row) => sum + Number(row.count), 0);
+      const totalCents = stageRows.reduce((sum, row) => sum + Number(row.valueCents), 0);
+      const wonThisMonth = monthlyWon(monthStart, nextMonth);
+      const wonPrevMonth = monthlyWon(previousMonth, monthStart);
+
+      return {
+        scope,
+        reportingCurrency,
+        unconverted: {
+          count: unconvertedRows.reduce((sum, row) => sum + Number(row.count), 0),
+          currencies: unconvertedRows.map((row) => currencyCodeSchema.parse(row.currency)),
+        },
+        pipeline: {
+          stages: stageRows.map((row) => ({
+            ...row,
+            count: Number(row.count),
+            valueCents: Number(row.valueCents),
+          })),
+          totalCents,
+          totalDeals,
+        },
+        wonThisMonth: { count: Number(wonThisMonth.count), valueCents: Number(wonThisMonth.valueCents) },
+        wonPrevMonth: { count: Number(wonPrevMonth.count), valueCents: Number(wonPrevMonth.valueCents) },
+        performance: {
+          windowDays: 90,
+          wins,
+          losses,
+          winRate: wins + losses === 0 ? null : wins / (wins + losses),
+          avgDealCents: performance.avgDealCents === null ? null : Math.round(performance.avgDealCents),
+          avgCycleDays: performance.avgCycleDays,
+        },
+        trend,
+        closingThisMonthTotal: {
+          count: Number(closingThisMonthTotal.count),
+          valueCents: Number(closingThisMonthTotal.valueCents),
+        },
+        biggestOpen: biggestRows.map((row) => ({
+          id: String(row.id),
+          name: String(row.name),
+          stage: row.stage as DashboardSummaryOutput["biggestOpen"][number]["stage"],
+          currency: currencyCodeSchema.parse(row.currency),
+          company: {
+            id: String(row.companyId),
+            name: String(row.companyName),
+            iconUrl: row.iconUrl === null ? null : String(row.iconUrl),
+            iconDarkUrl: row.iconDarkUrl === null ? null : String(row.iconDarkUrl),
+            iconTone: row.iconTone === null ? null : String(row.iconTone),
+          },
+          owner: localOwner(String(row.ownerId)),
+          amountCents: row.amountCents === null ? null : Number(row.amountCents),
+          baseAmountCents: row.baseAmountCents === null ? null : Number(row.baseAmountCents),
+          expectedCloseDate: row.expectedCloseDate === null
+            ? null
+            : `${String(row.expectedCloseDate)}T00:00:00.000Z`,
+          stageChangedAt: String(row.stageChangedAt),
+        })),
+        overdueTasks: overdueIds.map((id) => {
+          const activity = activities.getRequired(id);
+          return {
+            id: activity.id,
+            subject: activity.subject,
+            company: activity.company,
+            deal: activity.deal,
+            dueAt: activity.dueAt,
+          };
+        }),
+        recentActivity: recentIds.map((id) => {
+          const activity = activities.getRequired(id);
+          return {
+            id: activity.id,
+            type: activity.type,
+            subject: activity.subject,
+            body: activity.body,
+            createdBy: localOwner(activity.createdById),
+            company: activity.company,
+            deal: activity.deal,
+            createdAt: activity.createdAt,
+            meta: activity.meta,
+          };
+        }),
+      } satisfies DashboardSummaryOutput;
     },
     companies_list(input) {
       const options = companyListOptions(input);
@@ -724,6 +973,131 @@ export default async function plugin(bb: BbPluginApi) {
       const activity = activities.complete(id, completed);
       changed("activity", completed ? "completed" : "reopened", activity.id);
       return activityOutput(activity);
+    },
+    savedViews_list({ entity }) {
+      return savedViews
+        .list({ entity, ownerId: LOCAL_OWNER_ID })
+        .map(savedViewOutput);
+    },
+    savedViews_create(input) {
+      const view = savedViews.create(input, LOCAL_OWNER_ID);
+      changed("saved-view", "created", view.id);
+      return savedViewOutput(view);
+    },
+    savedViews_update({ id, data }) {
+      const view = savedViews.update(id, data, LOCAL_OWNER_ID);
+      changed("saved-view", "updated", view.id);
+      return savedViewOutput(view);
+    },
+    savedViews_delete({ id }) {
+      const view = savedViews.getRequired(id, LOCAL_OWNER_ID);
+      const result = savedViews.delete(id, LOCAL_OWNER_ID);
+      if (defaultSavedViewId(view.entity) === id) {
+        db.prepare("DELETE FROM crm_metadata WHERE key = ?")
+          .run(savedViewDefaultKey(view.entity));
+      }
+      changed("saved-view", "deleted", id);
+      return result;
+    },
+    savedViews_setDefault({ id }) {
+      const view = savedViews.getRequired(id, LOCAL_OWNER_ID);
+      db.prepare(`
+        INSERT INTO crm_metadata (key, value, updated_at)
+        VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `).run(savedViewDefaultKey(view.entity), view.id);
+      changed("saved-view", "defaulted", view.id);
+      return savedViewOutput(view);
+    },
+    fields_list({ entity, includeArchived }) {
+      return customFields.list({ entity, includeArchived });
+    },
+    fields_byKey({ entity, key }) {
+      return customFields.byKey(entity, key);
+    },
+    fields_filters({ entity }) {
+      return customFields.filters(entity);
+    },
+    fields_coverage({ id }) {
+      return customFields.coverage(id);
+    },
+    fields_create(input) {
+      const field = customFields.create(input);
+      changed("custom-field", "created", field.id);
+      return field;
+    },
+    fields_update({ id, data }) {
+      const field = customFields.update(id, data);
+      changed("custom-field", "updated", field.id);
+      return field;
+    },
+    fields_reorder(input) {
+      const fields = customFields.reorder(input);
+      changed("custom-field", "reordered", input.entity);
+      return fields;
+    },
+    fields_archive({ id }) {
+      const field = customFields.archive(id);
+      changed("custom-field", "archived", field.id);
+      return field;
+    },
+    fields_restore({ id }) {
+      const field = customFields.restore(id);
+      changed("custom-field", "restored", field.id);
+      return field;
+    },
+    fields_delete({ id }) {
+      const result = customFields.delete(id);
+      changed("custom-field", "deleted", id);
+      return result;
+    },
+    fields_options_list(input) {
+      return customFields.listOptions(input);
+    },
+    fields_options_create(input) {
+      const option = customFields.createOption(input);
+      changed("custom-field", "option-created", option.fieldId);
+      return option;
+    },
+    fields_options_update({ id, data }) {
+      const option = customFields.updateOption(id, data);
+      changed("custom-field", "option-updated", option.fieldId);
+      return option;
+    },
+    fields_options_archive({ id }) {
+      const option = customFields.archiveOption(id);
+      changed("custom-field", "option-archived", option.fieldId);
+      return option;
+    },
+    fields_options_restore({ id }) {
+      const option = customFields.restoreOption(id);
+      changed("custom-field", "option-restored", option.fieldId);
+      return option;
+    },
+    fields_options_delete({ id }) {
+      const result = customFields.deleteOption(id);
+      changed("custom-field", "option-deleted", id);
+      return result;
+    },
+    fields_values_list(input) {
+      return customFields.listValues(input);
+    },
+    fields_values_create(input) {
+      const value = customFields.createValue(input);
+      changed("custom-field", "value-created", value.fieldId);
+      return value;
+    },
+    fields_values_update(input) {
+      const value = customFields.updateValue(input);
+      changed("custom-field", "value-updated", value.fieldId);
+      return value;
+    },
+    fields_values_delete(input) {
+      const result = customFields.deleteValue(input);
+      changed("custom-field", "value-deleted", input.fieldId);
+      return result;
     },
   });
 

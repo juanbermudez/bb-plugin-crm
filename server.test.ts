@@ -366,4 +366,208 @@ describe("CRM plugin foundation", () => {
 
     await harness.lifecycle.dispose();
   });
+
+  it("summarizes pipeline, performance, tasks, and recent activity for the dashboard", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "USD" },
+    });
+    await plugin(bb);
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Dashboard Co",
+    })) as { id: string };
+    const now = new Date();
+    const expectedCloseDate = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      Math.min(now.getUTCDate() + 1, 28),
+    )).toISOString().slice(0, 10);
+    const openDeal = (await harness.behavior.callRpc("deals_create", {
+      name: "Open expansion",
+      companyId: company.id,
+      ownerId: "local_user",
+      amountCents: 40_000,
+      currency: "USD",
+      expectedCloseDate,
+    })) as { id: string };
+    const wonDeal = (await harness.behavior.callRpc("deals_create", {
+      name: "Won expansion",
+      companyId: company.id,
+      ownerId: "local_user",
+      amountCents: 15_000,
+      currency: "USD",
+    })) as { id: string };
+    await harness.behavior.callRpc("deals_setStage", {
+      id: wonDeal.id,
+      stage: "CLOSED_WON",
+    });
+    const overdue = new Date(now.getTime() - 24 * 60 * 60 * 1_000).toISOString();
+    await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      companyId: company.id,
+      createdById: "local_user",
+      subject: "Follow up",
+      dueAt: overdue,
+    });
+
+    await expect(
+      harness.behavior.callRpc("dashboard_summary", { scope: "me" }),
+    ).resolves.toMatchObject({
+      reportingCurrency: "USD",
+      pipeline: {
+        totalDeals: 1,
+        totalCents: 40_000,
+        stages: [expect.objectContaining({ stage: "DEMO_BOOKED", count: 1, valueCents: 40_000 })],
+      },
+      wonThisMonth: { count: 1, valueCents: 15_000 },
+      performance: {
+        wins: 1,
+        losses: 0,
+        avgDealCents: 15_000,
+      },
+      trend: expect.arrayContaining([expect.objectContaining({ month: expect.any(String) })]),
+      biggestOpen: [expect.objectContaining({ id: openDeal.id, baseAmountCents: 40_000 })],
+      overdueTasks: [expect.objectContaining({ subject: "Follow up" })],
+      recentActivity: [expect.objectContaining({ subject: "Follow up" })],
+    });
+    const summary = await harness.behavior.callRpc("dashboard_summary", {
+      scope: "everyone",
+    }) as { trend: unknown[] };
+    expect(summary.trend).toHaveLength(6);
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("serves the complete custom-field definition, option, and value lifecycle", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Custom Field Co",
+    })) as { id: string };
+    const field = (await harness.behavior.callRpc("fields_create", {
+      entity: "COMPANY",
+      label: "Customer tier",
+      type: "SELECT",
+      options: [{ label: "Enterprise" }, { label: "Growth" }],
+      showOnFilter: true,
+    })) as { id: string; key: string; options: Array<{ id: string }> };
+    const enterprise = field.options[0];
+
+    await expect(
+      harness.behavior.callRpc("fields_byKey", {
+        entity: "COMPANY",
+        key: field.key,
+      }),
+    ).resolves.toMatchObject({ id: field.id, label: "Customer tier" });
+    await expect(
+      harness.behavior.callRpc("fields_filters", { entity: "COMPANY" }),
+    ).resolves.toEqual([expect.objectContaining({ id: field.id })]);
+    const value = (await harness.behavior.callRpc("fields_values_create", {
+      entity: "COMPANY",
+      recordId: company.id,
+      fieldId: field.id,
+      value: enterprise.id,
+    })) as { id: string };
+    await expect(
+      harness.behavior.callRpc("fields_coverage", { id: field.id }),
+    ).resolves.toEqual({ filled: 1, total: 1 });
+    await expect(
+      harness.behavior.callRpc("fields_values_list", {
+        entity: "COMPANY",
+        recordId: company.id,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: value.id, value: enterprise.id })]);
+    await expect(
+      harness.behavior.callRpc("fields_values_update", {
+        id: value.id,
+        entity: "COMPANY",
+        recordId: company.id,
+        fieldId: field.id,
+        value: field.options[1]?.id,
+      }),
+    ).resolves.toMatchObject({ id: value.id, value: field.options[1]?.id });
+    const option = (await harness.behavior.callRpc("fields_options_create", {
+      fieldId: field.id,
+      label: "Startup",
+    })) as { id: string };
+    await expect(
+      harness.behavior.callRpc("fields_options_update", {
+        id: option.id,
+        data: { label: "Early stage" },
+      }),
+    ).resolves.toMatchObject({ label: "Early stage" });
+    await harness.behavior.callRpc("fields_options_archive", { id: option.id });
+    await harness.behavior.callRpc("fields_options_restore", { id: option.id });
+    await harness.behavior.callRpc("fields_options_delete", { id: option.id });
+    await harness.behavior.callRpc("fields_values_delete", {
+      id: value.id,
+      entity: "COMPANY",
+      recordId: company.id,
+      fieldId: field.id,
+    });
+    await harness.behavior.callRpc("fields_update", {
+      id: field.id,
+      data: { label: "Account tier" },
+    });
+    await expect(
+      harness.behavior.callRpc("fields_reorder", {
+        entity: "COMPANY",
+        ids: [field.id],
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: field.id, position: 0 })]);
+    await harness.behavior.callRpc("fields_archive", { id: field.id });
+    await expect(
+      harness.behavior.callRpc("fields_list", {
+        entity: "COMPANY",
+        includeArchived: true,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: field.id, archived: true })]);
+    await harness.behavior.callRpc("fields_restore", { id: field.id });
+    await expect(
+      harness.behavior.callRpc("fields_delete", { id: field.id }),
+    ).resolves.toEqual({ id: field.id });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("persists installation-owned saved views and their default selection", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    const view = (await harness.behavior.callRpc("savedViews_create", {
+      entity: "COMPANY",
+      name: "Open accounts",
+      shared: false,
+      filters: {
+        q: "acme",
+        sort: "name",
+        dir: "asc",
+        archived: false,
+        filters: { owner: ["local_user"] },
+        columns: ["name", "domain"],
+      },
+    })) as { id: string };
+
+    await expect(
+      harness.behavior.callRpc("savedViews_setDefault", { id: view.id }),
+    ).resolves.toMatchObject({ id: view.id, ownerId: "local_user", isDefault: true });
+    await expect(
+      harness.behavior.callRpc("savedViews_list", { entity: "COMPANY" }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: view.id, mine: true, isDefault: true }),
+    ]);
+    await expect(
+      harness.behavior.callRpc("savedViews_update", {
+        id: view.id,
+        data: { name: "Named accounts" },
+      }),
+    ).resolves.toMatchObject({ name: "Named accounts", isDefault: true });
+    await expect(
+      harness.behavior.callRpc("savedViews_delete", { id: view.id }),
+    ).resolves.toEqual({ id: view.id });
+    await expect(
+      harness.behavior.callRpc("savedViews_list", { entity: "COMPANY" }),
+    ).resolves.toEqual([]);
+
+    await harness.lifecycle.dispose();
+  });
 });

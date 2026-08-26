@@ -54,6 +54,32 @@ describe("CRM RPC contract", () => {
       "activity_get",
       "activity_create",
       "activity_complete",
+      "dashboard_summary",
+      "savedViews_list",
+      "savedViews_create",
+      "savedViews_update",
+      "savedViews_delete",
+      "savedViews_setDefault",
+      "fields_list",
+      "fields_byKey",
+      "fields_filters",
+      "fields_coverage",
+      "fields_create",
+      "fields_update",
+      "fields_reorder",
+      "fields_archive",
+      "fields_restore",
+      "fields_delete",
+      "fields_options_list",
+      "fields_options_create",
+      "fields_options_update",
+      "fields_options_archive",
+      "fields_options_restore",
+      "fields_options_delete",
+      "fields_values_list",
+      "fields_values_create",
+      "fields_values_update",
+      "fields_values_delete",
     ]);
   });
 
@@ -210,5 +236,175 @@ describe("CRM RPC contract", () => {
         limit: 25,
       }).success,
     ).toBe(true);
+  });
+
+  it("keeps saved views and custom-field subresources strict and JSON-safe", () => {
+    expect(
+      rpcContract.savedViews_list.input.safeParse({ entity: "COMPANY" })
+        .success,
+    ).toBe(true);
+    expect(
+      rpcContract.savedViews_list.input.safeParse({ entity: "company" })
+        .success,
+    ).toBe(false);
+    expect(
+      rpcContract.savedViews_create.input.safeParse({
+        entity: "DEAL",
+        name: "Open renewals",
+        filters: {},
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.savedViews_setDefault.input.safeParse({ id: "view-1" })
+        .success,
+    ).toBe(true);
+    expect(
+      rpcContract.savedViews_delete.input.safeParse({ id: "view-1", extra: 1 })
+        .success,
+    ).toBe(false);
+
+    expect(
+      rpcContract.fields_list.input.safeParse({
+        entity: "CONTACT",
+        includeArchived: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.fields_create.input.safeParse({
+        entity: "COMPANY",
+        label: "Segment",
+        type: "SELECT",
+        options: [{ label: "Enterprise", position: 0 }],
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.fields_create.input.safeParse({
+        entity: "ORG",
+        label: "Segment",
+        type: "SELECT",
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.fields_options_update.input.safeParse({
+        id: "option-1",
+        data: { label: "Mid-market", position: 1 },
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.fields_options_list.input.safeParse({
+        fieldId: "field-1",
+        includeArchived: false,
+        extra: true,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      rpcContract.fields_values_list.input.safeParse({
+        entity: "DEAL",
+        recordId: "deal-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.fields_values_create.input.safeParse({
+        entity: "CONTACT",
+        recordId: "contact-1",
+        fieldId: "field-1",
+        value: "champion",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.fields_values_create.input.safeParse({
+        entity: "CONTACT",
+        recordId: "contact-1",
+        fieldId: "field-1",
+        value: new Date(),
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.fields_values_update.input.safeParse({
+        id: "value-1",
+        entity: "COMPANY",
+        recordId: "company-1",
+        fieldId: "field-1",
+        value: 42,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.fields_values_delete.input.safeParse({
+        id: "value-1",
+        entity: "COMPANY",
+        recordId: "company-1",
+        fieldId: "field-1",
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("supports dashboard scope fallback and validates the source-shaped summary", () => {
+    expect(rpcContract.dashboard_summary.input.safeParse({}).success).toBe(
+      true,
+    );
+    expect(
+      rpcContract.dashboard_summary.input.parse({ ownerId: "user-1" }),
+    ).toEqual({ scope: "me", ownerId: "user-1" });
+    expect(
+      rpcContract.dashboard_summary.input.safeParse({
+        scope: "everyone",
+        ownerId: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.dashboard_summary.input.safeParse({
+        scope: "me",
+        ownerId: new Date(),
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.dashboard_summary.input.safeParse({
+        scope: "all",
+      }).success,
+    ).toBe(false);
+
+    const summary = {
+      scope: "me" as const,
+      reportingCurrency: "USD" as const,
+      unconverted: { count: 1, currencies: ["EUR" as const] },
+      pipeline: {
+        stages: [
+          { stage: "QUALIFIED_TO_BUY" as const, count: 2, valueCents: 125_000 },
+        ],
+        totalCents: 125_000,
+        totalDeals: 2,
+      },
+      wonThisMonth: { count: 1, valueCents: 50_000 },
+      wonPrevMonth: { count: 0, valueCents: 0 },
+      performance: {
+        windowDays: 90,
+        wins: 1,
+        losses: 1,
+        winRate: 0.5,
+        avgDealCents: 50_000,
+        avgCycleDays: 12,
+      },
+      trend: Array.from({ length: 6 }, (_, index) => ({
+        month: `M${index + 1}`,
+        won: index * 100,
+        created: index * 200,
+      })),
+      closingThisMonthTotal: { count: 1, valueCents: 50_000 },
+      biggestOpen: [],
+      overdueTasks: [],
+      recentActivity: [],
+    };
+    expect(
+      rpcContract.dashboard_summary.output.safeParse(summary).success,
+    ).toBe(true);
+    expect(
+      rpcContract.dashboard_summary.output.safeParse({
+        ...summary,
+        pipeline: { ...summary.pipeline, unexpected: true },
+      }).success,
+    ).toBe(false);
   });
 });
