@@ -190,7 +190,7 @@ describe("ContactsView", () => {
       "true",
     );
     fireEvent.click(within(drawer).getByRole("tab", { name: "Overview" }));
-    expect(onTabChange).toHaveBeenCalledWith("overview");
+    expect(onTabChange).toHaveBeenCalledWith("overview", contact.id);
   });
 
   it("shows an empty state when a contact has no related deals", async () => {

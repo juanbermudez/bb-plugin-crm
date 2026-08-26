@@ -254,7 +254,7 @@ describe("AgentsView", () => {
     expect(await within(drawer).findByText("No builder conversation yet")).toBeDefined();
 
     fireEvent.click(within(drawer).getByRole("tab", { name: "Versions" }));
-    expect(onTabChange).toHaveBeenCalledWith("versions");
+    expect(onTabChange).toHaveBeenCalledWith("versions", agent.id);
   });
 
   it("copies an exact assistant message into an unsaved version draft with provenance", async () => {

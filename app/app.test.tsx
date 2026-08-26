@@ -127,6 +127,45 @@ describe("CRM nav panel", () => {
     slot.lifecycle.unmount();
   });
 
+  it("routes company drawer tabs with the opened record id", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const panel = app.navPanels[0]!;
+    const company = {
+      id: "cmp_acme",
+      name: "Acme Corporation",
+      domain: "acme.example",
+      industry: "Software",
+      ownerId: "local_user",
+      contactCount: 0,
+      openDealCount: 1,
+      lastActivityAt: null,
+      archivedAt: null,
+      fields: {},
+    };
+    const slot = renderSlot(
+      panel,
+      { subPath: "companies/cmp_acme" },
+      {
+        rpc: {
+          companies_list: () => ({ rows: [company], total: 1, facetCounts: {} }),
+          companies_get: () => company,
+          savedViews_list: () => [],
+          fields_list: () => [],
+          fields_values_list: () => [],
+        },
+      },
+    );
+
+    await slot.findByRole("dialog", { name: "Acme Corporation" });
+    fireEvent.click(slot.getByRole("tab", { name: "Contacts" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "crm",
+      options: { subPath: "companies/cmp_acme/contacts" },
+    });
+    slot.lifecycle.unmount();
+  });
+
   it("deep-links settings connections and tracking sections", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const panel = app.navPanels[0]!;

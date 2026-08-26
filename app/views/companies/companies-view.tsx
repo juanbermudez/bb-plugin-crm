@@ -1159,7 +1159,7 @@ export interface CompaniesViewProps {
   onRecordIdChange?: (id: string | null) => void;
   /** Reflects the active record drawer tab back into the BB panel sub-path. */
   initialTab?: string | null;
-  onTabChange?: (tab: CompanyTab) => void;
+  onTabChange?: (tab: CompanyTab, recordId: string) => void;
 }
 
 export function CompaniesView({
@@ -2275,7 +2275,7 @@ export function CompaniesView({
                   className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-selected:border-foreground aria-selected:text-foreground"
                   onClick={() => {
                     setRecordTab(tab.id);
-                    onTabChange?.(tab.id);
+                    onTabChange?.(tab.id, record.id);
                   }}
                 >
                   {tab.label}

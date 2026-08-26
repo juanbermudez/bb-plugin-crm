@@ -180,12 +180,11 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                 subPath: crmRouteToSubPath({ kind: "companies", recordId }),
               });
             }}
-            onTabChange={(tab) => {
-              if (route.recordId === null) return;
+            onTabChange={(tab, recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({
                   kind: "companies",
-                  recordId: route.recordId,
+                  recordId,
                   tab,
                 }),
               });
@@ -200,12 +199,11 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                 subPath: crmRouteToSubPath({ kind: "contacts", recordId }),
               });
             }}
-            onTabChange={(tab) => {
-              if (route.recordId === null) return;
+            onTabChange={(tab, recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({
                   kind: "contacts",
-                  recordId: route.recordId,
+                  recordId,
                   tab,
                 }),
               });
@@ -220,12 +218,11 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                 subPath: crmRouteToSubPath({ kind: "deals", recordId }),
               });
             }}
-            onTabChange={(tab) => {
-              if (route.recordId === null) return;
+            onTabChange={(tab, recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({
                   kind: "deals",
-                  recordId: route.recordId,
+                  recordId,
                   tab,
                 }),
               });
@@ -257,12 +254,11 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                 subPath: crmRouteToSubPath({ kind: "agents", recordId }),
               });
             }}
-            onTabChange={(tab) => {
-              if (route.recordId === null) return;
+            onTabChange={(tab, recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({
                   kind: "agents",
-                  recordId: route.recordId,
+                  recordId,
                   tab,
                 }),
               });

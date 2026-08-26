@@ -47,7 +47,7 @@ describe("global CRM search", () => {
     );
   });
 
-  it("opens with Cmd/Ctrl-K and supports arrow-and-enter selection", async () => {
+  it("opens with Cmd/Ctrl-Shift-K and supports arrow-and-enter selection", async () => {
     const call = vi.fn(async (method: string) => {
       if (method === "contacts_list") {
         return {
@@ -64,7 +64,7 @@ describe("global CRM search", () => {
       />,
     );
 
-    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.keyDown(window, { key: "k", metaKey: true, shiftKey: true });
     const search = screen.getByRole("searchbox", { name: "Search CRM" });
     expect(document.activeElement).toBe(search);
     fireEvent.change(search, { target: { value: "Ada" } });

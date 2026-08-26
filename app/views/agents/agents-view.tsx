@@ -1552,7 +1552,7 @@ function AgentDetailWorkspace({
   rpc: AgentsRpcClient;
   onChanged: () => Promise<void>;
   initialTab?: string | null;
-  onTabChange?: (tab: AgentTab) => void;
+  onTabChange?: (tab: AgentTab, recordId: string) => void;
 }) {
   const [tab, setTab] = useState<AgentTab>(() => normalizeAgentTab(initialTab));
   const [versionToEdit, setVersionToEdit] = useState<string | null>(null);
@@ -1565,7 +1565,7 @@ function AgentDetailWorkspace({
 
   const changeTab = (next: AgentTab) => {
     setTab(next);
-    onTabChange?.(next);
+    onTabChange?.(next, agent.id);
   };
 
   return (
@@ -1687,7 +1687,7 @@ export interface AgentsViewProps {
   /** Called whenever the selected agent changes so the route stays shareable. */
   onRecordIdChange?: (recordId: string | null) => void;
   /** Called when the selected agent detail tab changes. */
-  onTabChange?: (tab: AgentTab) => void;
+  onTabChange?: (tab: AgentTab, recordId: string) => void;
   /** Narrow RPC client override used by previews and focused tests. */
   rpcClient?: AgentsRpcClient;
 }

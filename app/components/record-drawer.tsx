@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog.js";
 import { Icon } from "../../components/ui/icon.js";
+import { useIsCompactViewport } from "../../components/ui/hooks/use-compact-viewport.js";
 import { cn } from "../../lib/utils.js";
 
 export interface RecordDrawerProps {
@@ -47,11 +48,30 @@ export function RecordDrawer({
   bodyClassName,
   footerClassName,
 }: RecordDrawerProps) {
+  const isCompactViewport = useIsCompactViewport();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        style={
+          isCompactViewport
+            ? undefined
+            : {
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: "auto",
+                height: "100dvh",
+                maxHeight: "100dvh",
+                width: "min(56rem, calc(100vw - 1.5rem))",
+                translate: "0 0",
+                overflow: "hidden",
+              }
+        }
         className={cn(
-          "w-full max-w-none gap-0 p-0 sm:inset-y-0 sm:right-0 sm:bottom-0 sm:left-auto sm:top-0 sm:h-full sm:max-h-none sm:w-[min(56rem,calc(100vw-1.5rem))] sm:translate-x-0 sm:translate-y-0 sm:overflow-hidden sm:rounded-xl sm:rounded-r-none sm:border-l sm:border-t-0 sm:border-r-0 sm:border-b-0 sm:p-0",
+          "w-full max-w-none gap-0 p-0",
+          !isCompactViewport &&
+            "rounded-xl rounded-r-none border-l border-t-0 border-r-0 border-b-0",
           className,
         )}
       >

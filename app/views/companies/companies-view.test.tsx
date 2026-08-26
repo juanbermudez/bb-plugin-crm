@@ -107,7 +107,7 @@ describe("CompaniesView", () => {
       "true",
     );
     fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
-    expect(onTabChange).toHaveBeenCalledWith("deals");
+    expect(onTabChange).toHaveBeenCalledWith("deals", company.id);
   });
 
   it("renders source company social links in the record overview", async () => {

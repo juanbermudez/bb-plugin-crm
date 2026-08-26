@@ -111,7 +111,11 @@ describe("CRM frontend foundation components", () => {
       </RecordDrawer>,
     );
 
-    expect(screen.getByRole("dialog", { name: "Acme Corporation" })).toBeDefined();
+    const drawer = screen.getByRole("dialog", { name: "Acme Corporation" });
+    expect(drawer).toBeDefined();
+    expect(drawer.style.height).toBe("100dvh");
+    expect(drawer.style.maxHeight).toBe("100dvh");
+    expect(drawer.style.overflow).toBe("hidden");
     expect(screen.getByText("Company details")).toBeDefined();
     expect(screen.getByText("Primary contact")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Close record drawer" }));

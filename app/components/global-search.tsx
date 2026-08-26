@@ -115,7 +115,12 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
 
   useEffect(() => {
     const openQuickSwitcher = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
+      if (
+        event.key.toLowerCase() !== "k" ||
+        (!event.metaKey && !event.ctrlKey) ||
+        !event.shiftKey ||
+        event.altKey
+      ) return;
       event.preventDefault();
       setOpen(true);
       inputRef.current?.focus();
