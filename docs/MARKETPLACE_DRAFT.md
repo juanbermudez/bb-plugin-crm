@@ -86,8 +86,10 @@ approved release tag.
 
 CRM brings the CRM workspace into BB as a native extension for managing
 companies, contacts, deals, activities, saved views, custom fields, currency
-reporting, agent definitions/runs, connection health, and privacy-safe site
-tracking. The current build includes persisted onboarding/columns, linked
+reporting, agent definitions/runs, live provider sync, and privacy-safe site
+tracking. The current build includes bounded Gmail/Calendar and Outlook mail
+sync, normalized timeline details, Slack inventory/matching/channel actions
+and agent delivery, persisted onboarding/columns, linked
 record Agent threads, evidence review, provider-gated enrichment/research,
 transactional CRM event triggers, signed external webhook triggers, fixed
 tracking loader/collector routes, inline record editing, contact portrait URL
@@ -113,7 +115,7 @@ operator-confirmed site authority.
 ## Plugin checks
 
 - Integrated release-candidate checks in the local working tree (schema
-  version 11): `npm test` passed with 56 test files / 291 tests;
+  version 12): `npm test` passed with 65 test files / 356 tests;
   `npm run typecheck` passed; current-BB `bb plugin types --check .` passed;
   `npm run build` passed and emitted identity-checked metadata; and `git diff
   --check` passed. Development declarations use current published SDK `0.4.22`;
@@ -125,9 +127,10 @@ operator-confirmed site authority.
 - A managed Git install and packaged-BB `0.39.0` panel smoke passed from the
   corrected exact public release-candidate commit after the integrated parity
   work. The latest exact-public-SHA rehearsal used
-  `bc2c24ce72c947fd919d6ccd7c8d56ec13a803d6`, reported schema 11, clean
-  SQLite/FK health, both background services running, app bundle hash
-  `dd8f433df71f490b`, and zero browser-console errors or warnings.
+  `3d28e02ee762b916731a33b0d5613206257802fa`, reported schema 12, clean
+  SQLite/FK health, all three background services running, and app bundle hash
+  `2d361e8a07a3c284`. The connections deep link and immutable bundle returned
+  HTTP 200; the prior full browser campaign reported zero console errors/warnings.
   A public-tag install is still required after approval; none is claimed yet.
 - The managed smoke covered Dashboard Me (installation-local owner)/Everyone,
   saved defaults, advanced Companies facets/selection, Agent creation,
@@ -175,20 +178,20 @@ marketplace pass is claimed before that tag.
 ## Permissions and security
 
 - The plugin runs as full-trust BB extension code.
-- CRM records, agent state, connection metadata/health, and tracking data are
+- CRM records, agent state, normalized provider data, connection metadata/health, and tracking data are
   stored in the BB plugin SQLite database. Small plugin settings hold the
-  workspace name, reporting currency, and optional research-agent id; provider
-  credentials remain in that agent's configured tools. No broad filesystem API
-  or direct provider credential store is bundled.
+  workspace name, reporting currency, optional research-agent id, and
+  server-only provider secrets. Tokens never enter connection JSON, cursors,
+  SQLite, or browser RPC payloads. No broad filesystem API is bundled.
 - BB threads/projects, realtime invalidation, background services, settings,
   and the plugin CLI are the host surfaces used by the implementation.
 - Agent attachments are bounded, copied through resolved BB project APIs, and
   never accept an arbitrary local path. Due CRM task dispatch is installation-
   local, opt-in, lease-fenced, and does not create or claim host-visible BB
   Tasks.
-- Provider authorization and OAuth credentials remain host-managed and are not
-  bundled. Live mail/calendar/Slack sync additionally requires externally
-  supplied provider/agent-tool credentials and host authorization. Tracking
+- Live provider sync is bundled. OAuth/device callbacks and refresh-token
+  writes require a host credential relay or operator-managed BB secret
+  rotation because the public settings API is read-only. Tracking
   secrets are displayed once at provisioning and are not returned by list/read
   views; optional integrations fail closed and secrets are not returned to the
   frontend.

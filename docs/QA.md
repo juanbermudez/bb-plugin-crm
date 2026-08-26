@@ -94,6 +94,16 @@ rather than this packaged evidence file. A public `v0.1.0` tag install remains
 approval-gated and must still be checked after the tag is created. No secret,
 one-time credential, or token value is recorded here.
 
+The latest exact-public-SHA managed install resolved
+`3d28e02ee762b916731a33b0d5613206257802fa` in packaged BB `0.39.0`.
+The plugin loaded with app hash `2d361e8a07a3c284`, compatible SDK `0.4.8`,
+schema `12/12`, SQLite integrity `ok`, zero foreign-key violations, and all
+three services (`crm-agent-dispatcher`, `crm-archive-retention`, and
+`crm-provider-sync`) running. `bb crm status --json` and `bb crm doctor --json`
+passed. The Connections deep link and immutable app bundle returned HTTP 200,
+and server logs showed a clean CRM load. Public GitHub CI passed at
+https://github.com/juanbermudez/bb-plugin-crm/actions/runs/32973871151.
+
 The prior schema-11 release-candidate smoke loaded exact public implementation
 and package commit `bc2c24ce72c947fd919d6ccd7c8d56ec13a803d6`; both
 `crm-agent-dispatcher` and `crm-archive-retention` background services were
