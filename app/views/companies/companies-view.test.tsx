@@ -78,7 +78,7 @@ describe("CompaniesView", () => {
       screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected"),
     ).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
-    expect(screen.getByText("Contacts is staged next")).toBeDefined();
+    expect(screen.getByText("No contacts linked")).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith("companies_get", { id: "cmp_acme" });
   });
 

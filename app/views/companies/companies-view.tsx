@@ -289,7 +289,62 @@ function CompanyOverview({
   );
 }
 
-function StagedCompanyTab({ tab }: { tab: Exclude<CompanyTab, "overview"> }) {
+function CompanyContacts({ company }: { company: Company }) {
+  const contacts = company.contacts ?? [];
+  if (contacts.length === 0) {
+    return (
+      <EmptyState
+        icon="UserRound"
+        title="No contacts linked"
+        description="Contacts assigned to this company will appear here."
+        className="min-h-56 border-0 bg-transparent"
+      />
+    );
+  }
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company contacts">
+      {contacts.map((contact) => (
+        <li key={contact.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div>
+            <p className="text-sm font-medium">
+              {[contact.firstName, contact.lastName].filter(Boolean).join(" ")}
+            </p>
+            <p className="text-xs text-muted-foreground">{displayValue(contact.title)}</p>
+          </div>
+          <p className="text-sm text-muted-foreground sm:text-right">
+            {displayValue(contact.email)}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CompanyDeals({ company }: { company: Company }) {
+  const deals = company.deals ?? [];
+  if (deals.length === 0) {
+    return (
+      <EmptyState
+        icon="Target"
+        title="No deals linked"
+        description="Deals for this company will appear here."
+        className="min-h-56 border-0 bg-transparent"
+      />
+    );
+  }
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company deals">
+      {deals.map((deal) => (
+        <li key={deal.id} className="px-4 py-3">
+          <p className="text-sm font-medium">{deal.name}</p>
+          <p className="text-xs text-muted-foreground">{deal.id}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StagedCompanyTab({ tab }: { tab: "agent" }) {
   const label = COMPANY_TABS.find((item) => item.id === tab)?.label ?? tab;
   return (
     <EmptyState
@@ -738,6 +793,10 @@ export function CompaniesView({
                 onRestore={() => void runArchiveMutation("companies_restore")}
                 onPurge={() => void purgeRecord()}
               />
+            ) : recordTab === "contacts" ? (
+              <CompanyContacts company={record} />
+            ) : recordTab === "deals" ? (
+              <CompanyDeals company={record} />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
                 anchor={{ companyId: record.id }}
