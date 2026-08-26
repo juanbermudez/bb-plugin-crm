@@ -296,4 +296,63 @@ describe("CRM plugin foundation", () => {
 
     await harness.lifecycle.dispose();
   });
+
+  it("composes a source-shaped timeline and completes assigned tasks", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Timeline Co",
+    })) as { id: string };
+    await harness.behavior.callRpc("activity_create", {
+      type: "NOTE",
+      companyId: company.id,
+      createdById: "local_user",
+      body: "Discovery call captured",
+      occurredAt: "2026-08-25T13:00:00.000Z",
+    });
+    const task = (await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      companyId: company.id,
+      createdById: "local_user",
+      subject: "Send proposal",
+      dueAt: "2026-08-26T13:00:00.000Z",
+      occurredAt: "2026-08-25T14:00:00.000Z",
+    })) as { id: string };
+
+    await expect(
+      harness.behavior.callRpc("activity_timeline", {
+        companyId: company.id,
+        filter: "all",
+      }),
+    ).resolves.toMatchObject({
+      entries: [
+        expect.objectContaining({ id: task.id, type: "TASK" }),
+        expect.objectContaining({ type: "NOTE", body: "Discovery call captured" }),
+      ],
+      nextCursor: null,
+    });
+    await expect(
+      harness.behavior.callRpc("activity_timelineCounts", { companyId: company.id }),
+    ).resolves.toMatchObject({ all: 2, notes: 1, upcoming: 1, done: 0 });
+    await expect(
+      harness.behavior.callRpc("activity_myTasks", {
+        actorId: "local_user",
+        window: "all",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: task.id })]);
+    await expect(
+      harness.behavior.callRpc("activity_complete", { id: task.id }),
+    ).resolves.toMatchObject({ id: task.id, completedAt: expect.any(String) });
+    await expect(
+      harness.behavior.callRpc("activity_myTasks", {
+        actorId: "local_user",
+        window: "all",
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      harness.behavior.callRpc("companies_get", { id: company.id }),
+    ).resolves.toMatchObject({ lastActivityAt: expect.any(String) });
+
+    await harness.lifecycle.dispose();
+  });
 });

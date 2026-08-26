@@ -2,6 +2,16 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   archiveInputSchema,
+  activityCompleteInputSchema,
+  activityCreateInputSchema,
+  activityEntrySchema,
+  activityGetInputSchema,
+  activityListInputSchema,
+  activityListOutputSchema,
+  myTasksInputSchema,
+  myTasksOutputSchema,
+  timelineCountsInputSchema,
+  timelineCountsOutputSchema,
   bulkIdsInputSchema,
   bulkOwnerInputSchema,
   bulkStageInputSchema,
@@ -222,5 +232,29 @@ export const rpcContract = defineRpcContract({
   currency_deals_rerateAll: {
     input: currencyDealRerateAllInputSchema,
     output: rerateSummarySchema,
+  },
+  activity_timeline: {
+    input: activityListInputSchema,
+    output: activityListOutputSchema,
+  },
+  activity_timelineCounts: {
+    input: timelineCountsInputSchema,
+    output: timelineCountsOutputSchema,
+  },
+  activity_myTasks: {
+    input: myTasksInputSchema,
+    output: myTasksOutputSchema,
+  },
+  activity_get: {
+    input: activityGetInputSchema,
+    output: activityEntrySchema,
+  },
+  activity_create: {
+    input: activityCreateInputSchema,
+    output: activityEntrySchema,
+  },
+  activity_complete: {
+    input: activityCompleteInputSchema,
+    output: activityEntrySchema,
   },
 });

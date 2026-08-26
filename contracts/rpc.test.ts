@@ -48,6 +48,12 @@ describe("CRM RPC contract", () => {
       "currency_rates_removeManual",
       "currency_deals_rerate",
       "currency_deals_rerateAll",
+      "activity_timeline",
+      "activity_timelineCounts",
+      "activity_myTasks",
+      "activity_get",
+      "activity_create",
+      "activity_complete",
     ]);
   });
 
@@ -155,5 +161,54 @@ describe("CRM RPC contract", () => {
         now: new Date(),
       }).success,
     ).toBe(false);
+  });
+
+  it("keeps activity timeline, composer, and task lifecycle inputs strict", () => {
+    expect(
+      rpcContract.activity_timeline.input.safeParse({
+        companyId: "company-1",
+        filter: "notes",
+        cursor: "cursor-1",
+        limit: 30,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.activity_timeline.input.safeParse({
+        filter: "notes",
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.activity_create.input.safeParse({
+        type: "NOTE",
+        companyId: "company-1",
+        createdById: "local-user",
+        body: "Follow up",
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.activity_create.input.safeParse({
+        type: "TASK",
+        contactId: "contact-1",
+        createdById: "local-user",
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.activity_timelineCounts.input.safeParse({
+        dealId: "deal-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.activity_complete.input.safeParse({
+        id: "activity-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.activity_myTasks.input.safeParse({
+        actorId: "local-user",
+        window: "overdue",
+        limit: 25,
+      }).success,
+    ).toBe(true);
   });
 });

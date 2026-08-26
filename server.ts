@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   currencyCodeSchema,
+  type ActivityEntry as ActivityOutput,
   type CurrencyCode,
   type DealStage,
   type Company as CompanyOutput,
@@ -28,6 +29,10 @@ import {
 } from "./db/deals.js";
 import { createCurrencyStore } from "./db/currency.js";
 import { CRM_SCHEMA_VERSION, initializeSchema } from "./db/schema.js";
+import {
+  createActivityStore,
+  type Activity as StoredActivity,
+} from "./db/activities.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
 
@@ -69,6 +74,7 @@ export default async function plugin(bb: BbPluginApi) {
   const contacts = createContactStore(db);
   const deals = createDealStore(db);
   const currency = createCurrencyStore(db);
+  const activities = createActivityStore(db);
 
   function companyOutput(company: StoredCompany): CompanyOutput {
     const counts = db
@@ -128,7 +134,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   function changed(
-    entity: "company" | "contact" | "deal" | "currency",
+    entity: "company" | "contact" | "deal" | "currency" | "activity",
     action: string,
     id: string,
   ): void {
@@ -317,6 +323,47 @@ export default async function plugin(bb: BbPluginApi) {
       facets[name] = Object.fromEntries(rows.map((row) => [row.value, row.count]));
     }
     return facets;
+  }
+
+  function activityOutput(activity: StoredActivity): ActivityOutput {
+    return {
+      id: activity.id,
+      type: activity.type,
+      subject: activity.subject,
+      body: activity.body,
+      occurredAt: activity.occurredAt,
+      dueAt: activity.dueAt,
+      completedAt: activity.completedAt,
+      meta: activity.meta,
+      createdAt: activity.createdAt,
+      createdBy: {
+        id: activity.createdById,
+        name: activity.createdById,
+        email: "crm-user@bb.invalid",
+        image: null,
+      },
+      company: activity.company,
+      contact: activity.contact,
+      deal: activity.deal,
+      emailThread: activity.emailThread,
+      calendarEvent: activity.calendarEvent,
+    };
+  }
+
+  function stampActivity(activity: StoredActivity): void {
+    const stampedAt = activity.createdAt;
+    if (activity.companyId) {
+      db.prepare("UPDATE companies SET last_activity_at = ? WHERE id = ?")
+        .run(stampedAt, activity.companyId);
+    }
+    if (activity.contactId) {
+      db.prepare("UPDATE contacts SET last_activity_at = ? WHERE id = ?")
+        .run(stampedAt, activity.contactId);
+    }
+    if (activity.dealId) {
+      db.prepare("UPDATE deals SET last_activity_at = ? WHERE id = ?")
+        .run(stampedAt, activity.dealId);
+    }
   }
 
   bb.rpc.register(rpcContract, {
@@ -627,6 +674,33 @@ export default async function plugin(bb: BbPluginApi) {
         ...summary,
         missing: summary.missing.map((code) => currencyCodeSchema.parse(code)),
       };
+    },
+    activity_timeline(input) {
+      const page = activities.list(input);
+      return {
+        entries: page.entries.map(activityOutput),
+        nextCursor: page.nextCursor,
+      };
+    },
+    activity_timelineCounts(input) {
+      return activities.counts(input);
+    },
+    activity_myTasks({ actorId, window, limit }) {
+      return activities.myTasks({ actorId, window, limit }).map(activityOutput);
+    },
+    activity_get({ id }) {
+      return activityOutput(activities.getRequired(id));
+    },
+    activity_create(input) {
+      const activity = activities.create(input, input.createdById);
+      stampActivity(activity);
+      changed("activity", "created", activity.id);
+      return activityOutput(activity);
+    },
+    activity_complete({ id, completed }) {
+      const activity = activities.complete(id, completed);
+      changed("activity", completed ? "completed" : "reopened", activity.id);
+      return activityOutput(activity);
     },
   });
 

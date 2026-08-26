@@ -148,6 +148,7 @@ export const TIMELINE_FILTERS = [
   "email",
   "meetings",
 ] as const;
+export const TASK_WINDOWS = ["overdue", "upcoming", "all"] as const;
 export const FACT_DECISIONS = ["accept", "dismiss"] as const;
 
 /** The supported CRM currency catalog from the source application. */
@@ -183,6 +184,7 @@ export const closingWindowSchema = z.enum(CLOSING_WINDOWS);
 export const dealListStatusSchema = z.enum(DEAL_LIST_STATUSES);
 export const recordKindSchema = z.enum(RECORD_KINDS);
 export const timelineFilterSchema = z.enum(TIMELINE_FILTERS);
+export const taskWindowSchema = z.enum(TASK_WINDOWS);
 export const factDecisionSchema = z.enum(FACT_DECISIONS);
 export const currencyCodeSchema = z.enum(CURRENCY_CODES);
 
@@ -206,6 +208,7 @@ export type ClosingWindow = z.infer<typeof closingWindowSchema>;
 export type DealListStatus = z.infer<typeof dealListStatusSchema>;
 export type RecordKind = z.infer<typeof recordKindSchema>;
 export type TimelineFilter = z.infer<typeof timelineFilterSchema>;
+export type TaskWindow = z.infer<typeof taskWindowSchema>;
 export type FactDecision = z.infer<typeof factDecisionSchema>;
 export type CurrencyCode = z.infer<typeof currencyCodeSchema>;
 
@@ -1145,6 +1148,7 @@ export const activityCreateInputSchema = z
     companyId: idSchema.optional(),
     contactId: idSchema.optional(),
     dealId: idSchema.optional(),
+    createdById: idSchema,
     meta: activityMetaSchema.optional(),
   })
   .strict()
@@ -1262,12 +1266,72 @@ export const timelineOutputSchema = z
   .strict();
 export type TimelineOutput = z.infer<typeof timelineOutputSchema>;
 
+export const timelineCountsInputSchema = z
+  .object({
+    companyId: idSchema.optional(),
+    contactId: idSchema.optional(),
+    dealId: idSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) => Boolean(value.companyId || value.contactId || value.dealId),
+    "A timeline needs a company, contact, or deal.",
+  );
+export const timelineCountsOutputSchema = z
+  .object({
+    all: z.number().int().finite().min(0),
+    notes: z.number().int().finite().min(0),
+    upcoming: z.number().int().finite().min(0),
+    done: z.number().int().finite().min(0),
+    email: z.number().int().finite().min(0),
+    meetings: z.number().int().finite().min(0),
+  })
+  .strict();
+export type TimelineCountsInput = z.infer<typeof timelineCountsInputSchema>;
+export type TimelineCountsOutput = z.infer<typeof timelineCountsOutputSchema>;
+
+export const myTasksInputSchema = z
+  .object({
+    window: taskWindowSchema.default("all"),
+    limit: z.number().int().finite().min(1).max(100).default(25),
+    actorId: idSchema,
+  })
+  .strict();
+export const myTasksOutputSchema = z.array(activityEntrySchema);
+export type MyTasksInput = z.infer<typeof myTasksInputSchema>;
+export type MyTasksOutput = z.infer<typeof myTasksOutputSchema>;
+
 export const completeActivityInputSchema = z
   .object({ id: idSchema, completed: z.boolean().default(true) })
   .strict();
 export type CompleteActivityInput = z.infer<
   typeof completeActivityInputSchema
 >;
+
+/* Activity lifecycle aliases keep each flat RPC operation explicit while
+ * sharing the same strict serialized id shape. */
+export const activityGetInputSchema = recordIdInputSchema;
+export const activityCompleteInputSchema = completeActivityInputSchema;
+export const activityReopenInputSchema = z
+  .object({ id: idSchema })
+  .strict();
+export const activityArchiveInputSchema = archiveInputSchema;
+export const activityRestoreInputSchema = restoreInputSchema;
+export const activityPurgeInputSchema = purgeInputSchema;
+export type ActivityGetInput = z.infer<typeof activityGetInputSchema>;
+export type ActivityCompleteInput = z.infer<
+  typeof activityCompleteInputSchema
+>;
+export type ActivityReopenInput = z.infer<typeof activityReopenInputSchema>;
+export type ActivityArchiveInput = z.infer<typeof activityArchiveInputSchema>;
+export type ActivityRestoreInput = z.infer<typeof activityRestoreInputSchema>;
+export type ActivityPurgeInput = z.infer<typeof activityPurgeInputSchema>;
+
+export const activityListInputSchema = timelineInputSchema;
+export const activityListOutputSchema = timelineOutputSchema;
+export const activityOutputSchema = activityEntrySchema;
+export type ActivityListInput = TimelineInput;
+export type ActivityListOutput = TimelineOutput;
 
 export const savedViewFiltersSchema = z
   .object({
