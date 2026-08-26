@@ -83,6 +83,12 @@ const COMPANY_TABS: ReadonlyArray<{ id: CompanyTab; label: string }> = [
   { id: "agent", label: "Agent" },
 ];
 
+function companyTabFromRoute(value: string | null | undefined): CompanyTab {
+  return COMPANY_TABS.some((tab) => tab.id === value)
+    ? (value as CompanyTab)
+    : "overview";
+}
+
 const COMPANY_COLUMNS = [
   { id: "company", label: "Company", className: "min-w-52", required: true },
   { id: "domain", label: "Domain", className: "min-w-40" },
@@ -1151,6 +1157,9 @@ export interface CompaniesViewProps {
   initialRecordId?: string | null;
   /** Reflects record drawer changes back into the BB panel sub-path. */
   onRecordIdChange?: (id: string | null) => void;
+  /** Reflects the active record drawer tab back into the BB panel sub-path. */
+  initialTab?: string | null;
+  onTabChange?: (tab: CompanyTab) => void;
 }
 
 export function CompaniesView({
@@ -1158,6 +1167,8 @@ export function CompaniesView({
   savedViewsRpcClient,
   initialRecordId = null,
   onRecordIdChange,
+  initialTab,
+  onTabChange,
 }: CompaniesViewProps) {
   const contextRpc = useCompaniesRpc();
   const rpc = rpcClient ?? contextRpc;
@@ -1320,8 +1331,8 @@ export function CompaniesView({
   }, [initialRecordId]);
 
   useEffect(() => {
-    setRecordTab("overview");
-  }, [recordId]);
+    setRecordTab(companyTabFromRoute(initialTab));
+  }, [initialTab, recordId]);
 
   useEffect(() => {
     if (recordId === null) return;
@@ -2262,7 +2273,10 @@ export function CompaniesView({
                   role="tab"
                   aria-selected={recordTab === tab.id}
                   className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-selected:border-foreground aria-selected:text-foreground"
-                  onClick={() => setRecordTab(tab.id)}
+                  onClick={() => {
+                    setRecordTab(tab.id);
+                    onTabChange?.(tab.id);
+                  }}
                 >
                   {tab.label}
                 </button>

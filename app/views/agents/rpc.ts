@@ -13,6 +13,7 @@ import type {
   AgentListInput,
   AgentListItem,
   AgentRunDetail,
+  AgentThreadLink,
   AgentTrigger,
   AgentVersion,
 } from "../../../contracts/agents.js";
@@ -50,6 +51,7 @@ export interface AgentsRpcClient {
         modelContextWindowTokens: number;
         sandboxPolicy: Record<string, unknown>;
         status?: "DRAFT";
+        sourceConversationId?: string | null;
       };
     },
   ): Promise<AgentVersion>;
@@ -112,6 +114,18 @@ export interface AgentsRpcClient {
   call(method: "agents_runs_fail", input: { id: string }): Promise<AgentRunDetail>;
   call(method: "agents_runs_cancel", input: { id: string }): Promise<AgentRunDetail & { cancelled: boolean }>;
   call(method: "agents_runs_retry", input: { id: string }): Promise<AgentRunDetail>;
+  call(
+    method: "agents_threads_list",
+    input: { agentId: string; kind?: "BUILDER"; limit: number; offset: number },
+  ): Promise<AgentThreadLink[]>;
+  call(
+    method: "agents_threads_createBuilder",
+    input: { agentId: string; versionId?: string; newConversation?: boolean },
+  ): Promise<AgentThreadLink>;
+  call(
+    method: "agents_threads_deleteBuilder",
+    input: { agentId: string; id: string },
+  ): Promise<{ id: string }>;
   call(
     method: "agents_attachments_upload",
     input: AgentAttachmentUploadInput,

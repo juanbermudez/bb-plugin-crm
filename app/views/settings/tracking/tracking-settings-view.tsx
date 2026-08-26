@@ -18,7 +18,7 @@ import {
 } from "../../../../components/ui/dialog.js";
 import { Icon } from "../../../../components/ui/icon.js";
 import { Input } from "../../../../components/ui/input.js";
-import { EmptyState, PageHeader, TableShell } from "../../../components/index.js";
+import { AlertDialog, EmptyState, PageHeader, TableShell } from "../../../components/index.js";
 import type {
   TokenScope,
   TrackingAggregate,
@@ -64,6 +64,11 @@ type PruneResult = {
   aggregatesDeleted: number;
   sitesProcessed: number;
 };
+
+type TrackingConfirmAction =
+  | { kind: "rotate-site"; site: TrackingSite }
+  | { kind: "revoke-token"; token: TrackingToken }
+  | { kind: "prune" };
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -433,6 +438,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
   const [aggregateError, setAggregateError] = useState<string | null>(null);
   const [rollupResult, setRollupResult] = useState<RollupResult | null>(null);
   const [pruneResult, setPruneResult] = useState<PruneResult | null>(null);
+  const [confirmAction, setConfirmAction] = useState<TrackingConfirmAction | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -530,8 +536,11 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
     }
   }, [presentOneTimeToken, rpc, siteForm, updateSite]);
 
-  const runSiteAction = useCallback(async (site: TrackingSite, action: "verify" | "pause" | "resume" | "rotate" | "token") => {
-    if (action === "rotate" && !window.confirm(`Rotate the site ID and token for ${site.name}? Existing tracking tokens will stop working.`)) return;
+  const runSiteAction = useCallback(async (
+    site: TrackingSite,
+    action: "verify" | "pause" | "resume" | "rotate" | "token",
+    options: { rethrow?: boolean } = {},
+  ) => {
     const key = `${action}:${site.id}`;
     setBusyAction(key);
     setError(null);
@@ -554,6 +563,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setError(`${site.name}: ${errorMessage(cause)}`);
+      if (options.rethrow) throw cause;
     } finally {
       setBusyAction(null);
     }
@@ -579,8 +589,11 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
     setCopyStatus(null);
   }, []);
 
-  const revokeToken = useCallback(async (token: TrackingToken) => {
-    if (token.revokedAt || !window.confirm(`Revoke the ${token.scope.toLowerCase()} token ${token.id}?`)) return;
+  const revokeToken = useCallback(async (
+    token: TrackingToken,
+    options: { rethrow?: boolean } = {},
+  ) => {
+    if (token.revokedAt) return;
     setBusyAction(`revoke:${token.id}`);
     setError(null);
     try {
@@ -589,13 +602,16 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setError(`Token ${token.id}: ${errorMessage(cause)}`);
+      if (options.rethrow) throw cause;
     } finally {
       setBusyAction(null);
     }
   }, [rpc]);
 
-  const runAggregateAction = useCallback(async (action: "rollup" | "prune") => {
-    if (action === "prune" && !window.confirm("Prune tracking events and aggregates outside each site's retention window?")) return;
+  const runAggregateAction = useCallback(async (
+    action: "rollup" | "prune",
+    options: { rethrow?: boolean } = {},
+  ) => {
     setAggregateAction(action);
     setAggregateError(null);
     if (action === "rollup") setRollupResult(null);
@@ -611,6 +627,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setAggregateError(errorMessage(cause));
+      if (options.rethrow) throw cause;
     } finally {
       setAggregateAction(null);
     }
@@ -681,7 +698,11 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
                       key={site.id}
                       site={site}
                       busyAction={busyAction?.endsWith(`:${site.id}`) === true ? busyAction : null}
-                      onAction={(value, action) => void runSiteAction(value, action)}
+                      onAction={(value, action) =>
+                        action === "rotate"
+                          ? setConfirmAction({ kind: "rotate-site", site: value })
+                          : void runSiteAction(value, action)
+                      }
                     />
                   ))}
                 </div>
@@ -712,7 +733,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
                     </td>
                     <td className="px-3 py-3">
                       {token.revokedAt ? <span className="text-xs text-muted-foreground">No actions</span> : (
-                        <Button type="button" variant="ghost" size="sm" onClick={() => void revokeToken(token)} disabled={busyAction !== null} aria-label={`Revoke token ${token.id}`}>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmAction({ kind: "revoke-token", token })} disabled={busyAction !== null} aria-label={`Revoke token ${token.id}`}>
                           <Icon name="Trash2" aria-hidden="true" />
                           Revoke
                         </Button>
@@ -734,7 +755,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
                     <Icon name="ChartColumn" aria-hidden="true" />
                     {aggregateAction === "rollup" ? "Rolling up…" : "Roll up events"}
                   </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => void runAggregateAction("prune")} disabled={aggregateAction !== null}>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmAction({ kind: "prune" })} disabled={aggregateAction !== null}>
                     <Icon name="Trash2" aria-hidden="true" />
                     {aggregateAction === "prune" ? "Pruning…" : "Prune retained data"}
                   </Button>
@@ -779,6 +800,45 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
         onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateError(null); }}
         onChange={setSiteForm}
         onSubmit={(event) => void createSite(event)}
+      />
+
+      <AlertDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+        title={
+          confirmAction?.kind === "rotate-site"
+            ? `Rotate the site ID and token for ${confirmAction.site.name}?`
+            : confirmAction?.kind === "revoke-token"
+              ? `Revoke the ${confirmAction.token.scope.toLowerCase()} token ${confirmAction.token.id}?`
+              : "Prune retained tracking data?"
+        }
+        description={
+          confirmAction?.kind === "rotate-site"
+            ? "Existing tracking tokens for this site will stop working."
+            : confirmAction?.kind === "revoke-token"
+              ? "This token will stop authenticating tracking requests immediately."
+              : "Tracking events and aggregates outside each site's retention window will be deleted."
+        }
+        confirmLabel={
+          confirmAction?.kind === "rotate-site"
+            ? "Rotate credentials"
+            : confirmAction?.kind === "revoke-token"
+              ? "Revoke token"
+              : "Prune data"
+        }
+        destructive
+        disabled={busyAction !== null || aggregateAction !== null}
+        onConfirm={async () => {
+          if (confirmAction?.kind === "rotate-site") {
+            await runSiteAction(confirmAction.site, "rotate", { rethrow: true });
+          } else if (confirmAction?.kind === "revoke-token") {
+            await revokeToken(confirmAction.token, { rethrow: true });
+          } else if (confirmAction?.kind === "prune") {
+            await runAggregateAction("prune", { rethrow: true });
+          }
+        }}
       />
     </div>
   );

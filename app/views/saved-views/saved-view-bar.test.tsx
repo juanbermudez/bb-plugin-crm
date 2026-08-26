@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -144,7 +144,6 @@ describe("SavedViewBar", () => {
   it("sets a default view, resets to the default state, and deletes owned views", async () => {
     const defaulted: SavedView = { ...pipelineView, isDefault: true };
     const applied = vi.fn();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const rpc = makeRpc(async (method) => {
       if (method === "savedViews_list") return [pipelineView];
       if (method === "savedViews_setDefault") return defaulted;
@@ -176,12 +175,15 @@ describe("SavedViewBar", () => {
 
     fireEvent.change(chooser, { target: { value: pipelineView.id } });
     fireEvent.click(screen.getByRole("button", { name: "Delete view" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: /Delete the saved view “Pipeline”/,
+    });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Delete view" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("savedViews_delete", {
         id: pipelineView.id,
       }),
     );
-    expect(confirm).toHaveBeenCalledWith("Delete the saved view “Pipeline”?");
   });
 
   it("applies the persisted default view when the workspace loads", async () => {

@@ -90,6 +90,26 @@ describe("CompaniesView", () => {
     expect(rpc.call).toHaveBeenCalledWith("companies_get", { id: "cmp_acme" });
   });
 
+  it("restores a deep-linked drawer tab and reports tab changes", async () => {
+    const onTabChange = vi.fn();
+    const rpc = makeRpc();
+    render(
+      <CompaniesView
+        rpcClient={rpc}
+        initialRecordId={company.id}
+        initialTab="contacts"
+        onTabChange={onTabChange}
+      />,
+    );
+
+    const drawer = await screen.findByRole("dialog", { name: "Acme Corporation" });
+    expect(within(drawer).getByRole("tab", { name: "Contacts" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
+    expect(onTabChange).toHaveBeenCalledWith("deals");
+  });
+
   it("renders source company social links in the record overview", async () => {
     const linkedCompany: Company = {
       ...company,

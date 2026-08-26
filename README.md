@@ -15,7 +15,8 @@ have actually run in [docs/QA.md](docs/QA.md).
 
 Currently working end to end:
 
-- BB-native shell and source-shaped dashboard with Me/Everyone scope,
+- BB-native shell and source-shaped dashboard with Me (the installation-local
+  owner)/Everyone scope,
   pipeline, performance, six-month trend, closing totals, overdue work, and
   recent activity
 - append-only SQLite storage for companies, contacts, deals, activities,
@@ -59,12 +60,13 @@ Currently working end to end:
 
 The current BB SDK does not provide plugin RBAC/current-user identity or a
 plugin blob API. Contact portraits therefore retain an HTTPS source URL rather
-than copying remote bytes into plugin storage. OAuth credentials and provider
-authorization are not bundled;
-connections remain metadata/health boundaries until a host-authorized flow is
-configured. Agent thread cancellation can remain pending while BB reports a
-thread as stopping. External webhook triggers require a producer, and a public
-share relay is not included. General-purpose API keys are not issued
+than copying remote bytes into plugin storage. Provider OAuth, provider
+authorization, and live mail/calendar/Slack sync require externally supplied
+provider/agent-tool credentials and host authorization; none is bundled.
+Connections remain metadata/health boundaries until that flow is configured.
+Agent thread cancellation can remain pending while BB reports a thread as
+stopping. External webhook triggers require a producer, and a public share
+relay is not included. General-purpose API keys are not issued
 because BB exposes no safe current-user/RBAC authority for them. These limits
 and the remaining source gaps are recorded in
 [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).

@@ -174,27 +174,60 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "companies" ? (
           <CompaniesView
             initialRecordId={route.recordId}
+            initialTab={route.tab}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "companies", recordId }),
+              });
+            }}
+            onTabChange={(tab) => {
+              if (route.recordId === null) return;
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({
+                  kind: "companies",
+                  recordId: route.recordId,
+                  tab,
+                }),
               });
             }}
           />
         ) : route.kind === "contacts" ? (
           <ContactsView
             initialRecordId={route.recordId}
+            initialTab={route.tab}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "contacts", recordId }),
+              });
+            }}
+            onTabChange={(tab) => {
+              if (route.recordId === null) return;
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({
+                  kind: "contacts",
+                  recordId: route.recordId,
+                  tab,
+                }),
               });
             }}
           />
         ) : route.kind === "deals" ? (
           <DealsView
             initialRecordId={route.recordId}
+            initialTab={route.tab}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "deals", recordId }),
+              });
+            }}
+            onTabChange={(tab) => {
+              if (route.recordId === null) return;
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({
+                  kind: "deals",
+                  recordId: route.recordId,
+                  tab,
+                }),
               });
             }}
           />
@@ -218,9 +251,20 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "agents" ? (
           <AgentsView
             initialRecordId={route.recordId}
+            initialTab={route.tab}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "agents", recordId }),
+              });
+            }}
+            onTabChange={(tab) => {
+              if (route.recordId === null) return;
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({
+                  kind: "agents",
+                  recordId: route.recordId,
+                  tab,
+                }),
               });
             }}
           />

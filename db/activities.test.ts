@@ -279,4 +279,45 @@ describe("CRM activity persistence", () => {
       await lifecycle.dispose();
     }
   });
+
+  it("keeps unqualified reasons on transition activity without marking the deal closed", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const { deal } = seedEntities(db);
+      const activities = new ActivityStore(db);
+
+      const unqualified = updateDeal(db, deal.id, {
+        stage: "UNQUALIFIED_TO_BUY",
+        closedReason: "No current need",
+      });
+      expect(unqualified).toMatchObject({
+        stage: "UNQUALIFIED_TO_BUY",
+        closedAt: null,
+        closedReason: null,
+      });
+      expect(activities.list({ dealId: deal.id }).entries).toEqual([
+        expect.objectContaining({
+          type: "STAGE_CHANGE",
+          body: "No current need",
+          meta: { from: "DEMO_BOOKED", to: "UNQUALIFIED_TO_BUY" },
+        }),
+      ]);
+
+      const lost = updateDeal(db, deal.id, {
+        stage: "CLOSED_LOST",
+        closedReason: "Budget moved",
+      });
+      expect(lost).toMatchObject({
+        stage: "CLOSED_LOST",
+        closedReason: "Budget moved",
+        closedAt: expect.any(String),
+      });
+      expect(activities.list({ dealId: deal.id }).entries[0]).toMatchObject({
+        body: "Budget moved",
+        meta: { from: "UNQUALIFIED_TO_BUY", to: "CLOSED_LOST" },
+      });
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
 });

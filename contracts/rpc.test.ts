@@ -175,6 +175,8 @@ describe("CRM RPC contract", () => {
       "agents_threads_list",
       "agents_threads_get",
       "agents_threads_createRecord",
+      "agents_threads_createBuilder",
+      "agents_threads_deleteBuilder",
       "agents_attachments_upload",
       "agents_attachments_read",
       "agents_attachments_copy",
@@ -233,6 +235,25 @@ describe("CRM RPC contract", () => {
         agentId: "agent-1",
         recordType: "CONTACT",
         recordId: "contact-1",
+        unknown: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_threads_createBuilder.input.safeParse({
+        agentId: "agent-1",
+        newConversation: true,
+        unknown: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_threads_createBuilder.input.safeParse({
+        agentId: "agent-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.agents_threads_deleteBuilder.input.safeParse({
+        agentId: "agent-1",
+        id: "thread-link-1",
         unknown: true,
       }).success,
     ).toBe(false);

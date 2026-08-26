@@ -104,6 +104,12 @@ const DEAL_TABS: ReadonlyArray<{ id: DealTab; label: string }> = [
   { id: "agent", label: "Agent" },
 ];
 
+function dealTabFromRoute(value: string | null | undefined): DealTab {
+  return DEAL_TABS.some((tab) => tab.id === value)
+    ? (value as DealTab)
+    : "overview";
+}
+
 const DEAL_STATUS_OPTIONS: ReadonlyArray<{
   id: DealListStatus;
   label: string;
@@ -693,11 +699,11 @@ function DealOverview({
   }, [deal.id, deal.stage, deal.closedReason]);
 
   const reasonChanged =
-    stageDraft === "CLOSED_LOST" &&
+    STAGES_REQUIRING_REASON.has(stageDraft) &&
     closedReasonDraft.trim() !== (deal.closedReason ?? "");
   const stageDirty = stageDraft !== deal.stage || reasonChanged;
   const missingLostReason =
-    stageDraft === "CLOSED_LOST" && closedReasonDraft.trim() === "";
+    STAGES_REQUIRING_REASON.has(stageDraft) && closedReasonDraft.trim() === "";
 
   return (
     <div className="space-y-6">
@@ -707,7 +713,7 @@ function DealOverview({
           event.preventDefault();
           void onSetStage(
             stageDraft,
-            stageDraft === "CLOSED_LOST"
+            STAGES_REQUIRING_REASON.has(stageDraft)
               ? closedReasonDraft.trim() || undefined
               : undefined,
           );
@@ -791,10 +797,11 @@ function DealOverview({
             {mutationBusy ? "Saving…" : "Save stage"}
           </Button>
         </div>
-        {stageDraft === "CLOSED_LOST" ? (
+        {STAGES_REQUIRING_REASON.has(stageDraft) ? (
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground" htmlFor="deal-closed-reason">
-              Close reason <span className="font-normal">(required)</span>
+              {stageDraft === "CLOSED_LOST" ? "Close reason" : "Qualification reason"}{" "}
+              <span className="font-normal">(required)</span>
             </label>
             <Input
               id="deal-closed-reason"
@@ -802,7 +809,11 @@ function DealOverview({
               required
               disabled={mutationBusy}
               onChange={(event) => setClosedReasonDraft(event.target.value)}
-              placeholder="Budget, timing, competitor…"
+              placeholder={
+                stageDraft === "CLOSED_LOST"
+                  ? "Budget, timing, competitor…"
+                  : "Not a fit, timing, budget…"
+              }
             />
           </div>
         ) : null}
@@ -1270,12 +1281,17 @@ export interface DealsViewProps {
   initialRecordId?: string | null;
   /** Reflects record drawer changes back into the BB panel sub-path. */
   onRecordIdChange?: (id: string | null) => void;
+  /** Reflects the active record drawer tab back into the BB panel sub-path. */
+  initialTab?: string | null;
+  onTabChange?: (tab: DealTab) => void;
 }
 
 export function DealsView({
   rpcClient,
   initialRecordId = null,
   onRecordIdChange,
+  initialTab,
+  onTabChange,
 }: DealsViewProps) {
   const contextRpc = useDealsRpc();
   const rpc = rpcClient ?? contextRpc;
@@ -1450,8 +1466,8 @@ export function DealsView({
   }, [initialRecordId]);
 
   useEffect(() => {
-    setRecordTab("overview");
-  }, [recordId]);
+    setRecordTab(dealTabFromRoute(initialTab));
+  }, [initialTab, recordId]);
 
   useEffect(() => {
     if (recordId === null) return;
@@ -1542,7 +1558,7 @@ export function DealsView({
         const input: SetDealStageInput = {
           id: record.id,
           stage,
-          ...(stage === "CLOSED_LOST" && closedReason?.trim()
+          ...(STAGES_REQUIRING_REASON.has(stage) && closedReason?.trim()
             ? { closedReason: closedReason.trim() }
             : {}),
         };
@@ -1554,7 +1570,9 @@ export function DealsView({
                 ...record,
                 stage,
                 closedReason:
-                  stage === "CLOSED_LOST" ? closedReason?.trim() || null : null,
+                  stage === "CLOSED_LOST"
+                    ? closedReason?.trim() || null
+                    : null,
                 closedAt: isClosedStage(stage)
                   ? record.closedAt ?? new Date().toISOString()
                   : null,
@@ -1577,7 +1595,7 @@ export function DealsView({
         const result = await rpc.call("deals_setStage", {
           id,
           stage,
-          ...(stage === "CLOSED_LOST" && closedReason?.trim()
+          ...(STAGES_REQUIRING_REASON.has(stage) && closedReason?.trim()
             ? { closedReason: closedReason.trim() }
             : {}),
         } satisfies SetDealStageInput);
@@ -1589,7 +1607,9 @@ export function DealsView({
                 ...current,
                 stage,
                 closedReason:
-                  stage === "CLOSED_LOST" ? closedReason?.trim() || null : null,
+                  stage === "CLOSED_LOST"
+                    ? closedReason?.trim() || null
+                    : null,
                 closedAt: isClosedStage(stage)
                   ? current.closedAt ?? new Date().toISOString()
                   : null,
@@ -2400,7 +2420,10 @@ export function DealsView({
                   role="tab"
                   aria-selected={recordTab === tab.id}
                   className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-selected:border-foreground aria-selected:text-foreground"
-                  onClick={() => setRecordTab(tab.id)}
+                  onClick={() => {
+                    setRecordTab(tab.id);
+                    onTabChange?.(tab.id);
+                  }}
                 >
                   {tab.label}
                 </button>

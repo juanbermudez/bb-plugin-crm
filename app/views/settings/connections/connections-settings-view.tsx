@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "../../../../components/ui/card.js";
 import { Icon } from "../../../../components/ui/icon.js";
-import { EmptyState, PageHeader } from "../../../components/index.js";
+import { AlertDialog, EmptyState, PageHeader } from "../../../components/index.js";
 import type {
   Connection,
   ConnectionProvider,
@@ -380,6 +380,7 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
   const [diagnosticsOpen, setDiagnosticsOpen] = useState<Record<string, boolean>>({});
   const [diagnosticsLoading, setDiagnosticsLoading] = useState<string | null>(null);
   const [diagnosticsError, setDiagnosticsError] = useState<Record<string, string>>({});
+  const [confirmDisable, setConfirmDisable] = useState<Connection | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -417,10 +418,11 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
   }, []);
 
   const runConnectionAction = useCallback(
-    async (connection: Connection, action: "disable" | "enable" | "health") => {
-      if (action === "disable" && !window.confirm(`Disable the ${connection.provider.toLowerCase()} connection?`)) {
-        return;
-      }
+    async (
+      connection: Connection,
+      action: "disable" | "enable" | "health",
+      options: { rethrow?: boolean } = {},
+    ) => {
       const key = `${action}:${connection.id}`;
       setBusyAction(key);
       setError(null);
@@ -447,6 +449,7 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
         });
       } catch (cause) {
         setError(`${connection.provider}: ${errorMessage(cause)}`);
+        if (options.rethrow) throw cause;
       } finally {
         setBusyAction(null);
       }
@@ -573,7 +576,7 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
                       diagnosticsError={connection === undefined ? null : diagnosticsError[connection.id] ?? null}
                       busyAction={actionBusy}
                       onAdd={addConnection}
-                      onDisable={(value) => void runConnectionAction(value, "disable")}
+                      onDisable={(value) => setConfirmDisable(value)}
                       onEnable={(value) => void runConnectionAction(value, "enable")}
                       onHealth={(value) => void runConnectionAction(value, "health")}
                       onDiagnostics={(value) => void openDiagnostics(value)}
@@ -585,6 +588,23 @@ export function ConnectionsSettingsView({ rpcClient }: ConnectionsSettingsViewPr
           </>
         )}
       </div>
+
+      <AlertDialog
+        open={confirmDisable !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmDisable(null);
+        }}
+        title={`Disable the ${confirmDisable?.provider.toLowerCase() ?? "provider"} connection?`}
+        description="Syncing will stop until the connection is enabled again. Existing CRM records remain available."
+        confirmLabel="Disable connection"
+        destructive
+        disabled={busyAction !== null}
+        onConfirm={async () => {
+          if (confirmDisable !== null) {
+            await runConnectionAction(confirmDisable, "disable", { rethrow: true });
+          }
+        }}
+      />
     </div>
   );
 }

@@ -34,6 +34,7 @@ import type {
 } from "../../../contracts/agents.js";
 import { useAgentsRpc, type AgentsRpcClient } from "./rpc.js";
 import { AgentAttachmentPicker } from "./agent-attachments.js";
+import { AgentBuilderConversation } from "../../components/agent-builder-conversation.js";
 
 const LIST_LIMIT = 100;
 const SELECT_CLASS =
@@ -52,6 +53,7 @@ const AGENT_STATUSES: readonly AgentDefinitionStatus[] = [
 
 const AGENT_TABS = [
   { id: "overview", label: "Overview" },
+  { id: "conversation", label: "Conversation" },
   { id: "versions", label: "Versions" },
   { id: "triggers", label: "Triggers" },
   { id: "runs", label: "Run history" },
@@ -59,6 +61,12 @@ const AGENT_TABS = [
 ] as const;
 
 type AgentTab = (typeof AGENT_TABS)[number]["id"];
+
+function normalizeAgentTab(value: string | null | undefined): AgentTab {
+  return AGENT_TABS.some((tab) => tab.id === value)
+    ? value as AgentTab
+    : "overview";
+}
 
 const TRIGGER_TYPES: readonly AgentTriggerType[] = [
   "MANUAL",
@@ -573,16 +581,25 @@ function VersionEditor({
   agent,
   rpc,
   onChanged,
+  sourceConversationId,
+  draftInstructions,
 }: {
   agent: AgentDetail;
   rpc: AgentsRpcClient;
   onChanged: () => Promise<void>;
+  sourceConversationId?: string | null;
+  draftInstructions?: string | null;
 }) {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(
     agent.currentVersion?.id ?? agent.versions[0]?.id ?? null,
   );
   const [value, setValue] = useState<VersionFormValue>(
-    versionFormFrom(agent.currentVersion ?? agent.versions[0] ?? null),
+    () => {
+      const base = versionFormFrom(agent.currentVersion ?? agent.versions[0] ?? null);
+      return draftInstructions === null || draftInstructions === undefined
+        ? base
+        : { ...base, instructions: draftInstructions };
+    },
   );
   const [saving, setSaving] = useState(false);
   const [action, setAction] = useState<"validate" | "deploy" | null>(null);
@@ -647,6 +664,7 @@ function VersionEditor({
     setError(null);
     setNotice(null);
     try {
+      const retainedSourceConversationId = sourceConversationId ?? selectedVersion?.sourceConversationId ?? null;
       await rawRpc(rpc).call("agents_versions_create", {
         agentId: agent.id,
         data: {
@@ -656,6 +674,7 @@ function VersionEditor({
           modelContextWindowTokens: contextWindow,
           manifest: manifest.value,
           sandboxPolicy: sandboxPolicy.value,
+          ...(retainedSourceConversationId === null ? {} : { sourceConversationId: retainedSourceConversationId }),
         },
       });
       setNotice("Draft saved. Validate it before deploying.");
@@ -723,6 +742,16 @@ function VersionEditor({
       ) : (
         <p className="text-xs text-muted-foreground">This agent has no saved version yet. Start a draft below.</p>
       )}
+      {sourceConversationId ? (
+        <p className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-xs text-muted-foreground" role="status">
+          This draft retains the selected BB builder thread as provenance. Copy any approved instructions from the conversation into this editor; transcript output is not applied automatically.
+        </p>
+      ) : null}
+      {draftInstructions !== null && draftInstructions !== undefined ? (
+        <p className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground" role="status">
+          Assistant text was copied from the BB conversation as a draft suggestion. Review it, then save explicitly; the CRM will not auto-save or deploy it.
+        </p>
+      ) : null}
       <form className="space-y-4" onSubmit={saveDraft}>
         <div className="space-y-2">
           <label className="text-xs font-medium" htmlFor={`agent-instructions-${agent.id}`}>
@@ -1516,13 +1545,28 @@ function AgentDetailWorkspace({
   agent,
   rpc,
   onChanged,
+  initialTab,
+  onTabChange,
 }: {
   agent: AgentDetail;
   rpc: AgentsRpcClient;
   onChanged: () => Promise<void>;
+  initialTab?: string | null;
+  onTabChange?: (tab: AgentTab) => void;
 }) {
-  const [tab, setTab] = useState<AgentTab>("overview");
+  const [tab, setTab] = useState<AgentTab>(() => normalizeAgentTab(initialTab));
   const [versionToEdit, setVersionToEdit] = useState<string | null>(null);
+  const [sourceConversationId, setSourceConversationId] = useState<string | null>(null);
+  const [draftInstructions, setDraftInstructions] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTab(normalizeAgentTab(initialTab));
+  }, [initialTab]);
+
+  const changeTab = (next: AgentTab) => {
+    setTab(next);
+    onTabChange?.(next);
+  };
 
   return (
     <div className="space-y-5">
@@ -1534,7 +1578,7 @@ function AgentDetailWorkspace({
             role="tab"
             aria-selected={tab === item.id}
             className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-selected:border-foreground aria-selected:text-foreground"
-            onClick={() => setTab(item.id)}
+            onClick={() => changeTab(item.id)}
           >
             {item.label}
           </button>
@@ -1543,7 +1587,7 @@ function AgentDetailWorkspace({
       {tab === "overview" ? (
         <div className="space-y-6">
           <MetadataEditor agent={agent} rpc={rpc} onChanged={onChanged} />
-          <VersionEditor key={versionToEdit ?? "new-version"} agent={versionToEdit ? { ...agent, currentVersion: agent.versions.find((version) => version.id === versionToEdit) ?? agent.currentVersion } : agent} rpc={rpc} onChanged={onChanged} />
+          <VersionEditor key={versionToEdit ?? "new-version"} agent={versionToEdit ? { ...agent, currentVersion: agent.versions.find((version) => version.id === versionToEdit) ?? agent.currentVersion } : agent} rpc={rpc} onChanged={onChanged} sourceConversationId={sourceConversationId} draftInstructions={draftInstructions} />
           <Section
             title="Operational summary"
             description="A quick read of the current definition before you move into version, trigger, or run operations."
@@ -1559,10 +1603,29 @@ function AgentDetailWorkspace({
       {tab === "versions" ? (
         <div className="space-y-6">
           <Section title="Version history" description="Select a version to continue editing it in the draft editor.">
-            <VersionHistory agent={agent} onSelect={(id) => { setVersionToEdit(id); setTab("overview"); }} />
+            <VersionHistory agent={agent} onSelect={(id) => { setVersionToEdit(id); setDraftInstructions(null); changeTab("overview"); }} />
           </Section>
           <p className="text-xs text-muted-foreground">The draft editor lives on Overview so metadata, validation, and deployment remain in one workspace.</p>
         </div>
+      ) : null}
+      {tab === "conversation" ? (
+        <AgentBuilderConversation
+          agent={agent}
+          rpc={rpc}
+          sourceConversationId={sourceConversationId}
+          onUseVersionSource={(threadId) => {
+            setSourceConversationId(threadId);
+            setDraftInstructions(null);
+            setVersionToEdit(null);
+            changeTab("overview");
+          }}
+          onUseVersionDraft={(text, threadId) => {
+            setSourceConversationId(threadId);
+            setDraftInstructions(text);
+            setVersionToEdit(null);
+            changeTab("overview");
+          }}
+        />
       ) : null}
       {tab === "triggers" ? <TriggerWorkspace agent={agent} rpc={rpc} onChanged={onChanged} /> : null}
       {tab === "runs" ? <RunHistory agent={agent} rpc={rpc} /> : null}
@@ -1619,15 +1682,21 @@ function CreateAgentForm({
 export interface AgentsViewProps {
   /** Optional route-selected agent id used for deep links from BB navigation. */
   initialRecordId?: string | null;
+  /** Optional detail tab persisted in the BB panel sub-path. */
+  initialTab?: string | null;
   /** Called whenever the selected agent changes so the route stays shareable. */
   onRecordIdChange?: (recordId: string | null) => void;
+  /** Called when the selected agent detail tab changes. */
+  onTabChange?: (tab: AgentTab) => void;
   /** Narrow RPC client override used by previews and focused tests. */
   rpcClient?: AgentsRpcClient;
 }
 
 export function AgentsView({
   initialRecordId = null,
+  initialTab,
   onRecordIdChange,
+  onTabChange,
   rpcClient,
 }: AgentsViewProps) {
   const hostRpc = useAgentsRpc();
@@ -1856,7 +1925,13 @@ export function AgentsView({
             action={<Button type="button" variant="outline" onClick={() => setDetailRefreshKey((key) => key + 1)}>Retry</Button>}
           />
         ) : detail ? (
-          <AgentDetailWorkspace agent={detail} rpc={rpc} onChanged={reloadDetail} />
+          <AgentDetailWorkspace
+            agent={detail}
+            rpc={rpc}
+            onChanged={reloadDetail}
+            initialTab={initialTab}
+            onTabChange={onTabChange}
+          />
         ) : (
           <EmptyState icon="Brain" title="Agent not found" description="The selected agent may have been removed or archived." />
         )}

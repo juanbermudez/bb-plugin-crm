@@ -163,6 +163,26 @@ describe("DealsView", () => {
     expect(rpc.call).toHaveBeenCalledWith("deals_get", { id: "deal_acme_expand" });
   });
 
+  it("restores a deep-linked drawer tab and reports tab changes", async () => {
+    const onTabChange = vi.fn();
+    const rpc = makeRpc();
+    render(
+      <DealsView
+        rpcClient={rpc}
+        initialRecordId={deal.id}
+        initialTab="contacts"
+        onTabChange={onTabChange}
+      />,
+    );
+
+    const drawer = await screen.findByRole("dialog", { name: "Acme Expansion" });
+    expect(within(drawer).getByRole("tab", { name: "Contacts" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Overview" }));
+    expect(onTabChange).toHaveBeenCalledWith("overview");
+  });
+
   it("shows an empty state when a deal has no related contacts", async () => {
     const noContacts = { ...deal, contacts: [] };
     const rpc = makeRpc(async (method) => {
@@ -345,7 +365,10 @@ describe("DealsView", () => {
         current = {
           ...current,
           stage: stageInput.stage,
-          closedReason: stageInput.closedReason ?? null,
+          closedReason:
+            stageInput.stage === "CLOSED_LOST"
+              ? stageInput.closedReason ?? null
+              : null,
           closedAt: stageInput.stage === "CLOSED_LOST" ? "2026-08-25T00:00:00.000Z" : null,
         };
         return current;
@@ -368,6 +391,28 @@ describe("DealsView", () => {
       />,
     );
     await screen.findByRole("dialog", { name: "Acme Expansion" });
+
+    fireEvent.change(screen.getByLabelText("Stage"), {
+      target: { value: "UNQUALIFIED_TO_BUY" },
+    });
+    expect(screen.getByLabelText(/Qualification reason/).hasAttribute("required")).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Qualification reason/), {
+      target: { value: "No current need" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save stage" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
+        id: "deal_acme_expand",
+        stage: "UNQUALIFIED_TO_BUY",
+        closedReason: "No current need",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Save stage" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
 
     fireEvent.change(screen.getByLabelText("Stage"), {
       target: { value: "CLOSED_LOST" },
@@ -472,6 +517,34 @@ describe("DealsView", () => {
         id: deal.id,
         stage: "CLOSED_LOST",
         closedReason: "Budget",
+      }),
+    );
+  });
+
+  it("persists the required reason when a list deal becomes unqualified", async () => {
+    const rpc = makeRpc();
+    render(<DealsView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Expansion");
+    fireEvent.click(screen.getByRole("button", { name: "Demo booked" }));
+    const menu = screen.getByRole("menu", {
+      name: "Change stage for Acme Expansion",
+    });
+    fireEvent.click(
+      within(menu).getByRole("menuitemradio", { name: "Unqualified to buy" }),
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Mark as unqualified" });
+    fireEvent.change(within(dialog).getByLabelText(/Reason/), {
+      target: { value: "No current need" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save stage" }));
+
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
+        id: deal.id,
+        stage: "UNQUALIFIED_TO_BUY",
+        closedReason: "No current need",
       }),
     );
   });

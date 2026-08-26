@@ -50,6 +50,7 @@ export function EntityPicker({
   const listboxId = `${id}-options`;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const selected = options.find((option) => option.value === value);
   const selectedLabel = selected?.label ?? (value ? value : "");
@@ -66,6 +67,12 @@ export function EntityPicker({
   useEffect(() => {
     if (!open) setQuery(selectedLabel);
   }, [open, selectedLabel]);
+
+  useEffect(() => {
+    if (!open) return;
+    const selectedIndex = filteredOptions.findIndex((option) => option.value === value);
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+  }, [filteredOptions, open, value]);
 
   const select = (next: string | null) => {
     onChange(next);
@@ -88,6 +95,11 @@ export function EntityPicker({
             aria-label={label}
             aria-expanded={open}
             aria-controls={listboxId}
+            aria-activedescendant={
+              open && filteredOptions[activeIndex]
+                ? `${listboxId}-option-${activeIndex}`
+                : undefined
+            }
             aria-autocomplete="list"
             required={required && !value}
             disabled={disabled}
@@ -111,6 +123,33 @@ export function EntityPicker({
                 event.preventDefault();
                 setQuery(selectedLabel);
                 setOpen(false);
+                return;
+              }
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                if (!open) setOpen(true);
+                if (filteredOptions.length > 0) {
+                  setActiveIndex((current) =>
+                    event.key === "ArrowDown"
+                      ? (current + 1) % filteredOptions.length
+                      : (current - 1 + filteredOptions.length) % filteredOptions.length,
+                  );
+                }
+                return;
+              }
+              if (event.key === "Home" && open && filteredOptions.length > 0) {
+                event.preventDefault();
+                setActiveIndex(0);
+                return;
+              }
+              if (event.key === "End" && open && filteredOptions.length > 0) {
+                event.preventDefault();
+                setActiveIndex(filteredOptions.length - 1);
+                return;
+              }
+              if (event.key === "Enter" && open && filteredOptions[activeIndex]) {
+                event.preventDefault();
+                select(filteredOptions[activeIndex].value);
               }
             }}
             onBlur={() => {
@@ -155,9 +194,10 @@ export function EntityPicker({
                 {options.length === 0 ? "No CRM choices are available yet." : emptyMessage}
               </p>
             ) : (
-              filteredOptions.map((option) => (
+              filteredOptions.map((option, index) => (
                 <Button
                   key={option.value}
+                  id={`${listboxId}-option-${index}`}
                   type="button"
                   role="option"
                   aria-selected={option.value === value}
@@ -165,6 +205,7 @@ export function EntityPicker({
                   size="sm"
                   className="h-auto w-full justify-start px-3 py-2 text-left"
                   onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => select(option.value)}
                 >
                   <Icon name="Check" aria-hidden="true" className={option.value === value ? "text-foreground" : "text-transparent"} />

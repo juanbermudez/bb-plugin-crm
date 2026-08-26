@@ -5,8 +5,8 @@ port plan and marketplace draft and are not treated as passing evidence.
 
 ## Clean local gate
 
-Verified on 2026-08-26 at implementation revision `7166be5` (the source tree was clean
-before this documentation-only update), against BB `0.39.0` and plugin SDK
+Verified on 2026-08-26 at implementation revision `7166be5` (historical clean-gate
+baseline before subsequent shared-worktree edits), against BB `0.39.0` and plugin SDK
 `0.4.8`:
 
 - `npm test`: 45 test files and 197 tests passed.
@@ -20,7 +20,7 @@ The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite
 databases for migrations and persistence. They cover:
 
-- BB app registration, routing, dashboard Me/Everyone scope, core record
+- BB app registration, routing, dashboard Me (the installation-local owner)/Everyone scope, core record
   tables/drawers, relationships, list sorting/pagination, standard and custom
   facets, row selection/bulk actions, saved views/defaults, activity timeline
   and task lifecycle, custom fields, currency settings, agent workspace,
@@ -108,12 +108,22 @@ The following are not claimed as passing evidence in this log:
   sweep; compact dark-theme is covered only by the focused smoke above;
 - Electron-specific smoke (no Electron QA was run for this update);
 - production release tag creation, public-tag installation, or marketplace
-  validation/submission.
+  submission.
+- Marketplace draft schema/build-contract audit is documented in
+  [docs/MARKETPLACE_DRAFT.md](MARKETPLACE_DRAFT.md). A temporary concrete
+  `entries/crm.json` plus icon passed `npm ci` and `npm run build` against the
+  audited marketplace checkout (83 entries); `npm run check` stopped only at
+  the expected Git-liveness failure because no approved `v0.1.0` tag exists.
 
 The public SDK limitations are part of the parity record: BB provides no
-current-user/RBAC API or plugin blob API; real OAuth credentials and provider
-authorization are not bundled; an external producer is required for webhook
-triggers; a thread reported as `stopping` can remain pending because
-BB exposes no public cancellation lifecycle; and no public share relay is
-included. See [docs/PARITY_MATRIX.md](PARITY_MATRIX.md) for the chosen
-fallbacks and remaining gaps.
+current-user/RBAC API or plugin blob API; provider OAuth and live
+mail/calendar/Slack sync require external provider/agent-tool credentials and
+host authorization and are not bundled; the source's intake route is explicitly
+unavailable; tracking ingestion requires operator-confirmed site authority; an
+external producer is required for webhook triggers; a thread reported as
+`stopping` can remain pending because BB exposes no public cancellation
+lifecycle; natural-language builder chat is implemented with visible BB
+threads, history, explicit new/delete, and reviewed message-to-draft transfer;
+no public share relay is included. See
+[docs/PARITY_MATRIX.md](PARITY_MATRIX.md) for the chosen fallbacks and
+remaining gaps.

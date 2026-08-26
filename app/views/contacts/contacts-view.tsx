@@ -89,6 +89,12 @@ const CONTACT_TABS: ReadonlyArray<{ id: ContactTab; label: string }> = [
   { id: "agent", label: "Agent" },
 ];
 
+function contactTabFromRoute(value: string | null | undefined): ContactTab {
+  return CONTACT_TABS.some((tab) => tab.id === value)
+    ? (value as ContactTab)
+    : "overview";
+}
+
 const CONTACT_COLUMNS = [
   { id: "contact", label: "Contact", className: "min-w-48", required: true },
   { id: "company", label: "Company", className: "min-w-40" },
@@ -741,12 +747,17 @@ export interface ContactsViewProps {
   initialRecordId?: string | null;
   /** Reflects record drawer changes back into the BB panel sub-path. */
   onRecordIdChange?: (id: string | null) => void;
+  /** Reflects the active record drawer tab back into the BB panel sub-path. */
+  initialTab?: string | null;
+  onTabChange?: (tab: ContactTab) => void;
 }
 
 export function ContactsView({
   rpcClient,
   initialRecordId = null,
   onRecordIdChange,
+  initialTab,
+  onTabChange,
 }: ContactsViewProps) {
   const contextRpc = useContactsRpc();
   const rpc = rpcClient ?? contextRpc;
@@ -918,7 +929,6 @@ export function ContactsView({
     setRecordLoading(true);
     setRecordError(null);
     setMutationError(null);
-    setRecordTab("overview");
     void rpc
       .call("contacts_get", { id: recordId })
       .then((next) => {
@@ -934,6 +944,10 @@ export function ContactsView({
       active = false;
     };
   }, [recordId, recordRefreshKey, rpc]);
+
+  useEffect(() => {
+    setRecordTab(contactTabFromRoute(initialTab));
+  }, [initialTab, recordId]);
 
   const closeRecord = useCallback(() => {
     setRecordId(null);
@@ -1767,7 +1781,10 @@ export function ContactsView({
                   role="tab"
                   aria-selected={recordTab === tab.id}
                   className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-selected:border-foreground aria-selected:text-foreground"
-                  onClick={() => setRecordTab(tab.id)}
+                  onClick={() => {
+                    setRecordTab(tab.id);
+                    onTabChange?.(tab.id);
+                  }}
                 >
                   {tab.label}
                 </button>

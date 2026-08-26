@@ -126,7 +126,6 @@ describe("TrackingSettingsView", () => {
 
   it("supports site verification/pause, token revocation, and aggregate rollup/prune", async () => {
     const rpc = makeRpc();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<TrackingSettingsView rpcClient={rpc} />);
     await screen.findAllByText("Marketing site");
 
@@ -139,14 +138,18 @@ describe("TrackingSettingsView", () => {
       expect(rpc.call).toHaveBeenCalledWith("tracking_sites_pause", { id: site.id, paused: true }),
     );
     fireEvent.click(screen.getByRole("button", { name: `Revoke token ${token.id}` }));
+    let confirmation = await screen.findByRole("dialog", { name: /Revoke the tracking token/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Revoke token" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("tracking_tokens_revoke", { id: token.id }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Roll up events" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Roll up events" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("tracking_aggregates_rollup", {}),
     );
     fireEvent.click(screen.getByRole("button", { name: "Prune retained data" }));
+    confirmation = await screen.findByRole("dialog", { name: "Prune retained tracking data?" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Prune data" }));
 
     await waitFor(() => {
       expect(rpc.call).toHaveBeenCalledWith("tracking_aggregates_prune", {});

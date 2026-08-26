@@ -19,7 +19,7 @@ import type {
   SavedViewFilters,
   SavedViewUpdateInput,
 } from "../../../contracts/core.js";
-import { RecordDrawer } from "../../components/index.js";
+import { AlertDialog, RecordDrawer } from "../../components/index.js";
 import { cn } from "../../../lib/utils.js";
 import { useSavedViewsRpc, type SavedViewsRpcClient } from "./rpc.js";
 
@@ -117,6 +117,7 @@ export function SavedViewBar({
   const [saveName, setSaveName] = useState("");
   const [saveShared, setSaveShared] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const onApplyFiltersRef = useRef(onApplyFilters);
 
   useEffect(() => {
@@ -277,11 +278,6 @@ export function SavedViewBar({
 
   const deleteSelectedView = async () => {
     if (!selectedView || !isOwnedBy(selectedView, effectiveOwnerId)) return;
-    const confirmed =
-      typeof window === "undefined" || typeof window.confirm !== "function"
-        ? true
-        : window.confirm(`Delete the saved view “${selectedView.name}”?`);
-    if (!confirmed) return;
     setBusyAction("delete");
     setError(null);
     setStatusMessage(null);
@@ -297,6 +293,7 @@ export function SavedViewBar({
       onApplyFilters?.(cloneFilters(DEFAULT_FILTERS), null);
     } catch (cause) {
       setError(errorMessage(cause));
+      throw cause;
     } finally {
       setBusyAction(null);
     }
@@ -448,7 +445,7 @@ export function SavedViewBar({
               disabled={
                 busyAction !== null || !isOwnedBy(selectedView, effectiveOwnerId)
               }
-              onClick={() => void deleteSelectedView()}
+              onClick={() => setDeleteOpen(true)}
             >
               <Icon name="Trash2" aria-hidden="true" />
               {busyAction === "delete" ? "Deleting…" : "Delete view"}
@@ -466,6 +463,17 @@ export function SavedViewBar({
           {statusMessage}
         </p>
       ) : null}
+
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete the saved view “${selectedView?.name ?? "this view"}”?`}
+        description="This removes the saved filters for everyone who can access this view."
+        confirmLabel="Delete view"
+        destructive
+        disabled={selectedView === null || busyAction !== null}
+        onConfirm={deleteSelectedView}
+      />
 
       <RecordDrawer
         open={saveOpen}

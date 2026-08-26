@@ -954,7 +954,7 @@ describe("CRM plugin foundation", () => {
     const id = (deal as { id: string }).id;
     await expect(
       harness.behavior.callRpc("deals_setStage", { id, stage: "CLOSED_LOST" }),
-    ).rejects.toThrow(/close reason/i);
+    ).rejects.toThrow(/reason.*lost/i);
     await expect(
       harness.behavior.callRpc("deals_setStage", {
         id,
@@ -965,6 +965,30 @@ describe("CRM plugin foundation", () => {
       stage: "CLOSED_LOST",
       closedReason: "Budget moved",
       closedAt: expect.any(String),
+    });
+    await expect(
+      harness.behavior.callRpc("deals_setStage", { id, stage: "UNQUALIFIED_TO_BUY" }),
+    ).rejects.toThrow(/reason.*unqualified/i);
+    await expect(
+      harness.behavior.callRpc("deals_setStage", {
+        id,
+        stage: "UNQUALIFIED_TO_BUY",
+        closedReason: "No current need",
+      }),
+    ).resolves.toMatchObject({
+      stage: "UNQUALIFIED_TO_BUY",
+      closedAt: null,
+      closedReason: null,
+    });
+    await expect(
+      harness.behavior.callRpc("activity_timeline", { dealId: id, filter: "all" }),
+    ).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          body: "No current need",
+          meta: { from: "CLOSED_LOST", to: "UNQUALIFIED_TO_BUY" },
+        }),
+      ]),
     });
 
     await harness.lifecycle.dispose();
@@ -2024,6 +2048,141 @@ describe("CRM plugin foundation", () => {
     });
     expect(String((harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0] as { input?: Array<{ text?: string }> }).input?.[0]?.text))
       .toContain('"recordType":"COMPANY"');
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("creates idempotent and explicit-new visible builder threads with version provenance", async () => {
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "bb-thread-builder-1" })
+      .mockResolvedValueOnce({ id: "bb-thread-builder-2" });
+    const deleteThread = vi.fn(async () => ({ ok: true }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-builder", kind: "standard" }] },
+        threads: { spawn, delete: deleteThread },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_builder_server", "version_builder_server");
+
+    const first = await harness.behavior.callRpc("agents_threads_createBuilder", {
+      agentId: "agent_builder_server",
+      versionId: "version_builder_server",
+    }) as { id: string; threadId: string; kind: string; versionId: string | null };
+    const second = await harness.behavior.callRpc("agents_threads_createBuilder", {
+      agentId: "agent_builder_server",
+      versionId: "version_builder_server",
+    });
+    const fresh = await harness.behavior.callRpc("agents_threads_createBuilder", {
+      agentId: "agent_builder_server",
+      versionId: "version_builder_server",
+      newConversation: true,
+    }) as { id: string; threadId: string; kind: string; versionId: string | null };
+
+    expect(first).toMatchObject({
+      threadId: "bb-thread-builder-1",
+      kind: "BUILDER",
+      versionId: "version_builder_server",
+    });
+    expect(second).toEqual(expect.objectContaining({ id: first.id, threadId: first.threadId }));
+    expect(fresh).toMatchObject({
+      threadId: "bb-thread-builder-2",
+      kind: "BUILDER",
+      versionId: "version_builder_server",
+    });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0]).toMatchObject({
+      projectId: "project-builder",
+      visibility: "visible",
+      permissionMode: "accept-edits",
+    });
+    const prompt = String((harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0] as { input?: Array<{ text?: string }> }).input?.[0]?.text);
+    expect(prompt).toContain("[CRM AGENT BUILDER THREAD]");
+    expect(prompt).toContain('"id":"agent_builder_server"');
+    expect(prompt).toContain('"id":"version_builder_server"');
+    expect(prompt).toContain("<<<CRM_AGENT_INSTRUCTIONS>>>");
+    expect(prompt).toContain("<<<END_CRM_AGENT_INSTRUCTIONS>>>");
+    await expect(
+      harness.behavior.callRpc("agents_threads_list", {
+        agentId: "agent_builder_server",
+        kind: "BUILDER",
+      }),
+    ).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id }),
+      expect.objectContaining({ id: fresh.id }),
+    ]));
+
+    deleteThread.mockRejectedValueOnce(new Error("BB refused to delete the thread."));
+    await expect(
+      harness.behavior.callRpc("agents_threads_deleteBuilder", {
+        agentId: "agent_builder_server",
+        id: first.id,
+      }),
+    ).rejects.toThrow(/refused/);
+    await expect(
+      harness.behavior.callRpc("agents_threads_list", {
+        agentId: "agent_builder_server",
+        kind: "BUILDER",
+      }),
+    ).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id }),
+      expect.objectContaining({ id: fresh.id }),
+    ]));
+
+    await expect(
+      harness.behavior.callRpc("agents_threads_deleteBuilder", {
+        agentId: "agent_builder_server",
+        id: fresh.id,
+      }),
+    ).resolves.toEqual({ id: fresh.id });
+    expect(deleteThread).toHaveBeenLastCalledWith({
+      threadId: "bb-thread-builder-2",
+      childThreadsConfirmed: true,
+    });
+    await expect(
+      harness.behavior.callRpc("agents_threads_list", {
+        agentId: "agent_builder_server",
+        kind: "BUILDER",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: first.id })]);
+
+    await seedLiveServerAgent(harness, "agent_builder_other", "version_builder_other");
+    await expect(
+      harness.behavior.callRpc("agents_threads_createBuilder", {
+        agentId: "agent_builder_server",
+        versionId: "version_builder_other",
+      }),
+    ).rejects.toThrow(/does not belong/);
+    await expect(
+      harness.behavior.callRpc("agents_threads_deleteBuilder", {
+        agentId: "agent_builder_other",
+        id: first.id,
+      }),
+    ).rejects.toThrow(/does not belong/);
+
+    const recordLink = createAgentStore(bb.storage.database()).linkThread("agent_builder_server", {
+      threadId: "bb-thread-record-for-delete",
+      kind: "RECORD",
+      recordType: "COMPANY",
+      recordId: "company-for-delete",
+    }, "local_user");
+    await expect(
+      harness.behavior.callRpc("agents_threads_deleteBuilder", {
+        agentId: "agent_builder_server",
+        id: recordLink.id,
+      }),
+    ).rejects.toThrow(/Only BUILDER/);
+
+    await harness.behavior.callRpc("agents_delete", { id: "agent_builder_server" });
+    await expect(
+      harness.behavior.callRpc("agents_threads_createBuilder", {
+        agentId: "agent_builder_server",
+        newConversation: true,
+      }),
+    ).rejects.toThrow(/Deleted agents cannot start builder conversations/);
 
     await harness.lifecycle.dispose();
   });

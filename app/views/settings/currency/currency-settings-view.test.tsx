@@ -131,7 +131,6 @@ describe("CurrencySettingsView", () => {
       if (method === "currency_rates_removeManual") return manualRate;
       return manualRate;
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<CurrencySettingsView rpcClient={rpc} />);
     await screen.findAllByText("USD → EUR");
 
@@ -168,13 +167,16 @@ describe("CurrencySettingsView", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Remove USD → EUR manual rate" }));
+    const removal = await screen.findByRole("dialog", {
+      name: /Remove the manual USD → EUR override/,
+    });
+    fireEvent.click(within(removal).getByRole("button", { name: "Remove rate" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("currency_rates_removeManual", {
         baseCurrency: "USD",
         quoteCurrency: "EUR",
       }),
     );
-    expect(confirm).toHaveBeenCalledWith("Remove the manual USD → EUR override?");
   });
 
   it("runs an explicit rerate-all action and reports its summary", async () => {
@@ -193,11 +195,12 @@ describe("CurrencySettingsView", () => {
       }
       return manualRate;
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<CurrencySettingsView rpcClient={rpc} />);
     await screen.findByText("USD → EUR");
 
     fireEvent.click(screen.getByRole("button", { name: "Rerate all deals" }));
+    const rerate = await screen.findByRole("dialog", { name: "Rerate all deals?" });
+    fireEvent.click(within(rerate).getByRole("button", { name: "Rerate deals" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("currency_deals_rerateAll", {
         onlyMissing: false,
@@ -205,8 +208,5 @@ describe("CurrencySettingsView", () => {
     );
     expect(await screen.findByText(/Re-rated 3 deals in USD/)).toBeDefined();
     expect(screen.getByText(/Missing rates remain for GBP/)).toBeDefined();
-    expect(confirm).toHaveBeenCalledWith(
-      "Re-rate all deals using USD? Existing frozen base amounts will be replaced by the selected rates.",
-    );
   });
 });

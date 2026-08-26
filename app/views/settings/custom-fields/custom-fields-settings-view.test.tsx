@@ -175,7 +175,6 @@ describe("CustomFieldsSettingsView", () => {
   });
 
   it("confirms archive, restore, delete, and sends reorder requests", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const rpc = makeRpc([segment, seats, archivedField]);
     render(<CustomFieldsSettingsView rpcClient={rpc} />);
     await screen.findByText("Segment");
@@ -189,24 +188,28 @@ describe("CustomFieldsSettingsView", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Archive field “Segment”" }));
+    let confirmation = await screen.findByRole("dialog", { name: /Archive the “Segment” field/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Archive" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("fields_archive", { id: segment.id }),
     );
     fireEvent.click(screen.getByRole("checkbox", { name: "Show archived fields" }));
     expect(await screen.findByText("Legacy tier")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Restore field “Legacy tier”" }));
+    confirmation = await screen.findByRole("dialog", { name: /Restore the “Legacy tier” field/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Restore" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("fields_restore", { id: archivedField.id }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Delete field “Legacy tier”" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete field “Legacy tier”" }));
+    confirmation = await screen.findByRole("dialog", { name: /Delete the “Legacy tier” field/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("fields_delete", { id: archivedField.id }),
     );
-    expect(confirm).toHaveBeenCalled();
   });
 
   it("edits field metadata and manages persisted select options", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const rpc = makeRpc([segment], async (method) => {
       if (method === "fields_list") return [segment];
       if (method === "fields_coverage") return { filled: 1, total: 1 };
@@ -233,18 +236,24 @@ describe("CustomFieldsSettingsView", () => {
       target: { value: "Customer segment" },
     });
     fireEvent.click(within(dialog).getByRole("button", { name: "Archive option Enterprise" }));
+    let confirmation = await screen.findByRole("dialog", { name: /Archive the “Enterprise” option/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Archive" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("fields_options_archive", {
         id: segmentOption.id,
       }),
     );
     fireEvent.click(within(dialog).getByRole("button", { name: "Restore option Enterprise" }));
+    confirmation = await screen.findByRole("dialog", { name: /Restore the “Enterprise” option/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Restore" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("fields_options_restore", {
         id: segmentOption.id,
       }),
     );
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete option Enterprise" }));
+    confirmation = await screen.findByRole("dialog", { name: /Delete the “Enterprise” option/ });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("fields_options_delete", {
         id: segmentOption.id,
@@ -271,7 +280,6 @@ describe("CustomFieldsSettingsView", () => {
         },
       }),
     );
-    expect(confirm).toHaveBeenCalledTimes(3);
   });
 
   it("queues fill-rest from the editor only for an incomplete agent-filled field", async () => {

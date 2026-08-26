@@ -36,6 +36,9 @@ import {
   agentThreadGetInputSchema,
   agentThreadListInputSchema,
   agentThreadLinkSchema,
+  agentThreadBuilderCreateInputSchema,
+  agentThreadBuilderDeleteInputSchema,
+  agentThreadDeleteOutputSchema,
   agentThreadRecordCreateInputSchema,
   agentTriggerCreateInputSchema,
   agentTriggerDeleteInputSchema,
@@ -913,6 +916,14 @@ export const rpcContract = defineRpcContract({
   agents_threads_createRecord: {
     input: agentThreadRecordCreateInputSchema,
     output: agentThreadLinkSchema,
+  },
+  agents_threads_createBuilder: {
+    input: agentThreadBuilderCreateInputSchema,
+    output: agentThreadLinkSchema,
+  },
+  agents_threads_deleteBuilder: {
+    input: agentThreadBuilderDeleteInputSchema,
+    output: agentThreadDeleteOutputSchema,
   },
   agents_attachments_upload: {
     input: agentAttachmentUploadInputSchema,

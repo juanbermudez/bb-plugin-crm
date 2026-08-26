@@ -777,6 +777,34 @@ export type AgentThreadRecordCreateInput = z.infer<
   typeof agentThreadRecordCreateInputSchema
 >;
 
+/** Create a visible BB builder conversation for an agent. */
+export const agentThreadBuilderCreateInputSchema = z
+  .object({
+    agentId: idSchema,
+    versionId: idSchema.optional(),
+    /** Reuse the newest builder link unless the user explicitly starts over. */
+    newConversation: z.boolean().default(false),
+  })
+  .strict();
+export type AgentThreadBuilderCreateInput = z.infer<
+  typeof agentThreadBuilderCreateInputSchema
+>;
+
+/** Delete one visible builder thread and its CRM link after BB confirms deletion. */
+export const agentThreadBuilderDeleteInputSchema = z
+  .object({
+    agentId: idSchema,
+    id: idSchema,
+  })
+  .strict();
+export type AgentThreadBuilderDeleteInput = z.infer<
+  typeof agentThreadBuilderDeleteInputSchema
+>;
+
+export const agentThreadDeleteOutputSchema = z
+  .object({ id: idSchema })
+  .strict();
+
 /** Retry a terminal run with the same deployed agent version and input. */
 export const agentRunRetryInputSchema = z
   .object({ id: idSchema, actorId: idSchema.optional() })

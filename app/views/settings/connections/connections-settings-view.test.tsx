@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Connection, SyncCursor } from "../../../../contracts/connections.js";
@@ -85,11 +85,14 @@ describe("ConnectionsSettingsView", () => {
 
   it("disables a connection and loads sync diagnostics with accessible actions", async () => {
     const rpc = makeRpc();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<ConnectionsSettingsView rpcClient={rpc} />);
     await screen.findByText("Google Workspace");
 
     fireEvent.click(screen.getByRole("button", { name: "Disable Google connection" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: /Disable the google connection/,
+    });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Disable connection" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("connections_disable", { id: connection.id }),
     );

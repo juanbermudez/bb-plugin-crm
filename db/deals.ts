@@ -355,6 +355,7 @@ export class DealStore {
       const current = this.getRequired(id);
       const next: Deal = { ...current };
       let stageChanged = false;
+      let stageChangeReason: string | null = null;
       const has = (key: keyof DealUpdateInput): boolean => input[key] !== undefined;
       if (has("name")) next.name = requiredText(input.name as string, "Deal name");
       if (has("description")) next.description = nullableText(input.description);
@@ -370,6 +371,7 @@ export class DealStore {
         const stage = assertStage(input.stage as string);
         if (stage !== current.stage) {
           stageChanged = true;
+          stageChangeReason = has("closedReason") ? nullableText(input.closedReason) : null;
           next.stage = stage;
           next.stageChangedAt = nowIso();
           if (isClosedStage(stage)) {
@@ -393,7 +395,7 @@ export class DealStore {
           {
             type: "STAGE_CHANGE",
             subject: "Stage changed",
-            body: next.closedReason,
+            body: stageChangeReason,
             occurredAt,
             dealId: next.id,
             createdById: SYSTEM_ACTIVITY_AUTHOR_ID,

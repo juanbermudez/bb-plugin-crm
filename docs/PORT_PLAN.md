@@ -16,14 +16,19 @@ Source baselines:
 
 ## Implementation status for the `0.1.0` release candidate
 
-Phases 0–6 are implemented, including all core records, responsive BB-native
-views, inline editing, saved/dynamic columns, unified activity, enrichment,
-CRM-event/webhook automation, leased due-task dispatch, clarification prompts,
-and bounded BB project attachments. Phase 7 is implemented for privacy-safe
-tracking plus integration health boundaries; real Google, Microsoft, and Slack
-authorization remains provider-credential work. Phase 8 is implemented except
-for general API keys and per-user roles, which cannot be issued safely without
-a public BB current-user/RBAC authority. Phase 9 has automated coverage and a
+Phases 0–6 core records, responsive BB-native views, inline editing,
+saved/dynamic columns, unified activity, enrichment, CRM-event/webhook
+automation, leased due-task dispatch, clarification prompts, bounded BB
+project attachments, agent definition/run lifecycle, and the BB-native
+natural-language builder conversation surface are implemented. Public builder
+sharing and unrelated global BB thread-panel/mention surfaces are not claimed.
+Phase 7 is implemented for
+privacy-safe tracking plus
+integration health boundaries; provider OAuth and live Google, Microsoft, and
+Slack sync require externally supplied provider/agent-tool credentials and
+host authorization and are not bundled. Phase 8 is implemented except for
+general API keys and per-user roles, which cannot be issued safely without a
+public BB current-user/RBAC authority. Phase 9 has automated coverage and a
 focused packaged-browser smoke; Electron, complete keyboard, and full
 light/custom-theme passes remain open. Phase 10 is prepared through the public
 repository and marketplace draft, while the immutable tag and marketplace PR
@@ -61,8 +66,8 @@ that BB already owns.
 | Landing page and sign-in | Marketplace detail, README, and BB plugin install flow |
 | Standalone onboarding | First-open checklist and plugin settings status |
 | App organization slug | One installed plugin database per BB installation |
-| Better Auth sessions | BB's authenticated local application session |
-| Members and invitations | BB user/host context; compatibility page explains ownership |
+| Better Auth sessions | BB's authenticated local application session; CRM scope uses an installation-local owner because the public SDK exposes no current-user identity API |
+| Members and invitations | BB user/host context; CRM uses an installation-local owner and does not implement plugin RBAC because the public SDK exposes no current-user/RBAC API |
 | SSO provider management | BB authentication settings; CRM stores no second identity system |
 | Next.js routing | One BB `navPanel` with `subPath` routing |
 | Nest tRPC | BB plugin `defineRpcContract` and `useRpc` |
@@ -81,11 +86,12 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Runtime boundaries
 
 - `server.ts` wires settings, storage, RPC, realtime, CLI, tools, skills,
-  mentions, schedules, HTTP callbacks, and cleanup.
+  schedules, HTTP callbacks, and cleanup.
 - `db/` owns migrations, prepared statements, transactions, and domain stores.
 - `contracts/` owns Zod schemas shared by RPC inputs and outputs.
-- `services/` owns currency conversion, search, enrichment, tracking,
-  mailbox/calendar ingestion, and agent orchestration.
+- `services/` owns currency conversion, search, enrichment, tracking, and
+  agent orchestration; provider mailbox/calendar ingestion remains planned and
+  credential-gated.
 - `app.tsx` only registers BB frontend surfaces.
 - `app/` owns routing, shell, query state, view data hooks, and dialogs.
 - `views/` owns dashboard, table, record, agent, and settings UI.
@@ -96,13 +102,14 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - One `navPanel` named CRM owns `/plugins/crm/crm/*`.
 - One settings section shows data, integration, and migration health.
-- One thread panel action links a BB thread to a CRM record.
-- One message action files selected text as a note or fact.
-- Mention providers expose contacts, companies, and deals to the BB composer.
-- Native agent tools expose search, read, create, update, activity, fact,
-  research, and follow-up actions.
-- `bb crm` exposes list, show, create, update, import, export, activity,
-  research, sync, and diagnostics commands.
+- Record Agent tabs render plugin-spawned linked BB threads through host
+  `ThreadChat`; the builder uses a scoped `ThreadChat` assistant-message action
+  for explicit draft transfer, but no global BB thread-panel/message-action
+  slot or mention provider is registered.
+- Native agent tools expose CRM search/read/write, activity/task, custom-field,
+  evidence, and enrichment operations.
+- `bb crm` exposes status, doctor, list, show, create, update, archive, restore,
+  add-activity, tasks, import, and export commands.
 - Realtime `changed` signals invalidate affected frontend queries.
 
 ### Storage rules
@@ -189,30 +196,43 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 ### Agent workspace
 
-- Agent builder home and natural-language composer.
+- Agent definitions home, version editor, run history, and a natural-language
+  builder conversation tab backed by visible plugin-spawned BUILDER threads and
+  host `ThreadChat`.
 - Draft, validation, ready, deployed, live, paused, archived, and deleted states.
 - Agent capability summary and generated definition review.
 - Trigger configuration for manual, schedule, event, and webhook runs.
 - Run history drawer with queued, running, approval, success, failure,
   and cancellation states.
-- Builder chat history, share metadata, delete, and result views.
-- Record Agent tab with transcript, questions, citations, tool steps,
-  follow-up schedule, feedback, and new-conversation action.
+- Builder conversation history, explicit New/delete conversation actions, and
+  assistant-message draft transfer are available; a linked BB thread can
+  retain `sourceConversationId` when a new draft version is saved. Transcript
+  output is copied into the editor only as an unsaved suggestion for explicit
+  review.
+- Public builder sharing is not claimed because the BB SDK exposes no public
+  share relay; BB Connect or an external relay is required.
+- Record Agent tab renders linked record threads through host `ThreadChat`; the
+  host owns transcript and interaction details.
 - BB threads replace Eve durability. CRM rows store thread links and summaries.
 
 ### Settings and connections
 
 - General workspace name and reporting currency.
-- Agent provider/model/reasoning and research-key settings.
+- Agent provider/model/reasoning settings and an optional live BB research-agent selector; provider credentials stay with that agent's tools.
 - Archive retention policy.
-- Connections overview with liveness and last-sync state.
-- Google mail/calendar connection and sync state.
-- Microsoft mail/calendar connection and sync state.
-- Slack authorization, scopes, channels, people matching, and disconnect.
-- Intake endpoint and connection instructions.
+- Connections overview with liveness and last-sync metadata.
+- Planned Google mail/calendar connection and sync state; live sync requires
+  external provider/agent-tool credentials and host authorization.
+- Planned Microsoft mail/calendar connection and sync state; live sync requires
+  external provider/agent-tool credentials and host authorization.
+- Planned Slack authorization, scopes, channels, people matching, and
+  disconnect; live sync requires external provider/agent-tool credentials and
+  host authorization.
+- Source-compatible unavailable intake state and connection instructions.
 - Tracking site status, allowed domains, script, cookies, rules,
   traffic sources, operator domain confirmation, pause, and site-id rotation.
-- API key creation, one-time secret display, list, last-used state, and revoke.
+- General-purpose API keys are not issued because BB exposes no safe plugin
+  current-user/RBAC authority boundary.
 - Compatibility information for members and SSO that BB owns.
 
 ## Backend capability inventory
@@ -237,7 +257,11 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Support manual and fetched rates with manual precedence.
 - Re-rate only through an explicit operation.
 
-### Mail, calendar, and conversations
+### Planned mail, calendar, and conversations
+
+This is the source-compatible target, not a bundled live-sync implementation.
+OAuth/device authorization and sync require externally supplied
+provider/agent-tool credentials and host authorization.
 
 - OAuth or device authorization uses secret plugin settings and local callbacks.
 - Forward-only mailbox cursors prevent accidental historical bulk import.
@@ -245,7 +269,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Match records without inventing identities.
 - Missing integration configuration disables only that capability.
 
-### Slack
+### Planned Slack integration
+
+This is release-gated until external provider/agent-tool credentials and host
+authorization are available; no live Slack sync is bundled.
 
 - Store installation and workspace grants in secret settings or encrypted files.
 - Sync channel and member catalogs.
@@ -317,7 +344,6 @@ Tasks:
 - Implement company list query, search, sort, page, columns, saved view, and bulk selection.
 - Implement create, edit, archive, restore, delete, enrich, and export.
 - Implement wide company record drawer with related contacts, deals, and timeline.
-- Add company mention provider and agent read/update tools.
 
 Exit criteria:
 
@@ -332,7 +358,6 @@ Tasks:
 - Implement contact list, facets, saved views, bulk actions, and record drawer.
 - Implement fact ledger, brief, suggestions, dismissal, supersession, and citations.
 - Implement contact-to-company links, social links, work history, photos, and enrichment state.
-- Add contact mention provider and research/fact agent tools.
 
 Exit criteria:
 
@@ -347,7 +372,6 @@ Tasks:
 - Implement currency rates, frozen conversion, unconverted disclosures, and re-rate controls.
 - Implement deal list, bulk actions, create/edit drawer, and stage stepper.
 - Implement dashboard aggregates, trends, stage charts, and recent work.
-- Add deal mention provider and agent deal tools.
 
 Exit criteria:
 
@@ -363,7 +387,6 @@ Tasks:
 - Complete unified timeline and activity composer.
 - Complete global search and quick switcher.
 - Complete CSV import/export and versioned JSON backup/restore.
-- Complete BB message action for filing selected text.
 
 Exit criteria:
 
@@ -378,7 +401,9 @@ Tasks:
 - Register native CRM tools with strict schemas and auditable presentations.
 - Implement task leasing, schedules, run state, actions, audit events, and cancellation.
 - Implement record Agent tab using linked BB threads.
-- Implement agent builder, versions, triggers, approvals, run history, and sharing metadata.
+- Implement agent definitions, versions, triggers, approvals, run history,
+  deletion lifecycle, and natural-language builder chat. Keep public sharing
+  as an explicit BB/external integration gap.
 - Stop and archive hidden worker threads after every terminal outcome.
 
 Exit criteria:
@@ -391,8 +416,12 @@ Exit criteria:
 
 Tasks:
 
-- Implement Google and Microsoft authorization, forward sync, health, and disconnect.
-- Implement Slack authorization, scopes, channels, member matching, and delivery checks.
+- Implement Google and Microsoft authorization, forward sync, health, and
+  disconnect only when external provider/agent-tool credentials and host
+  authorization are available.
+- Implement Slack authorization, scopes, channels, member matching, and
+  delivery checks only when external provider/agent-tool credentials and host
+  authorization are available.
 - Preserve the source's unavailable intake state; do not issue an unused
   credential until a real, authenticated intake contract exists.
 - Implement tracking loader, tracker config, event collector, filing, operator confirmation,
@@ -408,7 +437,8 @@ Exit criteria:
 
 Tasks:
 
-- Implement API keys, reporting currency, retention, model, and research settings.
+- Implement reporting currency, retention, model, and research-agent settings;
+  keep general-purpose API keys blocked until BB exposes a safe current-user/RBAC authority.
 - Add BB-owned members/SSO compatibility information.
 - Add database integrity check, repair guidance, backup, and migration status.
 - Add rate limits, bounded pagination, abort handling, and structured logs.
@@ -432,7 +462,8 @@ Tasks:
 - Test drawer focus, keyboard access, overlay stacking, and navigation history.
 - Test reload during a running agent and during an integration sync.
 - Test fresh install, upgrade, export/import, disable, enable, and uninstall recovery.
-- Record remaining parity gaps in the matrix. No hidden omissions remain.
+- Record remaining parity gaps in the matrix; do not close release while known
+  public-sharing, provider-sync, or unsupported host-surface gaps remain.
 
 Exit criteria:
 

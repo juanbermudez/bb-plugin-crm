@@ -14,6 +14,7 @@ import type {
   AgentDetail,
   AgentListItem,
   AgentRunDetail,
+  AgentThreadLink,
   AgentTrigger,
   AgentVersion,
 } from "../../../contracts/agents.js";
@@ -21,6 +22,31 @@ import { AgentsView, type AgentsRpcClient } from "./index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
   useRpc: () => ({ call: vi.fn() }),
+  ThreadChat: ({
+    threadId,
+    messageActions,
+  }: {
+    threadId: string;
+    messageActions?: Array<{ run(message: { id: string; threadId: string; role: "assistant"; text: string; sourceSeqEnd: number }): void | Promise<void> }>;
+  }) => (
+    <div data-testid="agent-thread-chat">
+      BB thread {threadId}
+      {messageActions?.[0] ? (
+        <button
+          type="button"
+          onClick={() => void messageActions[0]!.run({
+            id: "assistant-message-1",
+            threadId,
+            role: "assistant",
+            text: "Exact assistant automation draft.",
+            sourceSeqEnd: 7,
+          })}
+        >
+          Mock use as version draft
+        </button>
+      ) : null}
+    </div>
+  ),
 }));
 
 afterEach(() => {
@@ -132,6 +158,20 @@ const listItem: AgentListItem = {
   },
 };
 
+const builderLink: AgentThreadLink = {
+  id: "builder_link_1",
+  agentId: agent.id,
+  threadId: "bb-builder-1",
+  kind: "BUILDER",
+  runId: null,
+  versionId: version.id,
+  recordType: null,
+  recordId: null,
+  summary: "CRM automation builder conversation",
+  createdAt: "2026-08-26T10:00:00.000Z",
+  updatedAt: "2026-08-26T10:00:00.000Z",
+};
+
 function makeRpc(
   implementation?: (method: string, input: unknown) => Promise<unknown>,
 ) {
@@ -190,6 +230,60 @@ describe("AgentsView", () => {
     await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_deploy", {
       agentId: agent.id,
       versionId: version.id,
+    }));
+  });
+
+  it("restores a deep-linked Conversation tab and reports tab changes", async () => {
+    const onTabChange = vi.fn();
+    const rpc = makeRpc(async (method) => {
+      if (method === "agents_list") return [listItem];
+      if (method === "agents_get") return agent;
+      if (method === "agents_threads_list") return [];
+      return [];
+    });
+    render(
+      <AgentsView
+        rpcClient={rpc}
+        initialRecordId={agent.id}
+        initialTab="conversation"
+        onTabChange={onTabChange}
+      />,
+    );
+    const drawer = await screen.findByRole("dialog", { name: agent.name });
+    expect(within(drawer).getByRole("tab", { name: "Conversation" }).getAttribute("aria-selected")).toBe("true");
+    expect(await within(drawer).findByText("No builder conversation yet")).toBeDefined();
+
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Versions" }));
+    expect(onTabChange).toHaveBeenCalledWith("versions");
+  });
+
+  it("copies an exact assistant message into an unsaved version draft with provenance", async () => {
+    const rpc = makeRpc(async (method) => {
+      if (method === "agents_list") return [listItem];
+      if (method === "agents_get") return agent;
+      if (method === "agents_threads_list") return [builderLink];
+      if (method === "agents_versions_create") return version;
+      return [];
+    });
+    render(<AgentsView rpcClient={rpc} initialRecordId={agent.id} initialTab="conversation" />);
+    const drawer = await screen.findByRole("dialog", { name: agent.name });
+    await within(drawer).findByTestId("agent-thread-chat");
+    fireEvent.click(within(drawer).getByRole("button", { name: "Mock use as version draft" }));
+
+    const instructions = within(drawer).getByLabelText("Instructions") as HTMLTextAreaElement;
+    expect(instructions.value).toBe("Exact assistant automation draft.");
+    fireEvent.click(within(drawer).getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_versions_create", {
+      agentId: agent.id,
+      data: {
+        status: "DRAFT",
+        instructions: "Exact assistant automation draft.",
+        modelId: version.modelId,
+        modelContextWindowTokens: version.modelContextWindowTokens,
+        manifest: version.manifest,
+        sandboxPolicy: version.sandboxPolicy,
+        sourceConversationId: builderLink.threadId,
+      },
     }));
   });
 

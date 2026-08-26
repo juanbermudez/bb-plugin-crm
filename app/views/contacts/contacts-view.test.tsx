@@ -173,6 +173,26 @@ describe("ContactsView", () => {
     expect(rpc.call).toHaveBeenCalledWith("contacts_get", { id: "con_ada" });
   });
 
+  it("restores a deep-linked drawer tab and reports tab changes", async () => {
+    const onTabChange = vi.fn();
+    const rpc = makeRpc();
+    render(
+      <ContactsView
+        rpcClient={rpc}
+        initialRecordId={contact.id}
+        initialTab="deals"
+        onTabChange={onTabChange}
+      />,
+    );
+
+    const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    expect(within(drawer).getByRole("tab", { name: "Deals" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Overview" }));
+    expect(onTabChange).toHaveBeenCalledWith("overview");
+  });
+
   it("shows an empty state when a contact has no related deals", async () => {
     const noDeals = { ...contact, deals: [] };
     const rpc = makeRpc(async (method) => {

@@ -21,4 +21,13 @@ describe("CRM panel routes", () => {
       ),
     ).toEqual({ kind: "companies", recordId: "cmp/acme" });
   });
+
+  it("round-trips a record drawer tab in the panel sub-path", () => {
+    const route = {
+      kind: "deals" as const,
+      recordId: "deal/1",
+      tab: "activity",
+    };
+    expect(parseCrmRoute(crmRouteToSubPath(route))).toEqual(route);
+  });
 });

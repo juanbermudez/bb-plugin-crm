@@ -28,6 +28,7 @@ import type {
   FieldCoverageOutput,
 } from "../../../../contracts/core.js";
 import {
+  AlertDialog,
   EmptyState,
   PageHeader,
   RecordDrawer,
@@ -118,6 +119,10 @@ interface FieldFormValue {
 type OptionMutation = "archive" | "restore" | "delete";
 type FieldMutation = "archive" | "restore" | "delete";
 type CoverageState = FieldCoverageOutput | null;
+
+type CustomFieldsConfirmAction =
+  | { kind: "field"; field: FieldDefinition; mutation: FieldMutation }
+  | { kind: "option"; option: OptionDraft; mutation: OptionMutation };
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -210,10 +215,6 @@ function optionConfirmationMessage(
     return `Restore the “${option.label}” option?`;
   }
   return `Delete the “${option.label}” option permanently? Existing values may no longer resolve to a label.`;
-}
-
-function confirmInBrowser(message: string): boolean {
-  return typeof window === "undefined" || window.confirm(message);
 }
 
 function optionsForInput(
@@ -666,6 +667,8 @@ export function CustomFieldsSettingsView({
     mutation: FieldMutation;
   } | null>(null);
   const [reorderBusyId, setReorderBusyId] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] =
+    useState<CustomFieldsConfirmAction | null>(null);
 
   const load = useCallback(async () => {
     const requestId = ++loadRequestRef.current;
@@ -867,7 +870,6 @@ export function CustomFieldsSettingsView({
 
   const mutateField = useCallback(
     async (field: FieldDefinition, mutation: FieldMutation) => {
-      if (!confirmInBrowser(confirmationMessage(mutation, field))) return;
       setFieldBusy({ id: field.id, mutation });
       setError(null);
       try {
@@ -888,6 +890,7 @@ export function CustomFieldsSettingsView({
         setRefreshKey((value) => value + 1);
       } catch (cause) {
         setError(errorMessage(cause));
+        throw cause;
       } finally {
         setFieldBusy(null);
       }
@@ -898,7 +901,6 @@ export function CustomFieldsSettingsView({
   const mutateOption = useCallback(
     async (option: OptionDraft, mutation: OptionMutation) => {
       if (option.id === undefined) return;
-      if (!confirmInBrowser(optionConfirmationMessage(mutation, option))) return;
       setOptionBusyId(option.id);
       setOptionError(null);
       try {
@@ -925,6 +927,7 @@ export function CustomFieldsSettingsView({
         );
       } catch (cause) {
         setOptionError(errorMessage(cause));
+        throw cause;
       } finally {
         setOptionBusyId(null);
       }
@@ -1257,7 +1260,13 @@ export function CustomFieldsSettingsView({
                               size="sm"
                               aria-label={`Restore field “${field.label}”`}
                               disabled={isBusy}
-                              onClick={() => void mutateField(field, "restore")}
+                              onClick={() =>
+                                setConfirmAction({
+                                  kind: "field",
+                                  field,
+                                  mutation: "restore",
+                                })
+                              }
                             >
                               <Icon name="ArchiveRestore" aria-hidden="true" />
                               Restore
@@ -1269,7 +1278,13 @@ export function CustomFieldsSettingsView({
                               size="sm"
                               aria-label={`Archive field “${field.label}”`}
                               disabled={isBusy}
-                              onClick={() => void mutateField(field, "archive")}
+                              onClick={() =>
+                                setConfirmAction({
+                                  kind: "field",
+                                  field,
+                                  mutation: "archive",
+                                })
+                              }
                             >
                               <Icon name="Archive" aria-hidden="true" />
                               Archive
@@ -1281,7 +1296,13 @@ export function CustomFieldsSettingsView({
                             size="sm"
                             aria-label={`Delete field “${field.label}”`}
                             disabled={isBusy}
-                            onClick={() => void mutateField(field, "delete")}
+                            onClick={() =>
+                              setConfirmAction({
+                                kind: "field",
+                                field,
+                                mutation: "delete",
+                              })
+                            }
                           >
                             <Icon name="Trash2" aria-hidden="true" />
                             Delete
@@ -1310,6 +1331,49 @@ export function CustomFieldsSettingsView({
           </Card>
         </div>
       </div>
+
+      <AlertDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+        title={
+          confirmAction?.kind === "field"
+            ? confirmAction.mutation === "archive"
+              ? `Archive the “${confirmAction.field.label}” field?`
+              : confirmAction.mutation === "restore"
+                ? `Restore the “${confirmAction.field.label}” field?`
+                : `Delete the “${confirmAction.field.label}” field permanently?`
+            : confirmAction?.mutation === "archive"
+              ? `Archive the “${confirmAction.option.label}” option?`
+              : confirmAction?.mutation === "restore"
+                ? `Restore the “${confirmAction.option.label}” option?`
+                : `Delete the “${confirmAction?.option.label}” option permanently?`
+        }
+        description={
+          confirmAction?.kind === "field"
+            ? confirmationMessage(confirmAction.mutation, confirmAction.field)
+            : confirmAction === null
+              ? undefined
+              : optionConfirmationMessage(confirmAction.mutation, confirmAction.option)
+        }
+        confirmLabel={
+          confirmAction?.mutation === "delete"
+            ? "Delete"
+            : confirmAction?.mutation === "archive"
+              ? "Archive"
+              : "Restore"
+        }
+        destructive={confirmAction?.mutation === "delete"}
+        disabled={fieldBusy !== null || optionBusyId !== null}
+        onConfirm={async () => {
+          if (confirmAction?.kind === "field") {
+            await mutateField(confirmAction.field, confirmAction.mutation);
+          } else if (confirmAction?.kind === "option") {
+            await mutateOption(confirmAction.option, confirmAction.mutation);
+          }
+        }}
+      />
 
       <RecordDrawer
         open={editorOpen}
@@ -1361,7 +1425,9 @@ export function CustomFieldsSettingsView({
           onChange={setEditorValue}
           onAddOption={addOption}
           onRemoveOption={removeOption}
-          onOptionMutation={(option, mutation) => void mutateOption(option, mutation)}
+          onOptionMutation={(option, mutation) =>
+            setConfirmAction({ kind: "option", option, mutation })
+          }
           onFillRest={() => {
             if (editingField !== null) void fillRest(editingField);
           }}

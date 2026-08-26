@@ -9,6 +9,8 @@ export type CrmRouteKind =
 export interface CrmRoute {
   kind: CrmRouteKind;
   recordId: string | null;
+  /** Optional record drawer tab/subview, persisted in the BB panel sub-path. */
+  tab?: string;
 }
 
 const ROUTE_KINDS = new Set<CrmRouteKind>([
@@ -36,11 +38,16 @@ export function parseCrmRoute(rawSubPath: string): CrmRoute {
     candidate !== undefined && ROUTE_KINDS.has(candidate as CrmRouteKind)
       ? (candidate as CrmRouteKind)
       : "dashboard";
-  return { kind, recordId: segments[1] ?? null };
+  return {
+    kind,
+    recordId: segments[1] ?? null,
+    ...(segments[2] === undefined ? {} : { tab: segments[2] }),
+  };
 }
 
 export function crmRouteToSubPath(route: CrmRoute): string {
-  return route.recordId === null
-    ? route.kind
-    : `${route.kind}/${encodeURIComponent(route.recordId)}`;
+  if (route.recordId === null) return route.kind;
+  const base = `${route.kind}/${encodeURIComponent(route.recordId)}`;
+  const tab = route.tab?.trim();
+  return tab ? `${base}/${encodeURIComponent(tab)}` : base;
 }

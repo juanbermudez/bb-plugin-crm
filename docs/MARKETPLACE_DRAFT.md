@@ -91,8 +91,13 @@ transactional CRM event triggers, signed external webhook triggers, fixed
 tracking loader/collector routes, inline record editing, contact portrait URL
 fallbacks, bounded custom-field fill-rest, due-task leasing, native agent
 clarification, BB project attachments, archive retention, a BB-thread
-dispatcher, and the installation CLI for status, health, lists, CRUD,
-activities, tasks, and versioned import/export.
+dispatcher, and the installation CLI for status, doctor, lists, CRUD,
+add-activity, tasks, and versioned import/export. Natural-language builder
+chat includes durable visible-thread history, explicit new/delete actions, and
+reviewed assistant-message transfer into a version draft. Public sharing is
+not included because BB exposes no public plugin share relay. The
+source's intake route remains unavailable; tracking ingestion uses
+operator-confirmed site authority.
 
 ## Source release
 
@@ -104,13 +109,16 @@ activities, tasks, and versioned import/export.
 
 ## Plugin checks
 
-- 45 test files / 197 tests passed with `npm test`
+- Historical clean-gate baseline at implementation revision `7166be5`: 45 test
+  files / 197 tests passed with `npm test`; re-run against the approved release
+  tag because these results predate current shared-worktree edits.
 - `npm run typecheck` passed
 - `npm run build` passed and emitted identity-checked metadata
 - `git diff --check` passed
 - `<approved public-tag install/build command>` remains release-gated and
   unrun
-- Live packaged-BB panel smoke passed for Dashboard Me/Everyone, saved default,
+- Live packaged-BB panel smoke passed for Dashboard Me (installation-local
+  owner)/Everyone, saved default,
   advanced Companies facets/selection, Agent creation, Connections/Tracking
   empty states, tracking site/one-time credential behavior, and CLI
   status/doctor/list. A focused 390×844 compact dark-theme pass also succeeded;
@@ -123,22 +131,35 @@ activities, tasks, and versioned import/export.
 ## Marketplace checks
 
 - `<approved marketplace install command>` remains release-gated and unrun.
-- `<approved marketplace build command>` remains release-gated and unrun;
-  `<entry count>` is intentionally unfilled.
-- `<approved marketplace check command>` remains release-gated; liveness for
-  `<approved-release-tag>` is not yet claimed.
-- `<approved entry-id/manifest check>` remains unrun; the intended id is
-  `crm` in `entries/crm.json`.
-- Vendored icon path, byte count, and SHA-256 remain placeholders until the
-  marketplace entry is prepared; the source icon is `assets/icon.svg`.
+- A temporary concrete entry/icon passed `npm ci` and `npm run build` at the
+  audited marketplace baseline, producing 83 entries. Re-run the approved
+  marketplace build command after release.
+- The temporary `npm run check` reached the expected source-liveness gate and
+  failed only because the approved release tag does not exist yet.
+- The temporary build validated entry id `crm`, its repository-root source
+  shape, and `icons/crm-f1ddd8a4.svg` against the strict schema.
+- The audited source icon is 784 bytes with SHA-256
+  `f1ddd8a46e88b19777e38d4a2cbc0fe222a4497d64f5b163248a3d78b91a61b1`.
+
+### Schema/build audit status
+
+The draft entry shape and repository-root source layout were manually checked
+against the local marketplace checkout `../marketplace-upstream` at audited
+baseline `a683caa2ffb502cdc26926c48c88a45a8579970a`, including
+`schema/marketplace.schema.json` and `scripts/build.mjs`. The draft intentionally
+omits per-entry `engines`, `subdir`, and `tagPrefix`. A temporary concrete
+entry/icon passed `npm ci` and `npm run build` (83 entries); `npm run check`
+failed only at the expected source-liveness gate because `v0.1.0` has not been
+approved or created. No full marketplace pass is claimed before that tag.
 
 ## Permissions and security
 
 - The plugin runs as full-trust BB extension code.
 - CRM records, agent state, connection metadata/health, and tracking data are
   stored in the BB plugin SQLite database. Small plugin settings hold the
-  workspace name, reporting currency, and optional research key; no broad
-  filesystem API or direct provider credential store is bundled.
+  workspace name, reporting currency, and optional research-agent id; provider
+  credentials remain in that agent's configured tools. No broad filesystem API
+  or direct provider credential store is bundled.
 - BB threads/projects, realtime invalidation, background services, settings,
   and the plugin CLI are the host surfaces used by the implementation.
 - Agent attachments are bounded, copied through resolved BB project APIs, and
@@ -146,9 +167,11 @@ activities, tasks, and versioned import/export.
   local, opt-in, lease-fenced, and does not create or claim host-visible BB
   Tasks.
 - Provider authorization and OAuth credentials remain host-managed and are not
-  bundled. Tracking secrets are displayed once at provisioning and are not
-  returned by list/read views; optional integrations fail closed and secrets
-  are not returned to the frontend.
+  bundled. Live mail/calendar/Slack sync additionally requires externally
+  supplied provider/agent-tool credentials and host authorization. Tracking
+  secrets are displayed once at provisioning and are not returned by list/read
+  views; optional integrations fail closed and secrets are not returned to the
+  frontend.
 - BB SDK `0.4.8` exposes no plugin RBAC/current-user identity or blob API;
   contact photos therefore keep an HTTPS source URL with initials fallback.
   Webhook triggers require external producers, a thread reported as

@@ -10,6 +10,7 @@ import {
   type CurrencyMeta,
 } from "../../../../contracts/core.js";
 import {
+  AlertDialog,
   EmptyState,
   PageHeader,
   RecordDrawer,
@@ -132,6 +133,10 @@ interface ManualRateFormValue {
   asOf: string;
   provider: string;
 }
+
+type CurrencyConfirmAction =
+  | { kind: "remove-rate"; rate: CurrencyRate }
+  | { kind: "rerate-all" };
 
 function emptyManualRate(baseCurrency: CurrencyCode): ManualRateFormValue {
   const quoteCurrency =
@@ -288,6 +293,7 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
   const [rerateBusy, setRerateBusy] = useState(false);
   const [rerateError, setRerateError] = useState<string | null>(null);
   const [rerateResult, setRerateResult] = useState<CurrencyRerateSummary | null>(null);
+  const [confirmAction, setConfirmAction] = useState<CurrencyConfirmAction | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -379,12 +385,6 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
   const removeManualRate = useCallback(
     async (rate: CurrencyRate) => {
       if (rate.source !== "MANUAL") return;
-      if (
-        typeof window !== "undefined" &&
-        !window.confirm(`Remove the manual ${pairLabel(rate)} override?`)
-      ) {
-        return;
-      }
       setError(null);
       try {
         await rpc.call("currency_rates_removeManual", {
@@ -394,20 +394,13 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
         setRefreshKey((value) => value + 1);
       } catch (cause) {
         setError(errorMessage(cause));
+        throw cause;
       }
     },
     [rpc],
   );
 
   const rerateAll = useCallback(async () => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Re-rate all deals using ${list.reportingCurrency}? Existing frozen base amounts will be replaced by the selected rates.`,
-      )
-    ) {
-      return;
-    }
     setRerateBusy(true);
     setRerateError(null);
     setRerateResult(null);
@@ -417,6 +410,7 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setRerateError(errorMessage(cause));
+      throw cause;
     } finally {
       setRerateBusy(false);
     }
@@ -438,7 +432,7 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
               variant="outline"
               size="sm"
               disabled={rerateBusy}
-              onClick={() => void rerateAll()}
+              onClick={() => setConfirmAction({ kind: "rerate-all" })}
             >
               <Icon name="RotateCcw" aria-hidden="true" />
               {rerateBusy ? "Re-rating…" : "Rerate all deals"}
@@ -583,7 +577,7 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
                           variant="ghost"
                           size="sm"
                           aria-label={`Remove ${pairLabel(rate)} manual rate`}
-                          onClick={() => void removeManualRate(rate)}
+                          onClick={() => setConfirmAction({ kind: "remove-rate", rate })}
                         >
                           <Icon name="Trash2" aria-hidden="true" />
                           Remove
@@ -648,6 +642,33 @@ export function CurrencySettingsView({ rpcClient }: CurrencySettingsViewProps) {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+        title={
+          confirmAction?.kind === "remove-rate"
+            ? `Remove the manual ${pairLabel(confirmAction.rate)} override?`
+            : "Rerate all deals?"
+        }
+        description={
+          confirmAction?.kind === "remove-rate"
+            ? "The fetched rate, if available, will become effective for this pair."
+            : `Re-rate all deals using ${list.reportingCurrency}. Existing frozen base amounts will be replaced by the selected rates.`
+        }
+        confirmLabel={confirmAction?.kind === "remove-rate" ? "Remove rate" : "Rerate deals"}
+        destructive={confirmAction?.kind === "remove-rate"}
+        disabled={rerateBusy}
+        onConfirm={async () => {
+          if (confirmAction?.kind === "remove-rate") {
+            await removeManualRate(confirmAction.rate);
+          } else if (confirmAction?.kind === "rerate-all") {
+            await rerateAll();
+          }
+        }}
+      />
 
       <RecordDrawer
         open={editorOpen}

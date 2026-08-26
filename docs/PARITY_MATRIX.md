@@ -19,7 +19,7 @@ Status meanings:
 | Sign-in | BB application session | host-owned | 0 |
 | Grant mailbox access | CRM connection authorization boundary | building | 7 |
 | Workspace onboarding | Persisted first-open CRM checklist | done | 8 |
-| Research onboarding | Secret research-key setting | done | 8 |
+| Research onboarding | Explicit live/deployed BB research-agent selection; provider credentials stay with that agent's tools | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
 | Desktop icon rail | Inner CRM rail inside BB nav panel | done | 1 |
 | Mobile navigation | Compact CRM navigation row | done | 1 |
@@ -34,7 +34,7 @@ Status meanings:
 
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
-| Me/everyone scope | Dashboard scope control | done | 4 |
+| Me/everyone scope | Dashboard scope control; Me uses the installation-local owner because BB exposes no current-user identity | done | 4 |
 | Closed won comparison | Dashboard metric | done | 4 |
 | Open pipeline | Dashboard metric | done | 4 |
 | Win rate | Dashboard metric | done | 4 |
@@ -163,7 +163,7 @@ the server.
 | Record conversation | Idempotent plugin-spawned linked BB thread | done | 6 |
 | Transcript and tools | Host `ThreadChat` for linked record threads | done | 6 |
 | Clarification question | Strict `ask_question` pending interaction and native BB input renderer | done | 6 |
-| Builder home/chat | CRM Agents route, editor, runs, and linked record chat | done | 6 |
+| Builder home/chat | CRM Agents route, definition/version editor, runs, durable BUILDER thread history, explicit new/delete conversation actions, assistant-message draft transfer, and host `ThreadChat` | done | 6 |
 | Builder attachments | Bounded upload/read/copy through resolved BB project attachment APIs | done | 6 |
 | Agent definitions and versions | Plugin tables and editor | done | 6 |
 | Delete agent definition | Durable DELETED fence, trigger shutdown, active-run cancellation, and hidden-worker cleanup with retained history | done | 6 |
@@ -175,12 +175,16 @@ the server.
 | Run/action/audit history | Plugin tables and drawer | done | 6 |
 | Approval | Durable approve/deny actions and run UI | done | 6 |
 | Retry/cancel | Auditable retry plus linked-thread cancel cleanup | done | 6 |
-| Share read-only builder chat | Local export only | gap | 6 |
+| Share read-only builder chat | Not claimed: BB SDK exposes no public share relay; BB Connect or an external relay is required | gap | 6 |
 | Slack message action | Optional Slack integration | planned | 6/7 |
 
-Fallback for sharing: export a redacted conversation document. The public BB
-SDK exposes no share relay; a publicly reachable share requires BB Connect or
-an external relay.
+Builder chat is available through visible plugin-spawned BUILDER links and the
+host `ThreadChat`. An assistant-message action can copy exact visible text into
+the version editor and retain the selected BB thread id as
+`sourceConversationId` provenance, but saving, validating, and deploying remain
+explicit user actions.
+Public sharing remains a gap: the public BB SDK exposes no share relay, so a
+publicly reachable share requires BB Connect or an external relay.
 
 ## Connections, tracking, and settings
 
@@ -203,7 +207,7 @@ an external relay.
 | Retention rollup | Bounded rollup/prune RPCs | done | 7 |
 | Workspace name | Plugin setting | done | 1 |
 | Reporting currency | Plugin setting | done | 1 |
-| Research API key | Secret plugin setting | done | 1 |
+| Research agent | Optional live/deployed BB agent selector; provider credentials remain in that agent's tools | done | 1/6 |
 | Archive retention | Bounded setting, prune RPC, and background service | done | 8 |
 | Agent model | Strict provider/model/reasoning settings forwarded to BB | done | 8 |
 | API keys | Scoped user tokens | gap | 8 |
@@ -223,7 +227,9 @@ delegating that token would grant unsafe installation-wide authority.
 
 Fallback for members: the first marketplace release operates as one
 installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity or RBAC
-API, so role changes and per-user authorization are not implemented.
+API, so role changes and per-user authorization are not implemented. Dashboard
+“Me” therefore filters by that installation-local owner rather than a BB user
+identity.
 
 The following boundaries are intentional and remain release notes rather than
 parity claims:
@@ -231,9 +237,9 @@ parity claims:
 - BB SDK `0.4.8` has no plugin blob API; portraits and other binary assets are
   not claimed as a hosted plugin capability.
 - Provider connection cards and health/metadata persistence are implemented,
-  but real OAuth credentials and authorization flows are not bundled. A host-
-  authorized provider flow is required before mailbox, calendar, or Slack
-  sync can run.
+  but provider OAuth, authorization, and live mailbox/calendar/Slack sync are
+  not bundled. They require externally supplied provider/agent-tool credentials
+  and host authorization before they can run.
 - The dispatcher can request a thread stop, but BB exposes no public
   cancellation lifecycle for a thread that reports `stopping`; the linked run
   remains pending until an unambiguous idle, failed, or deleted signal (or an
@@ -254,8 +260,10 @@ parity claims:
 - A plugin record can be linked atomically to a thread the plugin spawns. The
   SDK has no callback for attaching an arbitrary pre-existing user-composed BB
   thread, so that path is not claimed.
-- Builder sharing is local export only. BB exposes no public share relay, so a
-  public share requires BB Connect or an external relay.
+- Builder chat is bundled as visible plugin-spawned BUILDER threads rendered by
+  host `ThreadChat`; public sharing is not claimed because BB exposes no public
+  share relay. A local redacted export or BB Connect/external relay remains the
+  feasible sharing fallback.
 
 ## Release and distribution
 
