@@ -15,3 +15,8 @@ The BB source baseline is commit
 The locally ejected animated Select primitive derives from the free
 [beUI Select](https://beui.dev/components/motion/select) registry source and is
 adapted to use BB's existing icon and theme utilities.
+
+The locally ejected searchable grouped filter menu derives from the free
+[beUI Combobox](https://beui.dev/components/motion/combobox) interaction and
+list pattern. It is adapted to CRM's multi-select facets and BB's responsive
+popover rather than installing the full registry component set.

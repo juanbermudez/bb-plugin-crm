@@ -1614,7 +1614,7 @@ export function ContactsView({
                 setPage(1);
               }}
               placeholder="Search contacts by name, email, or company…"
-              containerClassName="w-56 shrink-0"
+              containerClassName="w-96 shrink-0"
             />
             <ListControls
               compact

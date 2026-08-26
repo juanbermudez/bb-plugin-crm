@@ -532,17 +532,17 @@ describe("ContactsView", () => {
     render(<ContactsView rpcClient={rpc} />);
 
     await screen.findByText("Ada Lovelace");
-    fireEvent.click(screen.getByLabelText("Sort contacts"));
+    fireEvent.click(screen.getByRole("button", { name: /Sort contacts/ }));
     fireEvent.click(screen.getByRole("option", { name: "Title" }));
     fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
-    fireEvent.click(screen.getByLabelText("VP Engineering"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^VP Engineering/ }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "contacts_list",
         expect.objectContaining({ sort: "title", title: ["VP Engineering"] }),
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "contacts_list",

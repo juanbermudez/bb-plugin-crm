@@ -316,7 +316,8 @@ export function SavedViewBar({
           value={selectedViewId ?? ""}
           disabled={loading}
           icon="ListView"
-          className="w-36 min-w-36"
+          iconOnly
+          contentClassName="min-w-48"
           options={[
             { value: "", label: "All records" },
             ...views.map((view) => ({

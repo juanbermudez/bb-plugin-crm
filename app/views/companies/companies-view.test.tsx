@@ -394,7 +394,7 @@ describe("CompaniesView", () => {
     render(<CompaniesView rpcClient={rpc} />);
 
     await screen.findByText("Acme Corporation");
-    const sort = screen.getByLabelText("Sort companies");
+    const sort = screen.getByRole("button", { name: /Sort companies/ });
     fireEvent.click(sort);
     expect(screen.getByRole("option", { name: "Contacts" })).toBeDefined();
     expect(screen.getByRole("option", { name: "Open deals" })).toBeDefined();
@@ -409,13 +409,13 @@ describe("CompaniesView", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
-    await screen.findByLabelText("Enterprise");
+    await screen.findByRole("checkbox", { name: /^Enterprise/ });
     const segmentFacet = screen.getByText("Segment").closest("fieldset");
     expect(segmentFacet).not.toBeNull();
     expect(within(segmentFacet as HTMLElement).getByText("1")).toBeDefined();
-    fireEvent.click(screen.getByLabelText("Active within 7 days"));
-    fireEvent.click(screen.getByLabelText("SaaS"));
-    fireEvent.click(screen.getByLabelText("Enterprise"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Active within 7 days/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^SaaS/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Enterprise/ }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "companies_list",
@@ -519,7 +519,7 @@ describe("CompaniesView", () => {
         }),
       ),
     );
-    expect(screen.getByLabelText("Sort companies").textContent).toContain("Domain");
+    expect(screen.getByRole("button", { name: "Sort companies: Domain" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Sort descending" })).toBeDefined();
   });
 

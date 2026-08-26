@@ -199,12 +199,14 @@ export function Select({
 export interface SelectTriggerProps {
   className?: string;
   children: ReactNode;
+  showChevron?: boolean;
   "aria-label"?: string;
 }
 
 export function SelectTrigger({
   className,
   children,
+  showChevron = true,
   "aria-label": ariaLabel,
 }: SelectTriggerProps) {
   const context = useSelectContext("SelectTrigger");
@@ -247,14 +249,16 @@ export function SelectTrigger({
       )}
     >
       {children}
-      <motion.span
-        aria-hidden="true"
-        animate={{ rotate: context.open ? 180 : 0 }}
-        transition={context.reduce ? { duration: 0 } : CHEVRON_TRANSITION}
-        className="text-muted-foreground"
-      >
-        <Icon name="ChevronDown" aria-hidden="true" className="size-4" />
-      </motion.span>
+      {showChevron ? (
+        <motion.span
+          aria-hidden="true"
+          animate={{ rotate: context.open ? 180 : 0 }}
+          transition={context.reduce ? { duration: 0 } : CHEVRON_TRANSITION}
+          className="text-muted-foreground"
+        >
+          <Icon name="ChevronDown" aria-hidden="true" className="size-4" />
+        </motion.span>
+      ) : null}
     </motion.button>
   );
 }

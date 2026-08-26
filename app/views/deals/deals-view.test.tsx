@@ -652,10 +652,10 @@ describe("DealsView", () => {
     render(<DealsView rpcClient={rpc} />);
 
     await screen.findByText("Acme Expansion");
-    fireEvent.click(screen.getByLabelText("Sort deals"));
+    fireEvent.click(screen.getByRole("button", { name: /Sort deals/ }));
     fireEvent.click(screen.getByRole("option", { name: "Amount" }));
     fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
-    fireEvent.click(screen.getByLabelText("Demo booked"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Demo booked/ }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "deals_list",

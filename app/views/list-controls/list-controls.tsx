@@ -8,12 +8,7 @@ import {
 
 import { Button } from "../../../components/ui/button.js";
 import { Icon } from "../../../components/ui/icon.js";
-import { Input } from "../../../components/ui/input.js";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "../../../components/ui/popover.js";
+import { FilterMenu } from "../../../components/beui/filter-menu.js";
 import type { FieldDefinition, SortDirection } from "../../../contracts/core.js";
 import { cn } from "../../../lib/utils.js";
 import { TableToolbarSelect } from "../../components/table-toolbar-select.js";
@@ -119,7 +114,6 @@ export function ListControls({
   compactMode = "all",
 }: ListControlsProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filterQuery, setFilterQuery] = useState("");
   const filtersId = useId();
   const activeFilters = Object.entries(filters).flatMap(([id, values]) =>
     values.map((value) => ({ id, value })),
@@ -138,23 +132,6 @@ export function ListControls({
         .map((value) => ({ value, label: value })),
     ];
   };
-  const normalizedFilterQuery = filterQuery.trim().toLocaleLowerCase();
-  const visibleFacets = availableFacets
-    .map((facet) => ({
-      facet,
-      options: facetOptions(facet).filter(
-        (option) =>
-          normalizedFilterQuery === "" ||
-          option.label.toLocaleLowerCase().includes(normalizedFilterQuery) ||
-          facet.label.toLocaleLowerCase().includes(normalizedFilterQuery),
-      ),
-    }))
-    .filter(({ options }) => options.length > 0);
-  const searchable = availableFacets.reduce(
-    (count, facet) => count + facetOptions(facet).length,
-    0,
-  ) >= 8;
-
   const handleFacetChange = (
     event: ChangeEvent<HTMLInputElement>,
     facetId: string,
@@ -162,114 +139,29 @@ export function ListControls({
   ) => {
     onFiltersChange(toggleValue(filters, facetId, value, event.target.checked));
   };
-
   if (compact) {
     const showFilters = compactMode !== "sort";
     const showSort = compactMode !== "filters";
     return (
       <div className={cn("flex shrink-0 items-center gap-1", className)}>
         {showFilters && facets.length > 0 ? (
-          <Popover
-            open={filtersOpen}
-            onOpenChange={(open) => {
-              setFiltersOpen(open);
-              if (!open) setFilterQuery("");
+          <FilterMenu
+            label={entityLabel}
+            activeCount={activeFilters.length}
+            disabled={availableFacets.length === 0}
+            groups={availableFacets.map((facet) => ({
+              id: facet.id,
+              label: facet.label,
+              options: facetOptions(facet).map((option) => ({
+                ...option,
+                selected: (filters[facet.id] ?? []).includes(option.value),
+              })),
+            }))}
+            onCheckedChange={(facetId, value, checked) => {
+              onFiltersChange(toggleValue(filters, facetId, value, checked));
             }}
-          >
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant={activeFilters.length > 0 ? "secondary" : "outline"}
-                size="sm"
-                className="h-9"
-                disabled={availableFacets.length === 0}
-              >
-                <Icon name="SlidersHorizontal" aria-hidden="true" />
-                Filter
-                {activeFilters.length > 0 ? (
-                  <span className="rounded-full bg-background/70 px-1.5 tabular-nums text-foreground">
-                    {activeFilters.length}
-                  </span>
-                ) : null}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              id={filtersId}
-              align="start"
-              sideOffset={6}
-              mobileTitle={`${entityLabel} filters`}
-              className="w-[min(32rem,calc(100vw-2rem))] p-0"
-              aria-label={`${entityLabel} filters`}
-            >
-              <div className="flex items-start justify-between gap-3 border-b border-border px-3 py-3">
-                <div>
-                  <p className="text-sm font-medium">Filter {entityLabel}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Narrow the table without leaving the current view.
-                  </p>
-                </div>
-                {activeFilters.length > 0 ? (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => onFiltersChange({})}>
-                    Clear all
-                  </Button>
-                ) : null}
-              </div>
-              {searchable ? (
-                <div className="relative border-b border-border p-3">
-                  <Icon
-                    name="Search"
-                    aria-hidden="true"
-                    className="pointer-events-none absolute left-6 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  />
-                  <Input
-                    value={filterQuery}
-                    onChange={(event) => setFilterQuery(event.target.value)}
-                    aria-label="Search filters"
-                    placeholder="Search filter options…"
-                    className="pl-9"
-                  />
-                </div>
-              ) : null}
-              <div className="max-h-[26rem] overflow-y-auto p-2">
-                {visibleFacets.length === 0 ? (
-                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No filter options match your search.
-                  </p>
-                ) : visibleFacets.map(({ facet, options }) => {
-                  const selected = filters[facet.id] ?? [];
-                  return (
-                    <fieldset key={facet.id} className="border-b border-border px-1 py-3 last:border-b-0">
-                      <legend className="px-2 text-xs font-medium text-muted-foreground">
-                        {facet.label}
-                      </legend>
-                      <div className="mt-1 grid gap-0.5 sm:grid-cols-2">
-                        {options.map((option) => (
-                          <label
-                            key={option.value}
-                            className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-state-hover"
-                          >
-                            <input
-                              type="checkbox"
-                              className={CHECKBOX_CLASS}
-                              aria-label={option.label}
-                              checked={selected.includes(option.value)}
-                              onChange={(event) => handleFacetChange(event, facet.id, option.value)}
-                            />
-                            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                            {option.count === undefined ? null : (
-                              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                                {option.count}
-                              </span>
-                            )}
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                  );
-                })}
-              </div>
-            </PopoverContent>
-          </Popover>
+            onClear={() => onFiltersChange({})}
+          />
         ) : null}
         {showSort ? (
           <TableToolbarSelect
@@ -278,7 +170,8 @@ export function ListControls({
             options={sortOptions}
             onValueChange={onSortChange}
             icon="Sort"
-            className="w-36"
+            iconOnly
+            contentClassName="min-w-44"
           />
         ) : null}
         {showSort ? <TooltipIconButton

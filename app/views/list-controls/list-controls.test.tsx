@@ -31,12 +31,12 @@ describe("ListControls compact toolbar", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Filter" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Search filters" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search filters" }), {
       target: { value: "Owner 9" },
     });
-    expect(screen.getByLabelText("Owner 9")).toBeDefined();
-    expect(screen.queryByLabelText("Owner 1")).toBeNull();
-    fireEvent.click(screen.getByLabelText("Owner 9"));
+    expect(screen.getByRole("checkbox", { name: "Owner 9" })).toBeDefined();
+    expect(screen.queryByRole("checkbox", { name: "Owner 1" })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Owner 9" }));
     expect(onFiltersChange).toHaveBeenCalledWith({ owner: ["owner-9"] });
   });
 });

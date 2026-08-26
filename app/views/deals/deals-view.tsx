@@ -1958,7 +1958,7 @@ export function DealsView({
               setPage(1);
             }}
             placeholder="Search deals by name or company…"
-            containerClassName="w-56 shrink-0"
+            containerClassName="w-80 shrink-0"
           />
           <TableToolbarSelect
             label="Deal status filter"

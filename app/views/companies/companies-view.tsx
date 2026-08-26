@@ -1896,7 +1896,7 @@ export function CompaniesView({
               setPage(1);
             }}
             placeholder="Search companies…"
-            containerClassName="w-56 shrink-0"
+            containerClassName="w-72 shrink-0"
           />
           <ListControls
             compact

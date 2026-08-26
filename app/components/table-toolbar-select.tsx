@@ -8,6 +8,12 @@ import {
   SelectValue,
 } from "../../components/beui/select.js";
 import { cn } from "../../lib/utils.js";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../../components/ui/tooltip.js";
 
 export interface TableToolbarSelectOption {
   value: string;
@@ -22,6 +28,7 @@ export interface TableToolbarSelectProps {
   onValueChange: (value: string) => void;
   icon?: IconName;
   disabled?: boolean;
+  iconOnly?: boolean;
   className?: string;
   contentClassName?: string;
 }
@@ -34,20 +41,26 @@ export function TableToolbarSelect({
   onValueChange,
   icon,
   disabled = false,
+  iconOnly = false,
   className,
   contentClassName,
 }: TableToolbarSelectProps) {
-  return (
-    <Select
-      value={value}
-      onValueChange={onValueChange}
-      disabled={disabled}
-      className={cn("shrink-0", className)}
+  const selectedLabel = options.find((option) => option.value === value)?.label;
+  const accessibleLabel = iconOnly && selectedLabel
+    ? `${label}: ${selectedLabel}`
+    : label;
+  const trigger = (
+    <SelectTrigger
+      aria-label={accessibleLabel}
+      showChevron={!iconOnly}
+      className={cn(
+        "h-9 rounded-md px-3 py-0 text-xs",
+        iconOnly && "size-9 justify-center border-transparent bg-transparent p-0 text-muted-foreground hover:border-transparent hover:bg-state-hover hover:text-foreground",
+      )}
     >
-      <SelectTrigger
-        aria-label={label}
-        className="h-9 rounded-md px-3 py-0 text-xs"
-      >
+      {iconOnly ? (
+        <Icon name={icon ?? "MoreHorizontal"} aria-hidden="true" className="size-4" />
+      ) : (
         <span className="flex min-w-0 items-center gap-2">
           {icon === undefined ? null : (
             <Icon
@@ -58,7 +71,29 @@ export function TableToolbarSelect({
           )}
           <SelectValue />
         </span>
-      </SelectTrigger>
+      )}
+    </SelectTrigger>
+  );
+
+  return (
+    <Select
+      value={value}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      className={cn("shrink-0", className)}
+    >
+      {iconOnly ? (
+        <TooltipProvider delayDuration={250}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">{trigger}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {selectedLabel ? `${label}: ${selectedLabel}` : label}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : trigger}
       <SelectContent className={cn("w-max", contentClassName)}>
         {options.map((option) => (
           <SelectItem
