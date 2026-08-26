@@ -66,7 +66,13 @@ export type DealUpdateInput = Partial<
 export interface DealListOptions extends ListOptions {
   companyId?: string;
   ownerId?: string;
+  ownerIds?: readonly string[];
   stage?: DealStage;
+  stages?: readonly DealStage[];
+  status?: "all" | "open" | "closed";
+  closings?: readonly ("overdue" | "this-month" | "next-month" | "later" | "none")[];
+  sortBy?: "name" | "company" | "owner" | "stage" | "amount" | "expectedClose" | "createdAt" | "lastActivity";
+  sortDirection?: "asc" | "desc";
 }
 
 const DEAL_SELECT = `
@@ -223,6 +229,40 @@ export class DealStore {
   }
 
   list(options: DealListOptions = {}): Deal[] {
+    const { where, params } = this.listWhere(options);
+    params.limit = normalizeLimit(options.limit);
+    params.offset = normalizeOffset(options.offset);
+    const sortColumns: Record<NonNullable<DealListOptions["sortBy"]>, string> = {
+      name: "name",
+      company: "company_id",
+      owner: "owner_id",
+      stage: "stage",
+      amount: "base_amount_cents",
+      expectedClose: "expected_close_date",
+      createdAt: "created_at",
+      lastActivity: "last_activity_at",
+    };
+    const sortColumn = sortColumns[options.sortBy ?? "createdAt"];
+    const direction = options.sortDirection === "asc" ? "ASC" : "DESC";
+    return this.db
+      .prepare(`${DEAL_SELECT}${where} ORDER BY ${sortColumn} ${direction}, id ${direction} LIMIT @limit OFFSET @offset`)
+      .all(params)
+      .map(row);
+  }
+
+  count(options: Omit<DealListOptions, "limit" | "offset"> = {}): number {
+    const { where, params } = this.listWhere(options);
+    return (
+      this.db.prepare(`SELECT COUNT(*) AS count FROM deals${where}`).get(params) as {
+        count: number;
+      }
+    ).count;
+  }
+
+  private listWhere(options: DealListOptions): {
+    where: string;
+    params: Record<string, string | number>;
+  } {
     const clauses: string[] = [];
     const params: Record<string, string | number> = {};
     if (options.archivedOnly) clauses.push("archived_at IS NOT NULL");
@@ -235,9 +275,51 @@ export class DealStore {
       clauses.push("owner_id = @ownerId");
       params.ownerId = options.ownerId;
     }
+    if (options.ownerIds !== undefined && options.ownerIds.length > 0) {
+      const placeholders = options.ownerIds.map((value, index) => {
+        const key = `owner${index}`;
+        params[key] = value;
+        return `@${key}`;
+      });
+      clauses.push(`owner_id IN (${placeholders.join(", ")})`);
+    }
     if (options.stage !== undefined) {
       clauses.push("stage = @stage");
       params.stage = assertStage(options.stage);
+    }
+    if (options.stages !== undefined && options.stages.length > 0) {
+      const placeholders = options.stages.map((value, index) => {
+        const key = `stage${index}`;
+        params[key] = assertStage(value);
+        return `@${key}`;
+      });
+      clauses.push(`stage IN (${placeholders.join(", ")})`);
+    }
+    if (options.status === "open") {
+      clauses.push("stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')");
+    } else if (options.status === "closed") {
+      clauses.push("stage IN ('CLOSED_WON', 'CLOSED_LOST')");
+    }
+    if (options.closings !== undefined && options.closings.length > 0) {
+      const today = new Date();
+      const year = today.getUTCFullYear();
+      const month = today.getUTCMonth();
+      const isoDate = (value: Date) => value.toISOString().slice(0, 10);
+      const thisStart = isoDate(new Date(Date.UTC(year, month, 1)));
+      const nextStart = isoDate(new Date(Date.UTC(year, month + 1, 1)));
+      const laterStart = isoDate(new Date(Date.UTC(year, month + 2, 1)));
+      params.today = isoDate(today);
+      params.thisStart = thisStart;
+      params.nextStart = nextStart;
+      params.laterStart = laterStart;
+      const closingClauses = options.closings.map((closing) => {
+        if (closing === "overdue") return "(expected_close_date < @today AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST'))";
+        if (closing === "this-month") return "(expected_close_date >= @thisStart AND expected_close_date < @nextStart)";
+        if (closing === "next-month") return "(expected_close_date >= @nextStart AND expected_close_date < @laterStart)";
+        if (closing === "later") return "expected_close_date >= @laterStart";
+        return "expected_close_date IS NULL";
+      });
+      clauses.push(`(${closingClauses.join(" OR ")})`);
     }
     const search = options.search?.trim();
     if (search) {
@@ -248,13 +330,10 @@ export class DealStore {
       )`);
       params.search = `%${search}%`;
     }
-    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-    params.limit = normalizeLimit(options.limit);
-    params.offset = normalizeOffset(options.offset);
-    return this.db
-      .prepare(`${DEAL_SELECT}${where} ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`)
-      .all(params)
-      .map(row);
+    return {
+      where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
+      params,
+    };
   }
 
   update(id: string, input: DealUpdateInput): Deal {
