@@ -130,7 +130,7 @@ describe("TrackingSettingsView", () => {
     render(<TrackingSettingsView rpcClient={rpc} />);
     await screen.findAllByText("Marketing site");
 
-    fireEvent.click(screen.getByRole("button", { name: "Verify site" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm allowed domain" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("tracking_sites_verify", { id: site.id }),
     );

@@ -88,6 +88,21 @@ export interface AgentDefinition {
   updatedAt: string;
 }
 
+/** Durable deletion result returned by the agent RPC and UI. */
+export interface AgentDeletionResult extends AgentDefinition {
+  disabledTriggers: number;
+  cancelledRuns: number;
+}
+
+/** Work fenced by the DELETED state before host-thread cleanup runs. */
+export interface AgentDeletionPlan {
+  agentId: string;
+  actorId: string;
+  beforeStatus: AgentDefinitionStatus;
+  disabledTriggers: number;
+  activeRunIds: string[];
+}
+
 /** Public name used by the rest of the plugin for an agent definition. */
 export type Agent = AgentDefinition;
 
@@ -1833,6 +1848,148 @@ export class AgentStore {
     return this.changeDefinitionStatus(id, "PAUSED", ["ARCHIVED"], actorId, "agent.restored", "Restored agent", false, true);
   }
 
+  /**
+   * Fence an agent before any asynchronous BB worker cleanup.  DELETED is a
+   * durable terminal state: queue/start/trigger paths reject it, while the
+   * existing run and thread rows remain available for cancellation and audit.
+   */
+  beginDeletion(id: string, actorId?: string): AgentDeletionPlan {
+    const agentId = identifier(id, "Agent id");
+    const actor = normalizeActor(actorId);
+    return this.db.transaction(() => {
+      const before = this.getRequired(agentId);
+      const timestamp = nowIso();
+      if (before.status !== "DELETED") {
+        this.db.prepare(`
+          UPDATE agent_definitions
+          SET status = 'DELETED', deleted_at = COALESCE(deleted_at, @deletedAt),
+              updated_at = @updatedAt
+          WHERE id = @id
+        `).run({ id: agentId, deletedAt: timestamp, updatedAt: timestamp });
+      }
+
+      // Clear next_run_at even for an already-disabled trigger so a stale
+      // schedule cannot be picked up by a concurrent dispatcher sweep.
+      const disabled = this.db.prepare(`
+        UPDATE agent_triggers
+        SET enabled = 0, next_run_at = NULL, updated_at = @updatedAt
+        WHERE agent_id = @agentId AND (enabled = 1 OR next_run_at IS NOT NULL)
+      `).run({ agentId, updatedAt: timestamp });
+      const rows = this.db.prepare(`
+        SELECT id
+        FROM agent_runs
+        WHERE agent_id = @agentId
+          AND status IN ('QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL')
+        ORDER BY created_at ASC, id ASC
+      `).all({ agentId }) as Array<{ id?: unknown }>;
+
+      return {
+        agentId,
+        actorId: actor,
+        beforeStatus: before.status,
+        disabledTriggers: Number(disabled.changes),
+        activeRunIds: rows.map((row) => identifier(row.id, "Agent deletion run id")),
+      };
+    })();
+  }
+
+  /**
+   * Finish a deletion after the dispatcher has cancelled every run in the
+   * plan.  Refuse to report success while an active run remains; callers can
+   * retry the idempotent plan after a transient dispatcher failure.
+   */
+  completeDeletion(plan: AgentDeletionPlan, actorId?: string): AgentDeletionResult {
+    const parsedPlan = objectInput(plan, "Agent deletion plan");
+    assertKeys(parsedPlan, new Set([
+      "agentId",
+      "actorId",
+      "beforeStatus",
+      "disabledTriggers",
+      "activeRunIds",
+    ]), "Agent deletion plan");
+    const agentId = identifier(parsedPlan.agentId, "Agent id");
+    const rawActiveRunIds = parsedPlan.activeRunIds;
+    if (!Array.isArray(rawActiveRunIds)) {
+      throw new Error("Agent deletion plan activeRunIds must be an array of ids.");
+    }
+    const activeRunIds = rawActiveRunIds.map((runId, index) =>
+      identifier(runId, `Agent deletion run id ${index + 1}`));
+    const beforeStatus = assertEnum(parsedPlan.beforeStatus, AGENT_DEFINITION_STATUSES, "Agent deletion prior status");
+    const plannedDisabledTriggers = nonNegativeInteger(parsedPlan.disabledTriggers, "Agent disabled trigger count");
+    const actor = normalizeActor(actorId ?? parsedPlan.actorId);
+
+    return this.db.transaction(() => {
+      const agent = this.getRequired(agentId);
+      if (agent.status !== "DELETED") {
+        throw new AgentStateError(`Agent ${agent.id} must be DELETED before deletion can complete.`);
+      }
+      // Check the complete agent queue, not merely the caller's plan.  This
+      // makes the completion fence safe even if a stale/tampered plan omits a
+      // run that was queued before DELETED became durable.
+      const active = Number(this.db.prepare(`
+        SELECT COUNT(*)
+        FROM agent_runs
+        WHERE agent_id = @agentId
+          AND status IN ('QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL')
+      `).pluck().get({ agentId }));
+      if (active > 0) {
+        throw new AgentStateError(`Cannot complete deletion for agent ${agent.id}; ${active} active run${active === 1 ? "" : "s"} remain.`);
+      }
+
+      const existing = this.db.prepare(`
+        ${AUDIT_SELECT}
+        WHERE agent_id = @agentId AND type = 'agent.deleted'
+        ORDER BY emitted_at DESC, id DESC
+        LIMIT 1
+      `).get({ agentId });
+      let disabledTriggers = plannedDisabledTriggers;
+      let cancelledRuns = Number(this.db.prepare(`
+        SELECT COUNT(*)
+        FROM agent_runs
+        WHERE agent_id = @agentId AND status = 'CANCELLED'
+          AND error_code = 'AGENT_DELETED'
+      `).pluck().get({ agentId }));
+      if (existing !== undefined) {
+        const prior = parseAudit(existing);
+        if (isPlainObject(prior.after)) {
+          const priorDisabled = prior.after.disabledTriggers;
+          const priorCancelled = prior.after.cancelledRuns;
+          if (typeof priorDisabled === "number" && Number.isSafeInteger(priorDisabled) && priorDisabled >= 0) {
+            disabledTriggers = priorDisabled;
+          }
+          if (typeof priorCancelled === "number" && Number.isSafeInteger(priorCancelled) && priorCancelled >= 0) {
+            cancelledRuns = priorCancelled;
+          }
+        }
+      } else {
+        this.insertAudit({
+          agentId,
+          actorId: actor,
+          actorType: "USER",
+          type: "agent.deleted",
+          summary: "Deleted agent",
+          before: { status: beforeStatus },
+          after: { status: "DELETED", disabledTriggers, cancelledRuns },
+        });
+      }
+      return { ...agent, disabledTriggers, cancelledRuns };
+    })();
+  }
+
+  /** Synchronous database-only fallback used by tests and non-host callers. */
+  remove(id: string, actorId?: string): AgentDeletionResult {
+    const plan = this.beginDeletion(id, actorId);
+    for (const runId of plan.activeRunIds) {
+      this.cancelRun(
+        runId,
+        "The agent was deleted before this run completed.",
+        plan.actorId,
+        "AGENT_DELETED",
+      );
+    }
+    return this.completeDeletion(plan, actorId);
+  }
+
   createTrigger(
     agentIdOrInput: string | AgentTriggerCreateInput,
     inputOrActor?: AgentTriggerCreateInput | string,
@@ -2165,6 +2322,10 @@ export class AgentStore {
     return this.db.transaction(() => {
       const before = this.getRunRequired(runId);
       if (before.status !== "RUNNING" || before.startedAt === null) return null;
+      // A deletion fence wins over orphan recovery.  The deleter will cancel
+      // this row (and clean up any linked worker) instead of allowing a stale
+      // lease to become dispatchable again.
+      if (this.getRequired(before.agentId).status === "DELETED") return null;
       if (new Date(before.startedAt).getTime() > new Date(cutoffAt).getTime()) return null;
       const linked = this.db.prepare(
         "SELECT 1 FROM agent_thread_links WHERE run_id = ? LIMIT 1",
@@ -2227,6 +2388,7 @@ export class AgentStore {
     const value = normalizeRunSuccess(input);
     return this.db.transaction(() => {
       const run = this.getRunRequired(id);
+      this.assertRunAgentNotDeleted(run);
       if (run.status !== "RUNNING") throw statusError("agent run", run.id, run.status, "SUCCEEDED");
       const timestamp = nowIso();
       const sets: string[] = ["status = 'SUCCEEDED'", "finished_at = @finishedAt"];
@@ -2248,6 +2410,7 @@ export class AgentStore {
     const value = normalizeRunFailure(input);
     return this.db.transaction(() => {
       const run = this.getRunRequired(id);
+      this.assertRunAgentNotDeleted(run);
       if (!(run.status === "QUEUED" || run.status === "RUNNING" || run.status === "WAITING_FOR_APPROVAL")) {
         throw statusError("agent run", run.id, run.status, "FAILED");
       }
@@ -2272,10 +2435,16 @@ export class AgentStore {
     })();
   }
 
-  cancelRun(id: string, reasonOrActor?: string, actorId?: string): AgentRunDetail & { cancelled: boolean } {
+  cancelRun(
+    id: string,
+    reasonOrActor?: string,
+    actorId?: string,
+    errorCode = "CANCELLED",
+  ): AgentRunDetail & { cancelled: boolean } {
     const runId = identifier(id, "Agent run id");
     const reason = reasonOrActor && actorId ? requiredText(reasonOrActor, "Agent cancellation reason") : "Cancelled by user.";
     const actor = actorId ?? (reasonOrActor && !actorId ? reasonOrActor : undefined);
+    const cancellationCode = requiredText(errorCode, "Agent cancellation code");
     return this.db.transaction(() => {
       const run = this.getRunRequired(runId);
       if (!(run.status === "QUEUED" || run.status === "RUNNING" || run.status === "WAITING_FOR_APPROVAL")) {
@@ -2286,17 +2455,17 @@ export class AgentStore {
         UPDATE agent_runs
         SET status = 'CANCELLED', finished_at = @finishedAt,
             cancel_requested_at = @cancelRequestedAt,
-            error_code = 'CANCELLED', error_message = @errorMessage
+            error_code = @errorCode, error_message = @errorMessage
         WHERE id = @id
-      `).run({ id: run.id, finishedAt: timestamp, cancelRequestedAt: timestamp, errorMessage: reason });
+      `).run({ id: run.id, finishedAt: timestamp, cancelRequestedAt: timestamp, errorCode: cancellationCode, errorMessage: reason });
       this.db.prepare(`
         UPDATE agent_actions
         SET status = 'CANCELLED', completed_at = @completedAt,
-            error_code = 'CANCELLED', error_message = @errorMessage
+            error_code = @errorCode, error_message = @errorMessage
         WHERE run_id = @runId AND status IN ('PLANNED', 'RUNNING')
-      `).run({ runId: run.id, completedAt: timestamp, errorMessage: reason });
-      this.appendRunEvent(run.id, "run.cancelled", { reason });
-      this.insertAudit({ agentId: run.agentId, versionId: run.versionId, runId: run.id, actorId: normalizeActor(actor), actorType: "USER", type: "run.cancelled", summary: "Cancelled agent run", after: { status: "CANCELLED", reason }, requestId: run.id });
+      `).run({ runId: run.id, completedAt: timestamp, errorCode: cancellationCode, errorMessage: reason });
+      this.appendRunEvent(run.id, "run.cancelled", { reason, errorCode: cancellationCode });
+      this.insertAudit({ agentId: run.agentId, versionId: run.versionId, runId: run.id, actorId: normalizeActor(actor), actorType: "USER", type: "run.cancelled", summary: "Cancelled agent run", after: { status: "CANCELLED", reason, errorCode: cancellationCode }, requestId: run.id });
       return { ...this.getRunDetailRequired(run.id), cancelled: true };
     })();
   }
@@ -2571,6 +2740,7 @@ export class AgentStore {
   ): AgentRunDetail {
     return this.db.transaction(() => {
       const run = this.getRunRequired(id);
+      this.assertRunAgentNotDeleted(run);
       if (!allowed.includes(run.status)) throw statusError("agent run", run.id, run.status, next);
       const timestamp = nowIso();
       this.db.prepare("UPDATE agent_runs SET status = ? WHERE id = ?").run(next, run.id);
@@ -2579,6 +2749,12 @@ export class AgentStore {
       this.insertAudit({ agentId: run.agentId, versionId: run.versionId, runId: run.id, actorId: normalizeActor(actorId), actorType: "SYSTEM", type: auditType, summary, before: { status: run.status }, after: { status: next } });
       return this.getRunDetailRequired(run.id);
     })();
+  }
+
+  private assertRunAgentNotDeleted(run: AgentRun): void {
+    if (this.getRequired(run.agentId).status === "DELETED") {
+      throw new AgentStateError(`Cannot transition run ${run.id}; agent ${run.agentId} is DELETED.`);
+    }
   }
 
   private transitionVersion(
@@ -2756,6 +2932,11 @@ export function archiveAgent(db: Db, id: string, actorId?: string): AgentDefinit
   return new AgentStore(db).archive(id, actorId);
 }
 
+/** Soft-delete an agent and cancel its persisted active runs. */
+export function deleteAgent(db: Db, id: string, actorId?: string): AgentDeletionResult {
+  return new AgentStore(db).remove(id, actorId);
+}
+
 export function restoreAgent(db: Db, id: string, actorId?: string): AgentDefinition {
   return new AgentStore(db).restore(id, actorId);
 }
@@ -2820,8 +3001,8 @@ export function failAgentRun(db: Db, id: string, input?: AgentRunFailureInput | 
   return new AgentStore(db).failRun(id, input, actorId);
 }
 
-export function cancelAgentRun(db: Db, id: string, reasonOrActor?: string, actorId?: string): AgentRunDetail & { cancelled: boolean } {
-  return new AgentStore(db).cancelRun(id, reasonOrActor, actorId);
+export function cancelAgentRun(db: Db, id: string, reasonOrActor?: string, actorId?: string, errorCode?: string): AgentRunDetail & { cancelled: boolean } {
+  return new AgentStore(db).cancelRun(id, reasonOrActor, actorId, errorCode);
 }
 
 export function createAgentAction(db: Db, runIdOrInput: string | AgentActionCreateInput, inputOrActor?: AgentActionCreateInput | string, actorId?: string): AgentAction {

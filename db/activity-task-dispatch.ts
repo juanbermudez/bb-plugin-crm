@@ -36,6 +36,11 @@ export interface ActivityTaskDispatch {
   updatedAt: string;
 }
 
+export interface ActivityTaskDispatchCompletion {
+  changed: boolean;
+  runId: string | null;
+}
+
 export interface LeasedActivityTask {
   activity: Activity;
   dispatch: ActivityTaskDispatch;
@@ -295,14 +300,23 @@ export class ActivityTaskDispatchStore {
     return result.changes === 1;
   }
 
+  markCompletedWithRun(activityId: string): ActivityTaskDispatchCompletion {
+    const id = requiredText(activityId, "Activity task id");
+    return this.db.transaction(() => {
+      const current = this.get(id);
+      if (current === null) return { changed: false, runId: null };
+      const result = this.db.prepare(`
+        UPDATE crm_activity_task_dispatches
+        SET status = 'COMPLETED', lease_token = NULL, lease_until = NULL,
+            last_error = NULL, updated_at = @updatedAt
+        WHERE activity_id = @activityId AND status <> 'COMPLETED'
+      `).run({ activityId: id, updatedAt: nowIso() });
+      return { changed: result.changes === 1, runId: current.runId };
+    })();
+  }
+
   markCompleted(activityId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE crm_activity_task_dispatches
-      SET status = 'COMPLETED', lease_token = NULL, lease_until = NULL,
-          last_error = NULL, updated_at = @updatedAt
-      WHERE activity_id = @activityId AND status <> 'COMPLETED'
-    `).run({ activityId: requiredText(activityId, "Activity task id"), updatedAt: nowIso() });
-    return result.changes === 1;
+    return this.markCompletedWithRun(activityId).changed;
   }
 
   /** Re-open an unqueued completion without duplicating an existing run. */

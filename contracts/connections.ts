@@ -714,13 +714,11 @@ export const trackingPruneResultSchema = z
 
 export const trackingTokenProvisionInputSchema = z
   .object({
-    scope: tokenScopeSchema.default("TRACKING"),
-    siteId: boundedId.optional(),
+    scope: z.literal("TRACKING").default("TRACKING"),
+    siteId: boundedId,
     at: connectionTimestampSchema.optional(),
   })
-  .strict()
-  .refine((value) => value.scope === "TRACKING" ? value.siteId !== undefined : value.siteId === undefined,
-    "TRACKING tokens require a site id; INTAKE tokens must not include one.");
+  .strict();
 
 export const trackingTokenRotateInputSchema = z
   .object({

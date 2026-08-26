@@ -29,8 +29,10 @@ claimed by this draft.
 ## Proposed `entries/crm.json`
 
 After copying the icon into the marketplace repository, add exactly one entry
-file with this shape. Update the description, tags, engine floors, and release
-range only if the final plugin manifest or verified feature set changes.
+file with this shape. Update the description, tags, and release range only if
+the final plugin manifest or verified feature set changes. The audited
+marketplace schema does not accept an `engines` field on individual entries;
+compatibility remains authoritative in the plugin manifest.
 
 ```json
 {
@@ -45,23 +47,17 @@ range only if the final plugin manifest or verified feature set changes.
     "companies",
     "contacts",
     "deals",
-    "activities",
     "sales",
     "pipeline",
     "enrichment",
     "agents",
     "custom-fields",
-    "tracking",
-    "interface"
+    "tracking"
   ],
   "author": {
     "name": "Juan Bermudez",
     "github": "juanbermudez",
     "url": "https://github.com/juanbermudez"
-  },
-  "engines": {
-    "bb": ">=0.39",
-    "bbPluginSdk": ">=0.4.8"
   },
   "source": {
     "git": {
@@ -248,9 +244,10 @@ activities, tasks, and versioned import/export.
   `<approved-release-tag>`, while separately verifying that tag contains the
   reviewed plugin. Marketplace liveness checks
   tag/ref existence but do not build or review plugin behavior.
-- [ ] Confirm the entry's engine ranges do not exceed the plugin manifest,
+- [ ] Confirm the plugin manifest still declares the audited engine floors,
   `author.github` is `juanbermudez`, and the description states observed user
-  value in one concrete sentence.
+  value in one concrete sentence. Do not add entry fields absent from the
+  current strict marketplace schema.
 - [ ] Commit only the entry/icon, push `submit-crm`, and open the PR against
   `get-bb/marketplace:main` after the final validation:
 

@@ -173,6 +173,22 @@ const spawnedThreadSchema = z
   .object({ id: z.string().trim().min(1) })
   .passthrough();
 
+const enforcedSandboxPolicySchema = z
+  .object({
+    permissionMode: z.enum(["accept-edits", "auto", "full"]).optional(),
+  })
+  .strict();
+
+function versionPermissionMode(version: AgentVersion): AgentThreadPermissionMode | undefined {
+  const parsed = enforcedSandboxPolicySchema.safeParse(version.sandboxPolicy);
+  if (!parsed.success) {
+    throw new Error(
+      "The deployed agent sandbox policy is invalid. Only BB permissionMode (accept-edits, auto, or full) is supported.",
+    );
+  }
+  return parsed.data.permissionMode;
+}
+
 const reconciledThreadSchema = z
   .object({
     id: z.string().trim().min(1),
@@ -425,6 +441,26 @@ export class AgentDispatcher {
     const current = this.store.getRunRequired(requestedRunId);
     const existingLink = this.linkForRun(current.id);
 
+    // DELETED is a durable dispatch fence.  A sweep may still have selected a
+    // row just before deletion, so settle it here before any claim or host
+    // network call can create another worker.
+    if (this.store.getRequired(current.agentId).status === "DELETED") {
+      const run = isTerminal(current.status)
+        ? current
+        : await this.cancelRun(
+            current.id,
+            "The agent was deleted before this run completed.",
+            this.actorId,
+            "AGENT_DELETED",
+          );
+      return {
+        kind: "terminal",
+        run,
+        thread: this.linkForRun(run.id) ?? existingLink,
+        reason: "The agent is deleted; dispatch was fenced.",
+      };
+    }
+
     if (existingLink) {
       if (isTerminal(current.status) || current.status === "CANCELLED") {
         return {
@@ -533,6 +569,21 @@ export class AgentDispatcher {
       };
     }
 
+    if (this.store.getRequired(beforeSpawn.agentId).status === "DELETED") {
+      const run = await this.cancelRun(
+        beforeSpawn.id,
+        "The agent was deleted before this run completed.",
+        this.actorId,
+        "AGENT_DELETED",
+      );
+      return {
+        kind: "terminal",
+        run,
+        thread: this.linkForRun(run.id),
+        reason: "The agent was deleted before thread creation.",
+      };
+    }
+
     let spawnedThreadId: string | null = null;
     let prompt = "";
     try {
@@ -547,6 +598,7 @@ export class AgentDispatcher {
       const selectedModel = this.options.model ??
         (claimed.modelId && claimed.modelId !== "default" ? claimed.modelId : undefined) ??
         (version.modelId !== "default" ? version.modelId : undefined);
+      const selectedPermissionMode = versionPermissionMode(version) ?? this.options.permissionMode;
       const spawned = await this.options.bb.sdk.threads.spawn({
         projectId,
         environment: this.environment,
@@ -558,9 +610,9 @@ export class AgentDispatcher {
         ...(this.options.reasoningLevel === undefined
           ? {}
           : { reasoningLevel: this.options.reasoningLevel }),
-        ...(this.options.permissionMode === undefined
+        ...(selectedPermissionMode === undefined
           ? {}
-          : { permissionMode: this.options.permissionMode }),
+          : { permissionMode: selectedPermissionMode }),
         ...(this.options.serviceTier === undefined
           ? {}
           : { serviceTier: this.options.serviceTier }),
@@ -591,6 +643,22 @@ export class AgentDispatcher {
         await this.cleanupThread(spawnedThreadId, this.visibility);
       }
       const latest = this.store.getRunRequired(claimed.id);
+      if (this.store.getRequired(latest.agentId).status === "DELETED") {
+        const run = isTerminal(latest.status)
+          ? latest
+          : await this.cancelRun(
+              latest.id,
+              "The agent was deleted before this run completed.",
+              this.actorId,
+              "AGENT_DELETED",
+            );
+        return {
+          kind: "terminal",
+          run,
+          thread: this.linkForRun(run.id),
+          reason: "The agent was deleted while dispatching.",
+        };
+      }
       if (latest.status === "RUNNING" && latest.startedAt !== claimStartedAt) {
         return {
           kind: "in-flight",
@@ -672,6 +740,22 @@ export class AgentDispatcher {
         error: "No BB thread is linked to this CRM run.",
       };
     }
+    if (this.store.getRequired(run.agentId).status === "DELETED") {
+      const settled = isTerminal(run.status)
+        ? run
+        : await this.cancelRun(
+            run.id,
+            "The agent was deleted before this run completed.",
+            this.actorId,
+            "AGENT_DELETED",
+          );
+      return {
+        kind: "terminal",
+        run: settled,
+        thread: this.linkForRun(settled.id) ?? link,
+        reason: "The agent is deleted; prompt dispatch was fenced.",
+      };
+    }
     if (isTerminal(run.status)) {
       return {
         kind: "terminal",
@@ -710,6 +794,20 @@ export class AgentDispatcher {
 
     let prompt = "";
     try {
+      if (this.store.getRequired(run.agentId).status === "DELETED") {
+        const settled = await this.cancelRun(
+          run.id,
+          "The agent was deleted before this run completed.",
+          this.actorId,
+          "AGENT_DELETED",
+        );
+        return {
+          kind: "terminal",
+          run: settled,
+          thread: this.linkForRun(settled.id) ?? link,
+          reason: "The agent was deleted before prompt send.",
+        };
+      }
       const version = this.store.getVersionRequired(run.versionId);
       prompt = buildAgentRunPrompt({
         agent: this.store.getRequired(run.agentId),
@@ -720,6 +818,7 @@ export class AgentDispatcher {
       const selectedModel = this.options.model ??
         (run.modelId && run.modelId !== "default" ? run.modelId : undefined) ??
         (version.modelId !== "default" ? version.modelId : undefined);
+      const selectedPermissionMode = versionPermissionMode(version) ?? this.options.permissionMode;
       await this.options.bb.sdk.threads.send({
         threadId: link.threadId,
         mode: "auto",
@@ -729,9 +828,9 @@ export class AgentDispatcher {
         ...(this.options.reasoningLevel === undefined
           ? {}
           : { reasoningLevel: this.options.reasoningLevel }),
-        ...(this.options.permissionMode === undefined
+        ...(selectedPermissionMode === undefined
           ? {}
-          : { permissionMode: this.options.permissionMode }),
+          : { permissionMode: selectedPermissionMode }),
         ...(this.options.serviceTier === undefined
           ? {}
           : { serviceTier: this.options.serviceTier }),
@@ -775,6 +874,20 @@ export class AgentDispatcher {
         run: current,
         thread: link,
         reason: `Run is already ${current.status}; duplicate lifecycle signal ignored.`,
+      };
+    }
+
+    if (this.store.getRequired(current.agentId).status === "DELETED") {
+      const run = await this.cancelRun(
+        current.id,
+        "The agent was deleted before this run completed.",
+        this.actorId,
+        "AGENT_DELETED",
+      );
+      return {
+        kind: "cancelled",
+        run,
+        thread: link,
       };
     }
 
@@ -939,14 +1052,22 @@ export class AgentDispatcher {
     runId: string,
     reason = "Cancelled by user.",
     actorId = this.actorId,
+    errorCode = "CANCELLED",
   ): Promise<AgentRunDetail> {
     const id = requiredText(runId, "Agent run id");
     const current = this.store.getRunRequired(id);
     if (isTerminal(current.status)) return current;
-    const cancelled = this.store.cancelRun(id, requiredText(reason, "Cancellation reason"), requiredText(actorId, "Cancellation actor id"));
-    const link = this.linkForRun(id);
-    if (cancelled.cancelled && link) {
-      await this.cleanupThread(link.threadId, this.visibility);
+    const links = this.linksForRun(current.agentId, id);
+    const cancelled = this.store.cancelRun(
+      id,
+      requiredText(reason, "Cancellation reason"),
+      requiredText(actorId, "Cancellation actor id"),
+      requiredText(errorCode, "Cancellation error code"),
+    );
+    if (cancelled.cancelled) {
+      for (const link of links) {
+        await this.cleanupThread(link.threadId, this.visibility);
+      }
     }
     return this.store.getRunRequired(id);
   }
@@ -954,6 +1075,15 @@ export class AgentDispatcher {
   private linkForRun(runId: string): AgentThreadLink | null {
     const id = threadLinkIdForRun(this.options.db, runId);
     return id === null ? null : this.store.getThread(id);
+  }
+
+  private linksForRun(agentId: string, runId: string): AgentThreadLink[] {
+    return this.store.listThreads(agentId, {
+      kind: "RUN",
+      runId,
+      limit: 100,
+      offset: 0,
+    });
   }
 
   private linkForThread(threadId: string): AgentThreadLink | null {

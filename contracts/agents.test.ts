@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentDeleteOutputSchema,
   agentDefinitionSchema,
   agentRunDetailSchema,
   agentVersionCreateInputSchema,
@@ -19,6 +20,18 @@ describe("agent workspace contracts", () => {
         data: { instructions: "Summarize the account", manifest: { createdAt: new Date() } },
       }).success,
     ).toBe(false);
+    expect(
+      agentVersionCreateInputSchema.safeParse({
+        agentId: "agent-1",
+        data: { instructions: "Summarize the account", sandboxPolicy: { network: "deny" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      agentVersionCreateInputSchema.safeParse({
+        agentId: "agent-1",
+        data: { instructions: "Summarize the account", sandboxPolicy: { permissionMode: "accept-edits" } },
+      }).success,
+    ).toBe(true);
   });
 
   it("fills version defaults at the contract boundary", () => {
@@ -89,5 +102,23 @@ describe("agent workspace contracts", () => {
         actions: [],
       }).success,
     ).toBe(true);
+  });
+
+  it("requires deletion accounting fields in the agent removal response", () => {
+    const agent = {
+      id: "agent-1",
+      name: "Renewal watcher",
+      description: null,
+      status: "DELETED" as const,
+      createdById: "local_user",
+      currentVersionId: null,
+      archivedAt: null,
+      deletedAt: "2026-08-25T00:00:00.000Z",
+      createdAt: "2026-08-25T00:00:00.000Z",
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    };
+    expect(agentDeleteOutputSchema.safeParse({ ...agent, disabledTriggers: 2, cancelledRuns: 3 }).success).toBe(true);
+    expect(agentDeleteOutputSchema.safeParse({ ...agent, disabledTriggers: 2 }).success).toBe(false);
+    expect(agentDeleteOutputSchema.safeParse({ ...agent, disabledTriggers: 2, cancelledRuns: 3, extra: true }).success).toBe(false);
   });
 });

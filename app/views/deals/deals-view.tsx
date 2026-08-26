@@ -7,11 +7,22 @@ import {
 } from "react";
 
 import { Button } from "../../../components/ui/button.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../../components/ui/dialog.js";
 import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
   CURRENCY_CODES,
   CLOSING_WINDOWS,
+  type CompanyListOutput,
+  type Contact,
+  type ContactListInput,
   DEAL_STAGES,
   type CurrencyCode,
   type Deal,
@@ -29,7 +40,11 @@ import {
 } from "../../../contracts/core.js";
 import {
   ColumnPreferences,
+  COMPANY_PICKER_INPUT,
+  companyOptionsFromRows,
+  AlertDialog,
   EmptyState,
+  EntityPicker,
   InlineDateField,
   InlineField,
   InlineSelectField,
@@ -38,6 +53,8 @@ import {
   RecordDrawer,
   SearchField,
   TableShell,
+  ownerOptionsFromRecords,
+  type EntityOption,
   usePersistentColumnPreferences,
   type TableColumnPreference,
 } from "../../components/index.js";
@@ -222,6 +239,164 @@ function isClosedStage(stage: DealStage): boolean {
   return stage === "CLOSED_WON" || stage === "CLOSED_LOST";
 }
 
+const STAGES_REQUIRING_REASON = new Set<DealStage>([
+  "CLOSED_LOST",
+  "UNQUALIFIED_TO_BUY",
+]);
+
+interface DealStageMenuProps {
+  deal: Deal;
+  busy?: boolean;
+  onSelect: (stage: DealStage) => void;
+}
+
+/** Compact table control matching the source's inline stage menu. */
+function DealStageMenu({ deal, busy = false, onSelect }: DealStageMenuProps) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className="relative inline-block"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setOpen(false);
+      }}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="max-w-full justify-start px-2 text-left font-normal"
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="truncate">{stageLabel(deal.stage)}</span>
+        <Icon name="ChevronDown" aria-hidden="true" className="size-3.5 text-muted-foreground" />
+      </Button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label={`Change stage for ${deal.name}`}
+          className="absolute left-0 z-30 mt-1 min-w-52 rounded-md border border-border bg-background p-1 shadow-lg"
+        >
+          {DEAL_STAGES.map((stage) => (
+            <button
+              key={stage}
+              type="button"
+              role="menuitemradio"
+              aria-checked={deal.stage === stage}
+              className={cn(
+                "flex w-full items-center rounded-sm px-3 py-2 text-left text-sm hover:bg-state-hover",
+                deal.stage === stage && "bg-state-active font-medium",
+              )}
+              onClick={() => {
+                setOpen(false);
+                if (stage !== deal.stage) onSelect(stage);
+              }}
+            >
+              {stageLabel(stage)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface DealStageReasonDialogProps {
+  request: { dealId: string; dealName: string; stage: DealStage } | null;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (reason: string) => void | Promise<void>;
+}
+
+function DealStageReasonDialog({
+  request,
+  busy,
+  onOpenChange,
+  onSubmit,
+}: DealStageReasonDialogProps) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const formId = "deal-stage-reason-form";
+
+  useEffect(() => {
+    if (request === null) {
+      setReason("");
+      setError(null);
+    }
+  }, [request]);
+
+  const stage = request?.stage;
+  const open = request !== null;
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onOpenChange(false);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {stage === "CLOSED_LOST" ? "Close as lost" : "Mark as unqualified"}
+          </DialogTitle>
+          <DialogDescription>
+            {stage === "CLOSED_LOST"
+              ? `Record why ${request?.dealName ?? "this deal"} was lost.`
+              : `Record why ${request?.dealName ?? "this deal"} is not qualified.`}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          id={formId}
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const trimmed = reason.trim();
+            if (trimmed === "") return;
+            setError(null);
+            void Promise.resolve(onSubmit(trimmed)).catch((cause: unknown) => {
+              setError(errorMessage(cause));
+            });
+          }}
+        >
+          <label className="text-sm font-medium" htmlFor={`${formId}-input`}>
+            Reason <span className="font-normal text-muted-foreground">(required)</span>
+          </label>
+          <Input
+            id={`${formId}-input`}
+            value={reason}
+            required
+            disabled={busy}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder={stage === "CLOSED_LOST" ? "Budget, timing, competitor…" : "Not a fit…"}
+          />
+          {error === null ? null : (
+            <p className="text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={busy || reason.trim() === ""}
+          >
+            {busy ? "Saving…" : "Save stage"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function isDeal(value: unknown): value is Deal {
   return (
     typeof value === "object" &&
@@ -232,6 +407,29 @@ function isDeal(value: unknown): value is Deal {
     typeof value.name === "string" &&
     "stage" in value
   );
+}
+
+function isCompanyListOutput(value: unknown): value is CompanyListOutput {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { rows?: unknown }).rows)
+  );
+}
+
+function isContactListOutput(value: unknown): value is { rows: Contact[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { rows?: unknown }).rows)
+  );
+}
+
+function contactName(contact: Pick<Contact, "firstName" | "lastName">): string {
+  return [contact.firstName, contact.lastName]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .join(" ") || "Contact";
 }
 
 function errorMessage(cause: unknown): string {
@@ -311,6 +509,8 @@ interface DealFormProps {
   saving: boolean;
   onChange: (next: DealCreateFormValue) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  companyOptions: readonly EntityOption[];
+  ownerOptions: readonly EntityOption[];
 }
 
 function DealForm({
@@ -320,6 +520,8 @@ function DealForm({
   saving,
   onChange,
   onSubmit,
+  companyOptions,
+  ownerOptions,
 }: DealFormProps) {
   return (
     <form id={formId} className="space-y-5" onSubmit={onSubmit}>
@@ -337,35 +539,30 @@ function DealForm({
         />
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <label className="text-sm font-medium" htmlFor={`${formId}-company`}>
-            Company ID
-          </label>
-          <Input
-            id={`${formId}-company`}
-            required
-            value={value.companyId}
-            onChange={(event) => onChange({ ...value, companyId: event.target.value })}
-            placeholder="cmp_acme"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium" htmlFor={`${formId}-owner`}>
-            Owner ID
-          </label>
-          <Input
-            id={`${formId}-owner`}
-            required
-            value={value.ownerId}
-            onChange={(event) => onChange({ ...value, ownerId: event.target.value })}
-            placeholder="usr_juan"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
-        </div>
+        <EntityPicker
+          id={`${formId}-company`}
+          label="Company"
+          value={value.companyId}
+          options={companyOptions}
+          required
+          disabled={saving}
+          placeholder="Choose an existing CRM company"
+          onChange={(companyId) => onChange({ ...value, companyId: companyId ?? "" })}
+        />
+        <EntityPicker
+          id={`${formId}-owner`}
+          label="Owner"
+          value={value.ownerId}
+          options={ownerOptions}
+          required
+          disabled={saving}
+          placeholder="Choose an existing CRM owner"
+          onChange={(ownerId) => onChange({ ...value, ownerId: ownerId ?? "" })}
+        />
       </div>
+      <p className="text-xs text-muted-foreground">
+        Company and owner choices come from CRM data already loaded in this workspace; BB member lookup is not exposed here.
+      </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor={`${formId}-stage`}>
@@ -461,6 +658,8 @@ function DealForm({
 
 interface DealOverviewProps {
   deal: Deal;
+  companyOptions: readonly EntityOption[];
+  ownerOptions: readonly EntityOption[];
   onUpdate: (data: DealUpdateData, optimistic: Partial<Deal>) => void;
   mutationBusy: boolean;
   mutationError: string | null;
@@ -472,6 +671,8 @@ interface DealOverviewProps {
 
 function DealOverview({
   deal,
+  companyOptions,
+  ownerOptions,
   onUpdate,
   mutationBusy,
   mutationError,
@@ -675,27 +876,26 @@ function DealOverview({
               onUpdate({ expectedCloseDate: next }, { expectedCloseDate: next });
             }}
           />
-          <InlineField
+          <EntityPicker
             label="Company"
-            value={deal.companyId ?? null}
-            placeholder="Company ID"
-            saving={mutationBusy}
-            render={(companyId) => deal.company?.name ?? companyId}
-            onSave={(companyId) => {
+            value={deal.companyId}
+            options={companyOptions}
+            required
+            disabled={mutationBusy}
+            placeholder="Choose an existing CRM company"
+            onChange={(companyId) => {
               if (!companyId) return;
-              onUpdate(
-                { companyId },
-                { companyId, company: undefined },
-              );
+              onUpdate({ companyId }, { companyId, company: undefined });
             }}
           />
-          <InlineField
+          <EntityPicker
             label="Owner"
-            value={deal.ownerId ?? null}
-            placeholder="Owner ID"
-            saving={mutationBusy}
-            render={(ownerId) => deal.owner?.name ?? ownerId}
-            onSave={(ownerId) => {
+            value={deal.ownerId}
+            options={ownerOptions}
+            required
+            disabled={mutationBusy}
+            placeholder="Choose an existing CRM owner"
+            onChange={(ownerId) => {
               if (!ownerId) return;
               onUpdate({ ownerId }, { ownerId, owner: undefined });
             }}
@@ -810,36 +1010,244 @@ function DealOverview({
   );
 }
 
-function DealContacts({ deal }: { deal: Deal }) {
+function DealContacts({
+  deal,
+  rpc,
+  onChanged,
+}: {
+  deal: Deal;
+  rpc: DealsRpcClient;
+  onChanged: () => void;
+}) {
   const contacts = deal.contacts ?? [];
-  if (contacts.length === 0) {
-    return (
-      <EmptyState
-        icon="UserRound"
-        title="No contacts linked"
-        description="Contacts assigned to this deal will appear here."
-        className="min-h-56 border-0 bg-transparent"
-      />
-    );
-  }
+  const [addOpen, setAddOpen] = useState(false);
+  const [availableContacts, setAvailableContacts] = useState<readonly Contact[]>([]);
+  const [contactId, setContactId] = useState<string | null>(null);
+  const [role, setRole] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const contactListInput = useMemo<ContactListInput>(
+    () => ({
+      q: "",
+      sort: "name",
+      dir: "asc",
+      page: 1,
+      pageSize: 100,
+      owner: [],
+      company: deal.companyId ? [deal.companyId] : [],
+      source: [],
+      title: [],
+      seniority: [],
+      persona: [],
+      activity: [],
+      fields: {},
+      archived: false,
+    }),
+    [deal.companyId],
+  );
+
+  useEffect(() => {
+    if (!addOpen) return;
+    let active = true;
+    setError(null);
+    void rpc
+      .call("contacts_list", contactListInput)
+      .then((next) => {
+        if (active && isContactListOutput(next)) setAvailableContacts(next.rows);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [addOpen, contactListInput, rpc]);
+
+  const attachedIds = useMemo(() => new Set(contacts.map((contact) => contact.id)), [contacts]);
+  const contactOptions = useMemo<EntityOption[]>(
+    () =>
+      availableContacts
+        .filter((contact) => !attachedIds.has(contact.id))
+        .map((contact) => ({
+          value: contact.id,
+          label: contactName(contact),
+          description: [contact.title, contact.email].filter(Boolean).join(" · ") || contact.id,
+        })),
+    [attachedIds, availableContacts],
+  );
+
+  const resetAdd = () => {
+    setAddOpen(false);
+    setContactId(null);
+    setRole("");
+    setError(null);
+  };
+
+  const attachContact = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!contactId) {
+      setError("Choose a contact before attaching.");
+      return;
+    }
+    setBusy("attach");
+    setError(null);
+    try {
+      await rpc.call("deals_contacts_attach", {
+        dealId: deal.id,
+        contactId,
+        role: role.trim() || null,
+      });
+      resetAdd();
+      onChanged();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const updateRole = async (contactIdToUpdate: string, nextRole: string) => {
+    setBusy(`role:${contactIdToUpdate}`);
+    setError(null);
+    try {
+      await rpc.call("deals_contacts_updateRole", {
+        dealId: deal.id,
+        contactId: contactIdToUpdate,
+        role: nextRole.trim() || null,
+      });
+      onChanged();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const detachContact = async (contactIdToDetach: string) => {
+    setBusy(`detach:${contactIdToDetach}`);
+    setError(null);
+    try {
+      await rpc.call("deals_contacts_detach", {
+        dealId: deal.id,
+        contactId: contactIdToDetach,
+      });
+      onChanged();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Deal contacts">
-      {contacts.map((contact) => (
-        <li key={contact.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div>
-            <p className="text-sm font-medium">
-              {[contact.firstName, contact.lastName].filter(Boolean).join(" ")}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {displayValue(contact.role ?? contact.title)}
-            </p>
-          </div>
-          <p className="text-sm text-muted-foreground sm:text-right">
-            {displayValue(contact.email)}
+    <section className="space-y-3" aria-label="Deal contacts panel">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium">Contacts</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Link people from this deal&apos;s company and capture their buying role.
           </p>
-        </li>
-      ))}
-    </ul>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={Boolean(busy)}
+          onClick={() => {
+            setError(null);
+            setAddOpen(true);
+          }}
+        >
+          <Icon name="Plus" aria-hidden="true" />
+          Add contact
+        </Button>
+      </div>
+      {addOpen ? (
+        <form className="space-y-3 rounded-lg border border-border bg-muted/20 p-4" onSubmit={attachContact}>
+          <EntityPicker
+            label="Contact"
+            value={contactId}
+            options={contactOptions}
+            required
+            disabled={busy === "attach"}
+            placeholder="Choose a contact from this company"
+            onChange={setContactId}
+          />
+          <div className="grid min-w-0 gap-1 sm:grid-cols-[minmax(7rem,0.4fr)_minmax(0,1fr)] sm:items-center">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="deal-contact-role">
+              Role <span className="font-normal">(optional)</span>
+            </label>
+            <Input
+              id="deal-contact-role"
+              value={role}
+              disabled={busy === "attach"}
+              placeholder="Champion, economic buyer…"
+              onChange={(event) => setRole(event.target.value)}
+            />
+          </div>
+          {contactOptions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No unattached active contacts were found for this company.
+            </p>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" disabled={busy === "attach"} onClick={resetAdd}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={busy === "attach" || contactOptions.length === 0}>
+              {busy === "attach" ? "Attaching…" : "Attach contact"}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      {contacts.length === 0 ? (
+        <EmptyState
+          icon="UserRound"
+          title="No contacts linked"
+          description="Contacts assigned to this deal will appear here."
+          className="min-h-56 border-0 bg-transparent"
+        />
+      ) : (
+        <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Deal contacts">
+          {contacts.map((contact) => {
+            const name = contactName(contact);
+            return (
+              <li key={contact.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,0.8fr)_auto] sm:items-center">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {[contact.title, contact.email].filter(Boolean).join(" · ") || contact.id}
+                  </p>
+                </div>
+                <InlineField
+                  label={`Role for ${name}`}
+                  value={contact.role ?? null}
+                  placeholder="Add role"
+                  saving={busy === `role:${contact.id}`}
+                  onSave={(nextRole) => void updateRole(contact.id, nextRole)}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Remove ${name} from deal`}
+                  disabled={Boolean(busy)}
+                  onClick={() => void detachContact(contact.id)}
+                >
+                  <Icon name="X" aria-hidden="true" />
+                  <span className="sr-only">Remove</span>
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -879,6 +1287,7 @@ export function DealsView({
   const [filters, setFilters] = useState<ListFilters>({});
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<DealListOutput>(EMPTY_LIST);
+  const [companyOptions, setCompanyOptions] = useState<readonly EntityOption[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
@@ -899,6 +1308,14 @@ export function DealsView({
   const [recordTab, setRecordTab] = useState<DealTab>("overview");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [stageRequest, setStageRequest] = useState<{
+    dealId: string;
+    dealName: string;
+    stage: DealStage;
+  } | null>(null);
+  const [stageBusyId, setStageBusyId] = useState<string | null>(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<"archive" | "purge" | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createValue, setCreateValue] = useState<DealCreateFormValue>({
     name: "",
@@ -976,6 +1393,23 @@ export function DealsView({
   useEffect(() => {
     let active = true;
     void listRpc(rpc)
+      .call("companies_list", COMPANY_PICKER_INPUT)
+      .then((next) => {
+        if (active && isCompanyListOutput(next)) {
+          setCompanyOptions(companyOptionsFromRows(next.rows));
+        }
+      })
+      .catch(() => {
+        // Company choices are optional; an incomplete host cannot create a deal blindly.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc, refreshKey]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
       .call("fields_filters", { entity: "DEAL" })
       .then((next) => {
         if (active && Array.isArray(next)) {
@@ -1016,12 +1450,15 @@ export function DealsView({
   }, [initialRecordId]);
 
   useEffect(() => {
+    setRecordTab("overview");
+  }, [recordId]);
+
+  useEffect(() => {
     if (recordId === null) return;
     let active = true;
     setRecordLoading(true);
     setRecordError(null);
     setMutationError(null);
-    setRecordTab("overview");
     void rpc
       .call("deals_get", { id: recordId })
       .then((next) => {
@@ -1133,6 +1570,63 @@ export function DealsView({
     [record, rpc],
   );
 
+  const runListSetStage = useCallback(
+    async (id: string, stage: DealStage, closedReason?: string) => {
+      setStageBusyId(id);
+      try {
+        const result = await rpc.call("deals_setStage", {
+          id,
+          stage,
+          ...(stage === "CLOSED_LOST" && closedReason?.trim()
+            ? { closedReason: closedReason.trim() }
+            : {}),
+        } satisfies SetDealStageInput);
+        const current = list.rows.find((row) => row.id === id);
+        const settled = isDeal(result)
+          ? result
+          : current
+            ? {
+                ...current,
+                stage,
+                closedReason:
+                  stage === "CLOSED_LOST" ? closedReason?.trim() || null : null,
+                closedAt: isClosedStage(stage)
+                  ? current.closedAt ?? new Date().toISOString()
+                  : null,
+              }
+            : null;
+        if (settled !== null) {
+          setList((currentList) => ({
+            ...currentList,
+            rows: currentList.rows.map((row) =>
+              row.id === id ? { ...row, ...settled } : row,
+            ),
+          }));
+          setRecord((currentRecord) =>
+            currentRecord?.id === id ? { ...currentRecord, ...settled } : currentRecord,
+          );
+        }
+        setRefreshKey((value) => value + 1);
+      } finally {
+        setStageBusyId(null);
+      }
+    },
+    [list.rows, rpc],
+  );
+
+  const selectListStage = useCallback(
+    (deal: Deal, stage: DealStage) => {
+      if (STAGES_REQUIRING_REASON.has(stage)) {
+        setStageRequest({ dealId: deal.id, dealName: deal.name, stage });
+        return;
+      }
+      void runListSetStage(deal.id, stage).catch((cause: unknown) => {
+        setListError(errorMessage(cause));
+      });
+    },
+    [runListSetStage],
+  );
+
   const runArchiveMutation = useCallback(
     async (method: "deals_archive" | "deals_restore") => {
       if (record === null) return;
@@ -1166,14 +1660,6 @@ export function DealsView({
 
   const purgeRecord = useCallback(async () => {
     if (record === null) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Delete ${record.name} permanently? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setMutationBusy(true);
     setMutationError(null);
     try {
@@ -1182,6 +1668,7 @@ export function DealsView({
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setMutationError(errorMessage(cause));
+      throw cause;
     } finally {
       setMutationBusy(false);
     }
@@ -1261,6 +1748,22 @@ export function DealsView({
       ),
     [list.rows],
   );
+  const ownerOptions = useMemo(
+    () => ownerOptionsFromRecords(record ? [...list.rows, record] : list.rows),
+    [list.rows, record],
+  );
+  const selectableCompanyOptions = useMemo(() => {
+    const options = [...companyOptions];
+    const current = record?.company;
+    if (current && !options.some((option) => option.value === current.id)) {
+      options.push({
+        value: current.id,
+        label: current.name,
+        description: current.domain ?? current.id,
+      });
+    }
+    return options;
+  }, [companyOptions, record?.company]);
   const facets = useMemo<ListFacet[]>(
     () => [
       {
@@ -1604,21 +2107,7 @@ export function DealsView({
                   variant="outline"
                   size="sm"
                   disabled={bulkBusy}
-                  onClick={() => {
-                    const confirmed =
-                      typeof window === "undefined" ||
-                      typeof window.confirm !== "function" ||
-                      window.confirm(
-                        `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"}?`,
-                      );
-                    if (confirmed) {
-                      void runBulk(
-                        "deals_bulkArchive",
-                        { ids: selectedIds },
-                        `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} archived.`,
-                      );
-                    }
-                  }}
+                  onClick={() => setBulkConfirm("archive")}
                 >
                   Archive selected
                 </Button>
@@ -1645,21 +2134,7 @@ export function DealsView({
                   variant="destructive"
                   size="sm"
                   disabled={bulkBusy}
-                  onClick={() => {
-                    const confirmed =
-                      typeof window === "undefined" ||
-                      typeof window.confirm !== "function" ||
-                      window.confirm(
-                        `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} permanently? This cannot be undone.`,
-                      );
-                    if (confirmed) {
-                      void runBulk(
-                        "deals_bulkPurge",
-                        { ids: selectedIds },
-                        `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} deleted.`,
-                      );
-                    }
-                  }}
+                  onClick={() => setBulkConfirm("purge")}
                 >
                   Delete selected
                 </Button>
@@ -1776,7 +2251,13 @@ export function DealsView({
                             : "px-3 py-3 text-muted-foreground"
                     }
                   >
-                    {column.id === "last-activity" && deal.lastActivityAt ? (
+                    {column.id === "stage" ? (
+                      <DealStageMenu
+                        deal={deal}
+                        busy={stageBusyId === deal.id}
+                        onSelect={(stage) => selectListStage(deal, stage)}
+                      />
+                    ) : column.id === "last-activity" && deal.lastActivityAt ? (
                       <time dateTime={deal.lastActivityAt}>
                         {dealColumnValue(deal, column.id, tableDefinitions)}
                       </time>
@@ -1823,6 +2304,56 @@ export function DealsView({
         </div>
       </div>
 
+      <DealStageReasonDialog
+        request={stageRequest}
+        busy={stageBusyId === stageRequest?.dealId}
+        onOpenChange={(open) => {
+          if (!open) setStageRequest(null);
+        }}
+        onSubmit={async (reason) => {
+          if (stageRequest === null) return;
+          await runListSetStage(stageRequest.dealId, stageRequest.stage, reason);
+          setStageRequest(null);
+        }}
+      />
+      <AlertDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title={`Delete ${record?.name ?? "deal"} permanently?`}
+        description="This cannot be undone."
+        confirmLabel="Delete permanently"
+        destructive
+        onConfirm={purgeRecord}
+      />
+      <AlertDialog
+        open={bulkConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setBulkConfirm(null);
+        }}
+        title={
+          bulkConfirm === "purge"
+            ? `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} permanently?`
+            : `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"}?`
+        }
+        description={bulkConfirm === "purge" ? "This cannot be undone." : "Archived deals can be restored later."}
+        confirmLabel={bulkConfirm === "purge" ? "Delete permanently" : "Archive"}
+        destructive={bulkConfirm === "purge"}
+        onConfirm={async () => {
+          if (bulkConfirm === "purge") {
+            await runBulk(
+              "deals_bulkPurge",
+              { ids: selectedIds },
+              `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} deleted.`,
+            );
+          } else if (bulkConfirm === "archive") {
+            await runBulk(
+              "deals_bulkArchive",
+              { ids: selectedIds },
+              `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} archived.`,
+            );
+          }
+        }}
+      />
       <RecordDrawer
         open={recordId !== null}
         onOpenChange={(open) => {
@@ -1878,16 +2409,25 @@ export function DealsView({
             {recordTab === "overview" ? (
               <DealOverview
                 deal={record}
+                companyOptions={selectableCompanyOptions}
+                ownerOptions={ownerOptions}
                 onUpdate={(data, optimistic) => void runRecordUpdate(data, optimistic)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
                 onSetStage={runSetStage}
                 onArchive={() => void runArchiveMutation("deals_archive")}
                 onRestore={() => void runArchiveMutation("deals_restore")}
-                onPurge={() => void purgeRecord()}
+                onPurge={() => setPurgeOpen(true)}
               />
             ) : recordTab === "contacts" ? (
-              <DealContacts deal={record} />
+              <DealContacts
+                deal={record}
+                rpc={rpc}
+                onChanged={() => {
+                  setRecordRefreshKey((value) => value + 1);
+                  setRefreshKey((value) => value + 1);
+                }}
+              />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
                 anchor={{ dealId: record.id }}
@@ -1937,6 +2477,8 @@ export function DealsView({
           saving={createSaving}
           onChange={setCreateValue}
           onSubmit={submitCreate}
+          companyOptions={companyOptions}
+          ownerOptions={ownerOptions}
         />
       </RecordDrawer>
     </div>

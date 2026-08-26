@@ -14,6 +14,8 @@ import {
   agentAttachmentSchema,
   agentCancelledRunSchema,
   agentCreateInputSchema,
+  agentDeleteInputSchema,
+  agentDeleteOutputSchema,
   agentDefinitionSchema,
   agentDeployInputSchema,
   agentDetailSchema,
@@ -109,6 +111,9 @@ import {
   currencyRateUpsertManualInputSchema,
   dashboardSummaryInputSchema,
   dashboardSummaryOutputSchema,
+  dealContactAttachInputSchema,
+  dealContactDetachInputSchema,
+  dealContactRoleUpdateInputSchema,
   dealCreateInputSchema,
   dealListInputSchema,
   dealListOutputSchema,
@@ -535,6 +540,18 @@ export const rpcContract = defineRpcContract({
     input: dealUpdateInputSchema,
     output: dealSchema,
   },
+  deals_contacts_attach: {
+    input: dealContactAttachInputSchema,
+    output: dealSchema,
+  },
+  deals_contacts_detach: {
+    input: dealContactDetachInputSchema,
+    output: dealSchema,
+  },
+  deals_contacts_updateRole: {
+    input: dealContactRoleUpdateInputSchema,
+    output: dealSchema,
+  },
   deals_setStage: {
     input: setDealStageInputSchema,
     output: dealSchema,
@@ -784,6 +801,10 @@ export const rpcContract = defineRpcContract({
   agents_archive: {
     input: agentIdActionInputSchema,
     output: agentDefinitionSchema,
+  },
+  agents_delete: {
+    input: agentDeleteInputSchema,
+    output: agentDeleteOutputSchema,
   },
   agents_restore: {
     input: agentIdActionInputSchema,

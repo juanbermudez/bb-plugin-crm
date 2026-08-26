@@ -3,10 +3,19 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import type { PluginAgentConfigurationContext } from "@get-bb/plugin-sdk";
 import plugin from "./server.js";
 import { CRM_AGENT_DISPATCH_SERVICE_NAME } from "./server.js";
+import { createActivityStore } from "./db/activities.js";
 import { createAgentStore } from "./db/agents.js";
+import {
+  ActivityTaskDispatchStore,
+  createActivityTaskDispatchStore,
+} from "./db/activity-task-dispatch.js";
 import { createCompanyStore } from "./db/companies.js";
 import { createCurrencyStore } from "./db/currency.js";
 import { CRM_SCHEMA_VERSION } from "./db/schema.js";
+import {
+  crmDueTaskRunInputSchema,
+  CRM_DUE_TASK_RUN_KIND,
+} from "./contracts/task-dispatch.js";
 
 type ServerHarness = ReturnType<typeof createFakePluginHost>["harness"];
 
@@ -343,7 +352,17 @@ describe("CRM plugin foundation", () => {
   });
 
   it("opens a strict CRM clarification interaction and returns the selected answer", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        threads: {
+          get: async ({ threadId }: { threadId: string }) => makeThreadResponse({
+            id: threadId,
+            visibility: "visible",
+          }),
+        },
+      },
+    });
     await plugin(bb);
 
     await expect(harness.callAgentTool("ask_question", {
@@ -386,6 +405,32 @@ describe("CRM plugin foundation", () => {
       requestId: (pending.payload as { requestId: string }).requestId,
       optionId: "account-b",
     }));
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("fails closed instead of opening a clarification on a hidden worker thread", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        threads: {
+          get: async ({ threadId }: { threadId: string }) => makeThreadResponse({
+            id: threadId,
+            visibility: "hidden",
+          }),
+        },
+      },
+    });
+    await plugin(bb);
+
+    await expect(harness.callAgentTool("ask_question", {
+      prompt: "Which account should receive this activity?",
+      options: [
+        { id: "account-a", label: "Account A" },
+        { id: "account-b", label: "Account B" },
+      ],
+    })).resolves.toMatchObject({ isError: true });
+    expect(harness.pendingInteractions).toHaveLength(0);
 
     await harness.lifecycle.dispose();
   });
@@ -925,6 +970,84 @@ describe("CRM plugin foundation", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("attaches same-company contacts to deals and preserves role details", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "USD" },
+    });
+    await plugin(bb);
+
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Relationship Co",
+    })) as { id: string };
+    const otherCompany = (await harness.behavior.callRpc("companies_create", {
+      name: "Other Co",
+    })) as { id: string };
+    const deal = (await harness.behavior.callRpc("deals_create", {
+      name: "Relationship expansion",
+      companyId: company.id,
+      ownerId: "owner_1",
+      amountCents: 12_500,
+      currency: "USD",
+    })) as { id: string };
+    const contact = (await harness.behavior.callRpc("contacts_create", {
+      firstName: "Relationship",
+      lastName: "Buyer",
+      companyId: company.id,
+    })) as { id: string };
+    const otherContact = (await harness.behavior.callRpc("contacts_create", {
+      firstName: "Other",
+      lastName: "Buyer",
+      companyId: otherCompany.id,
+    })) as { id: string };
+
+    await expect(
+      harness.behavior.callRpc("deals_contacts_attach", {
+        dealId: deal.id,
+        contactId: contact.id,
+        role: "Champion",
+      }),
+    ).resolves.toMatchObject({
+      contacts: [expect.objectContaining({ id: contact.id, role: "Champion" })],
+    });
+    await expect(
+      harness.behavior.callRpc("contacts_get", { id: contact.id }),
+    ).resolves.toMatchObject({
+      deals: [expect.objectContaining({
+        id: deal.id,
+        role: "Champion",
+        stage: "DEMO_BOOKED",
+        amountCents: 12_500,
+        currency: "USD",
+      })],
+    });
+
+    await expect(
+      harness.behavior.callRpc("deals_contacts_updateRole", {
+        dealId: deal.id,
+        contactId: contact.id,
+        role: "Economic buyer",
+      }),
+    ).resolves.toMatchObject({
+      contacts: [expect.objectContaining({ id: contact.id, role: "Economic buyer" })],
+    });
+    await expect(
+      harness.behavior.callRpc("deals_contacts_attach", {
+        dealId: deal.id,
+        contactId: otherContact.id,
+        role: "Invalid cross-company contact",
+      }),
+    ).rejects.toThrow(/deal's company/i);
+    await expect(
+      harness.behavior.callRpc("deals_contacts_detach", {
+        dealId: deal.id,
+        contactId: contact.id,
+      }),
+    ).resolves.toMatchObject({ contacts: [] });
+
+    await harness.lifecycle.dispose();
+  });
+
   it("freezes a configured exchange rate when a foreign-currency deal is created", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "crm",
@@ -1287,7 +1410,6 @@ describe("CRM plugin foundation", () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "crm",
       settings: {
-        researchApiKey: "provider-test-key",
         researchAgentId: "agent_field_backfill_server",
       },
     });
@@ -1540,19 +1662,14 @@ describe("CRM plugin foundation", () => {
       eventKey: "event-rotated",
     })).resolves.toMatchObject({ tokenId: rotated.tokenId });
 
-    const intake = (await harness.behavior.callRpc("tracking_tokens_provision", {
+    await expect(harness.behavior.callRpc("tracking_tokens_provision", {
       scope: "INTAKE",
       at: "2026-08-25T12:08:00.000Z",
-    })) as { id: string; scope: string; token: string };
-    expect(intake.scope).toBe("INTAKE");
+    })).rejects.toThrow();
     await expect(harness.behavior.callRpc("tracking_tokens_list", { siteId: site.id }))
       .resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({ id: rotated.tokenId, revokedAt: null }),
       ]));
-    await expect(harness.behavior.callRpc("tracking_tokens_revoke", {
-      id: intake.id,
-      at: "2026-08-25T12:09:00.000Z",
-    })).resolves.toMatchObject({ id: intake.id, revokedAt: "2026-08-25T12:09:00.000Z" });
 
     await expect(harness.behavior.callRpc("tracking_aggregates_rollup", {
       siteId: site.id,
@@ -1692,6 +1809,183 @@ describe("CRM plugin foundation", () => {
     }
   });
 
+  it("cancels a due-task run when completion wins before run attachment", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-due-task-pre-attach" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { taskAgentId: "agent_due_task_pre_attach" },
+      sdk: {
+        projects: { list: async () => [{ id: "project-due-task", kind: "standard" }] },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_due_task_pre_attach", "version_due_task_pre_attach");
+    const company = await harness.behavior.callRpc("companies_create", { name: "Pre-attach Due Task Co" }) as { id: string };
+    const activity = await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      companyId: company.id,
+      createdById: "human-task-author",
+      subject: "Call the account before attachment",
+      dueAt: new Date(Date.now() - 1_000).toISOString(),
+    }) as { id: string };
+
+    const db = bb.storage.database();
+    const dispatch = createActivityTaskDispatchStore(db);
+    const activities = createActivityStore(db);
+    const originalAttachRun = ActivityTaskDispatchStore.prototype.attachRun;
+    let completionWon = false;
+    const attachRunSpy = vi.spyOn(ActivityTaskDispatchStore.prototype, "attachRun")
+      .mockImplementation(function (activityId, leaseToken, runId) {
+        if (!completionWon) {
+          completionWon = true;
+          activities.complete(activityId, true);
+          dispatch.markCompleted(activityId);
+        }
+        return originalAttachRun.call(this, activityId, leaseToken, runId);
+      });
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    const runs = createAgentStore(db);
+    try {
+      await vi.waitFor(() => {
+        expect(runs.listRuns({
+          agentId: "agent_due_task_pre_attach",
+          status: ["QUEUED", "CANCELLED"],
+          limit: 100,
+          includeEvents: false,
+          includeActions: false,
+        })).toEqual([expect.objectContaining({ status: "CANCELLED" })]);
+      });
+      expect(completionWon).toBe(true);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(dispatch.getRequired(activity.id)).toMatchObject({ status: "COMPLETED", runId: null });
+    } finally {
+      service.controller.abort();
+      await service.done;
+      attachRunSpy.mockRestore();
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("cancels an attached queued due-task run before the dispatcher can spawn it", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-due-task-queued" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { taskAgentId: "agent_due_task_attached" },
+      sdk: {
+        projects: { list: async () => [{ id: "project-due-task", kind: "standard" }] },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_due_task_attached", "version_due_task_attached");
+    const company = await harness.behavior.callRpc("companies_create", { name: "Attached Due Task Co" }) as { id: string };
+    const activity = await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      companyId: company.id,
+      createdById: "human-task-author",
+      subject: "Complete after attachment",
+      dueAt: new Date(Date.now() - 1_000).toISOString(),
+    }) as { id: string };
+    const db = bb.storage.database();
+    const activities = createActivityStore(db);
+    const dispatch = createActivityTaskDispatchStore(db);
+    const claim = dispatch.claimDue(1)[0];
+    expect(claim).toBeDefined();
+    const current = activities.getRequired(activity.id);
+    const input = crmDueTaskRunInputSchema.parse({
+      kind: CRM_DUE_TASK_RUN_KIND,
+      activity: {
+        id: current.id,
+        subject: current.subject,
+        body: current.body,
+        occurredAt: current.occurredAt,
+        dueAt: current.dueAt,
+        completedAt: current.completedAt,
+        companyId: current.companyId,
+        contactId: current.contactId,
+        dealId: current.dealId,
+        createdById: current.createdById,
+        meta: current.meta,
+      },
+      requestedAt: new Date().toISOString(),
+    });
+    const run = await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_due_task_attached",
+      id: "run_due_task_attached",
+      input,
+      idempotencyKey: claim!.dispatch.idempotencyKey,
+    }) as { id: string; status: string };
+    expect(dispatch.attachRun(activity.id, claim!.dispatch.leaseToken!, run.id)).toBe(true);
+    expect(dispatch.getRequired(activity.id)).toMatchObject({ status: "QUEUED", runId: run.id });
+
+    await expect(harness.behavior.callRpc("activity_complete", { id: activity.id }))
+      .resolves.toMatchObject({ id: activity.id, completedAt: expect.any(String) });
+    expect(createAgentStore(db).getRunRequired(run.id)).toMatchObject({ status: "CANCELLED" });
+    expect(dispatch.getRequired(activity.id)).toMatchObject({ status: "COMPLETED", runId: run.id });
+
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("cancels and cleans up a linked due-task worker when the task completes", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-due-task-linked" }));
+    const archive = vi.fn(async () => ({ ok: true }));
+    const stop = vi.fn(async () => ({ ok: true }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { taskAgentId: "agent_due_task_linked" },
+      sdk: {
+        projects: { list: async () => [{ id: "project-due-task", kind: "standard" }] },
+        threads: { spawn, archive, stop },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_due_task_linked", "version_due_task_linked");
+    const company = await harness.behavior.callRpc("companies_create", { name: "Linked Due Task Co" }) as { id: string };
+    const activity = await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      companyId: company.id,
+      createdById: "human-task-author",
+      subject: "Complete linked task",
+      dueAt: new Date(Date.now() - 1_000).toISOString(),
+    }) as { id: string };
+    const db = bb.storage.database();
+    const dispatch = createActivityTaskDispatchStore(db);
+    const runs = createAgentStore(db);
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      let runId: string | null = null;
+      await vi.waitFor(() => {
+        const current = dispatch.getRequired(activity.id);
+        expect(current.status).toBe("DISPATCHED");
+        expect(current.runId).toEqual(expect.any(String));
+        runId = current.runId;
+      });
+      expect(runId).not.toBeNull();
+      await expect(harness.behavior.callRpc("activity_complete", { id: activity.id }))
+        .resolves.toMatchObject({ id: activity.id, completedAt: expect.any(String) });
+      await vi.waitFor(() => {
+        expect(runs.getRunRequired(runId!).status).toBe("CANCELLED");
+      });
+      expect(dispatch.getRequired(activity.id)).toMatchObject({ status: "COMPLETED", runId });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(archive).toHaveBeenCalledWith({ threadId: "bb-thread-due-task-linked" });
+      expect(stop).toHaveBeenCalledWith({ threadId: "bb-thread-due-task-linked" });
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
   it("creates an idempotent visible BB thread linked to a CRM company", async () => {
     const spawn = vi.fn(async () => ({ id: "bb-thread-company-record" }));
     const { bb, harness } = createFakePluginHost({
@@ -1764,6 +2058,48 @@ describe("CRM plugin foundation", () => {
       expect(cancelled.cancelRequestedAt).toEqual(expect.any(String));
       expect(archive).toHaveBeenCalledWith({ threadId: "bb-thread-cancel-server" });
       expect(stop).toHaveBeenCalledWith({ threadId: "bb-thread-cancel-server" });
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("deletes an agent only after fencing its linked hidden worker", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-delete-server" }));
+    const archive = vi.fn(async () => ({ ok: true }));
+    const stop = vi.fn(async () => ({ ok: true }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-delete", kind: "standard" }] },
+        threads: { spawn, archive, stop },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_delete_server", "version_delete_server");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_delete_server",
+      id: "run_delete_server",
+      idempotencyKey: "run-delete-server-key",
+    });
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      await vi.waitFor(() => expect(createAgentStore(bb.storage.database()).getRunRequired("run_delete_server").status).toBe("RUNNING"));
+      const deleted = await harness.behavior.callRpc("agents_delete", {
+        id: "agent_delete_server",
+        actorId: "user_delete",
+      }) as { status: string; disabledTriggers: number; cancelledRuns: number };
+      expect(deleted).toMatchObject({ status: "DELETED", disabledTriggers: 0, cancelledRuns: 1 });
+      expect(createAgentStore(bb.storage.database()).getRunRequired("run_delete_server")).toMatchObject({
+        status: "CANCELLED",
+        errorCode: "AGENT_DELETED",
+      });
+      expect(archive).toHaveBeenCalledWith({ threadId: "bb-thread-delete-server" });
+      expect(stop).toHaveBeenCalledWith({ threadId: "bb-thread-delete-server" });
+      expect(await harness.behavior.callRpc("agents_list", { limit: 100, offset: 0 })).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "agent_delete_server" })]),
+      );
     } finally {
       service.controller.abort();
       await service.done;
@@ -2015,12 +2351,12 @@ describe("CRM plugin foundation", () => {
       id: company.id,
       queued: false,
       status: "SKIPPED",
-      reason: expect.stringContaining("credentials are not configured"),
+      reason: expect.stringContaining("No research agent is configured"),
     });
     await expect(harness.behavior.callRpc("companies_get", { id: company.id }))
       .resolves.toMatchObject({
         enrichmentStatus: "SKIPPED",
-        enrichmentError: expect.stringContaining("no external data was fetched"),
+        enrichmentError: expect.stringContaining("set researchAgentId"),
       });
 
     await harness.lifecycle.dispose();
@@ -2030,7 +2366,6 @@ describe("CRM plugin foundation", () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "crm",
       settings: {
-        researchApiKey: "provider-test-key",
         researchAgentId: "agent_enrichment_server",
       },
     });
@@ -2129,7 +2464,6 @@ describe("CRM plugin foundation", () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "crm",
       settings: {
-        researchApiKey: "provider-test-key",
         researchAgentId: "agent_research_paths",
       },
     });

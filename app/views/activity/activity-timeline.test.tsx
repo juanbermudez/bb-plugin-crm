@@ -90,6 +90,8 @@ describe("ActivityTimeline", () => {
 
     expect(await screen.findByText("Kickoff notes")).toBeDefined();
     expect(screen.getByText("Send proposal")).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Outstanding" })).toBeDefined();
+    expect(screen.getAllByText("Send proposal")).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Aug 25, 2026" })).toBeDefined();
     expect(screen.getByText(/Due Aug 27, 2026/)).toBeDefined();
     expect(screen.getByRole("tab", { name: /All/ })).toBeDefined();
@@ -99,6 +101,11 @@ describe("ActivityTimeline", () => {
       companyId: "cmp_acme",
       filter: "all",
       limit: 30,
+    });
+    expect(rpc.call).toHaveBeenCalledWith("activity_timeline", {
+      companyId: "cmp_acme",
+      filter: "upcoming",
+      limit: 100,
     });
     expect(rpc.call).toHaveBeenCalledWith("activity_timelineCounts", {
       companyId: "cmp_acme",

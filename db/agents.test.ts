@@ -156,6 +156,55 @@ describe("CRM agent workspace persistence", () => {
     }
   });
 
+  it("soft-deletes an agent, disables triggers, cancels active runs, and fences dispatch", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const store = new AgentStore(db);
+      const agent = store.create({ id: "agent_delete", name: "Delete me", createdById: "user_1" });
+      const version = store.createVersion(agent.id, { instructions: "run" }, "user_1");
+      store.validateVersion(version.id, undefined, "user_1");
+      store.deploy(agent.id, version.id, "user_1");
+      const trigger = store.createTrigger(agent.id, {
+        id: "trigger_delete",
+        versionId: version.id,
+        type: "SCHEDULE",
+        name: "Delete schedule",
+        config: { cron: "0 9 * * *" },
+        enabled: true,
+        nextRunAt: "2026-08-27T09:00:00.000Z",
+      }, "user_1");
+
+      const queued = store.queueRun(agent.id, { id: "run_delete_queued", triggerId: trigger.id, idempotencyKey: "delete-queued" });
+      const running = store.queueRun(agent.id, { id: "run_delete_running", idempotencyKey: "delete-running" });
+      store.startRun(running.id);
+      const waiting = store.queueRun(agent.id, { id: "run_delete_waiting", idempotencyKey: "delete-waiting" });
+      store.startRun(waiting.id);
+      store.requestApproval(waiting.id, { reason: "Needs approval" });
+
+      const deleted = store.remove(agent.id, "user_delete");
+
+      expect(deleted).toMatchObject({
+        id: agent.id,
+        status: "DELETED",
+        deletedAt: expect.any(String),
+        disabledTriggers: 1,
+        cancelledRuns: 3,
+      });
+      expect(store.getTriggerRequired(trigger.id)).toMatchObject({ enabled: false, nextRunAt: null });
+      for (const id of [queued.id, running.id, waiting.id]) {
+        expect(store.getRunRequired(id)).toMatchObject({
+          status: "CANCELLED",
+          errorCode: "AGENT_DELETED",
+        });
+      }
+      expect(store.list({}).some((row) => row.id === agent.id)).toBe(false);
+      expect(() => store.queueRun(agent.id, { idempotencyKey: "after-delete" })).toThrow("Only a live agent");
+      expect(store.listAudit(agent.id).some((event) => event.type === "agent.deleted")).toBe(true);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
   it("enforces JSON shape, immutable version payloads, and legal state transitions", async () => {
     const { db, lifecycle } = withDatabase();
     try {

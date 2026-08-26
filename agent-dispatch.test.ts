@@ -48,7 +48,7 @@ function fixture(options: {
     instructions: "Read the exact company and summarize verified facts.",
     manifest: { tools: ["crm_get_record", "crm_add_activity"] },
     modelId: "crm/model-1",
-    sandboxPolicy: { network: "ask" },
+    sandboxPolicy: { permissionMode: "accept-edits" },
   }, "user_1");
   store.validateVersion(version.id, undefined, "user_1");
   store.deploy(agent.id, version.id, "user_1");
@@ -94,12 +94,14 @@ describe("CRM agent thread dispatcher", () => {
         projectId: string;
         environment: { type: string };
         visibility: string;
+        permissionMode: string;
         input: Array<{ type: string; text: string; mentions: unknown[] }>;
       };
       expect(spawnArgs).toMatchObject({
         projectId: "project_crm",
         environment: { type: "project-default" },
         visibility: "hidden",
+        permissionMode: "accept-edits",
       });
       expect(spawnArgs.input).toHaveLength(1);
       expect(spawnArgs.input[0]?.mentions).toEqual([]);

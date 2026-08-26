@@ -3,15 +3,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../../../components/ui/button.js";
 import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
+import { CURRENCY_CODES } from "../../../contracts/core.js";
 import {
   EmptyState,
+  AlertDialog,
   ColumnPreferences,
+  EntityPicker,
   InlineField,
   InlineTextArea,
   PageHeader,
   RecordDrawer,
   SearchField,
   TableShell,
+  ownerOptionsFromRecords,
+  type EntityOption,
   usePersistentColumnPreferences,
   type TableColumnPreference,
 } from "../../components/index.js";
@@ -21,8 +26,11 @@ import type {
   CompanyUpdateData,
   CompanyListInput,
   CompanyListOutput,
+  ContactCreateInput,
   Contact,
   Deal,
+  DealCreateInput,
+  DealStage,
   FieldDefinition,
   SavedViewFilters,
   SortDirection,
@@ -83,7 +91,16 @@ const COMPANY_COLUMNS = [
   { id: "contacts", label: "Contacts", className: "text-right" },
   { id: "open-deals", label: "Open deals", className: "text-right" },
   { id: "last-activity", label: "Last activity", className: "min-w-32" },
+  { id: "createdAt", label: "Created", className: "min-w-32", defaultVisible: false },
+  { id: "enrichment", label: "Enrichment", className: "min-w-32", defaultVisible: false },
 ] as const;
+
+const COMPANY_ARCHIVED_COLUMN = {
+  id: "archivedAt",
+  label: "Archived",
+  className: "min-w-32",
+  defaultVisible: false,
+} as const;
 
 const EMPTY_LIST: CompanyListOutput = {
   rows: [],
@@ -139,6 +156,12 @@ function companyColumnValue(
       return String(company.openDealCount ?? 0);
     case "last-activity":
       return formatDate(company.lastActivityAt);
+    case "createdAt":
+      return formatDate(company.createdAt);
+    case "enrichment":
+      return company.enrichmentStatus ?? "PENDING";
+    case "archivedAt":
+      return formatDate(company.archivedAt);
     default: {
       const fieldId = columnId.startsWith("field:")
         ? columnId.slice("field:".length)
@@ -259,6 +282,7 @@ interface CompanyFormProps {
   saving: boolean;
   onChange: (next: CompanyCreateInput) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  ownerOptions: readonly EntityOption[];
 }
 
 function CompanyForm({
@@ -268,6 +292,7 @@ function CompanyForm({
   saving,
   onChange,
   onSubmit,
+  ownerOptions,
 }: CompanyFormProps) {
   return (
     <form id={formId} className="space-y-5" onSubmit={onSubmit}>
@@ -300,24 +325,18 @@ function CompanyForm({
           spellCheck={false}
         />
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor={`${formId}-owner`}>
-          Owner ID <span className="font-normal text-muted-foreground">(optional)</span>
-        </label>
-        <Input
-          id={`${formId}-owner`}
-          value={value.ownerId ?? ""}
-          onChange={(event) =>
-            onChange({ ...value, ownerId: event.target.value || null })
-          }
-          placeholder="Leave blank for unassigned"
-          autoCapitalize="none"
-          spellCheck={false}
-        />
-        <p className="text-xs text-muted-foreground">
-          Paste a BB user ID when assigning the company during creation.
-        </p>
-      </div>
+      <EntityPicker
+        id={`${formId}-owner`}
+        label="Owner"
+        value={value.ownerId}
+        options={ownerOptions}
+        optional
+        placeholder="Leave blank for unassigned"
+        onChange={(ownerId) => onChange({ ...value, ownerId })}
+      />
+      <p className="text-xs text-muted-foreground">
+        Choices are limited to owner IDs already present on CRM records; BB member lookup is not exposed here.
+      </p>
       {error === null ? null : (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -332,8 +351,214 @@ function CompanyForm({
   );
 }
 
+interface QuickAddContactFormProps {
+  formId: string;
+  value: ContactCreateInput;
+  error: string | null;
+  saving: boolean;
+  ownerOptions: readonly EntityOption[];
+  onChange: (next: ContactCreateInput) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+}
+
+function QuickAddContactForm({
+  formId,
+  value,
+  error,
+  saving,
+  ownerOptions,
+  onChange,
+  onSubmit,
+}: QuickAddContactFormProps) {
+  return (
+    <form id={formId} className="space-y-5" onSubmit={onSubmit}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-first-name`}>First name</label>
+          <Input
+            id={`${formId}-first-name`}
+            required
+            autoFocus
+            value={value.firstName}
+            onChange={(event) => onChange({ ...value, firstName: event.target.value })}
+            placeholder="Ada"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-last-name`}>Last name <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <Input
+            id={`${formId}-last-name`}
+            value={value.lastName ?? ""}
+            onChange={(event) => onChange({ ...value, lastName: event.target.value || undefined })}
+            placeholder="Lovelace"
+          />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium" htmlFor={`${formId}-email`}>Email <span className="font-normal text-muted-foreground">(optional)</span></label>
+        <Input
+          id={`${formId}-email`}
+          type="email"
+          value={value.email ?? ""}
+          onChange={(event) => onChange({ ...value, email: event.target.value || undefined })}
+          placeholder="ada@example.com"
+          autoCapitalize="none"
+          spellCheck={false}
+        />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-title`}>Title <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <Input
+            id={`${formId}-title`}
+            value={value.title ?? ""}
+            onChange={(event) => onChange({ ...value, title: event.target.value || undefined })}
+            placeholder="VP of Sales"
+          />
+        </div>
+        <EntityPicker
+          id={`${formId}-owner`}
+          label="Owner"
+          value={value.ownerId}
+          options={ownerOptions}
+          optional
+          disabled={saving}
+          placeholder="Unassigned"
+          onChange={(ownerId) => onChange({ ...value, ownerId })}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        This contact is linked to the company that opened this form. Owner choices come only from existing CRM records.
+      </p>
+      {error === null ? null : <p className="text-sm text-destructive" role="alert">{error}</p>}
+      {saving ? <p className="text-sm text-muted-foreground" role="status">Creating contact…</p> : null}
+    </form>
+  );
+}
+
+interface QuickAddDealFormValue {
+  name: string;
+  ownerId: string;
+  stage: DealStage;
+  amountCents: string;
+  currency: (typeof CURRENCY_CODES)[number];
+  expectedCloseDate: string;
+}
+
+interface QuickAddDealFormProps {
+  formId: string;
+  companyName: string;
+  value: QuickAddDealFormValue;
+  error: string | null;
+  saving: boolean;
+  ownerOptions: readonly EntityOption[];
+  onChange: (next: QuickAddDealFormValue) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+}
+
+function QuickAddDealForm({
+  formId,
+  companyName,
+  value,
+  error,
+  saving,
+  ownerOptions,
+  onChange,
+  onSubmit,
+}: QuickAddDealFormProps) {
+  return (
+    <form id={formId} className="space-y-5" onSubmit={onSubmit}>
+      <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+        Company: <span className="font-medium">{companyName}</span>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium" htmlFor={`${formId}-name`}>Deal name</label>
+        <Input
+          id={`${formId}-name`}
+          required
+          autoFocus
+          value={value.name}
+          onChange={(event) => onChange({ ...value, name: event.target.value })}
+          placeholder="Enterprise expansion"
+        />
+      </div>
+      <EntityPicker
+        id={`${formId}-owner`}
+        label="Owner"
+        value={value.ownerId}
+        options={ownerOptions}
+        required
+        disabled={saving}
+        placeholder="Choose an existing CRM owner"
+        onChange={(ownerId) => onChange({ ...value, ownerId: ownerId ?? "" })}
+      />
+      {ownerOptions.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No existing CRM owner is available. Assign an owner to a CRM record first, then retry this quick-add.
+        </p>
+      ) : null}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-stage`}>Stage</label>
+          <select
+            id={`${formId}-stage`}
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            value={value.stage}
+            disabled={saving}
+            onChange={(event) => onChange({ ...value, stage: event.target.value as DealStage })}
+          >
+            {(["DEMO_BOOKED", "QUALIFIED_TO_BUY", "UNQUALIFIED_TO_BUY", "DECISION_MAKER_BOUGHT_IN", "CONTRACT_SENT", "CLOSED_WON", "CLOSED_LOST"] as const).map((stage) => (
+              <option key={stage} value={stage}>{stage.replaceAll("_", " ")}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-currency`}>Currency</label>
+          <select
+            id={`${formId}-currency`}
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            value={value.currency}
+            disabled={saving}
+            onChange={(event) => onChange({ ...value, currency: event.target.value as QuickAddDealFormValue["currency"] })}
+          >
+            {CURRENCY_CODES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-amount`}>Amount (minor units) <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <Input
+            id={`${formId}-amount`}
+            type="number"
+            min="0"
+            step="1"
+            value={value.amountCents}
+            disabled={saving}
+            onChange={(event) => onChange({ ...value, amountCents: event.target.value })}
+            placeholder="125000"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor={`${formId}-close-date`}>Expected close date <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <Input
+            id={`${formId}-close-date`}
+            type="date"
+            value={value.expectedCloseDate}
+            disabled={saving}
+            onChange={(event) => onChange({ ...value, expectedCloseDate: event.target.value })}
+          />
+        </div>
+      </div>
+      {error === null ? null : <p className="text-sm text-destructive" role="alert">{error}</p>}
+      {saving ? <p className="text-sm text-muted-foreground" role="status">Creating deal…</p> : null}
+    </form>
+  );
+}
+
 interface CompanyOverviewProps {
   company: Company;
+  ownerOptions: readonly EntityOption[];
   onUpdate: (data: CompanyUpdateData, optimistic: Partial<Company>) => void;
   mutationBusy: boolean;
   mutationError: string | null;
@@ -344,8 +569,56 @@ interface CompanyOverviewProps {
   onPurge: () => void;
 }
 
+const COMPANY_SOCIAL_FIELDS = [
+  { key: "linkedinUrl", label: "LinkedIn" },
+  { key: "twitterUrl", label: "X" },
+  { key: "githubUrl", label: "GitHub" },
+  { key: "pricingUrl", label: "Pricing" },
+  { key: "careersUrl", label: "Careers" },
+] as const;
+
+function validExternalUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function CompanySocialLinks({ company }: { company: Company }) {
+  const links = COMPANY_SOCIAL_FIELDS.flatMap(({ key, label }) => {
+    const href = validExternalUrl(company[key]);
+    return href ? [{ key, label, href }] : [];
+  });
+  if (links.length === 0) return null;
+  return (
+    <section className="space-y-3 border-t border-border pt-5" aria-label="Company social links">
+      <h3 className="text-sm font-medium">Links</h3>
+      <div className="flex flex-wrap gap-2">
+        {links.map((link) => (
+          <a
+            key={link.key}
+            href={link.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-xs font-medium transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {link.label}
+            <Icon name="ExternalLink" aria-hidden="true" className="size-3.5" />
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function CompanyOverview({
   company,
+  ownerOptions,
   onUpdate,
   mutationBusy,
   mutationError,
@@ -404,6 +677,56 @@ function CompanyOverview({
             onSave={(email) => onUpdate({ email: email || null }, { email: email || null })}
           />
           <InlineField
+            label="LinkedIn"
+            value={company.linkedinUrl ?? null}
+            type="url"
+            placeholder="https://linkedin.com/company/acme"
+            saving={mutationBusy}
+            onSave={(linkedinUrl) =>
+              onUpdate({ linkedinUrl: linkedinUrl || null }, { linkedinUrl: linkedinUrl || null })
+            }
+          />
+          <InlineField
+            label="X"
+            value={company.twitterUrl ?? null}
+            type="url"
+            placeholder="https://x.com/acme"
+            saving={mutationBusy}
+            onSave={(twitterUrl) =>
+              onUpdate({ twitterUrl: twitterUrl || null }, { twitterUrl: twitterUrl || null })
+            }
+          />
+          <InlineField
+            label="GitHub"
+            value={company.githubUrl ?? null}
+            type="url"
+            placeholder="https://github.com/acme"
+            saving={mutationBusy}
+            onSave={(githubUrl) =>
+              onUpdate({ githubUrl: githubUrl || null }, { githubUrl: githubUrl || null })
+            }
+          />
+          <InlineField
+            label="Pricing"
+            value={company.pricingUrl ?? null}
+            type="url"
+            placeholder="https://acme.example/pricing"
+            saving={mutationBusy}
+            onSave={(pricingUrl) =>
+              onUpdate({ pricingUrl: pricingUrl || null }, { pricingUrl: pricingUrl || null })
+            }
+          />
+          <InlineField
+            label="Careers"
+            value={company.careersUrl ?? null}
+            type="url"
+            placeholder="https://acme.example/careers"
+            saving={mutationBusy}
+            onSave={(careersUrl) =>
+              onUpdate({ careersUrl: careersUrl || null }, { careersUrl: careersUrl || null })
+            }
+          />
+          <InlineField
             label="Industry"
             value={company.industry ?? null}
             placeholder="Software"
@@ -424,16 +747,19 @@ function CompanyOverview({
             saving={mutationBusy}
             onSave={(country) => onUpdate({ country: country || null }, { country: country || null })}
           />
-          <InlineField
+          <EntityPicker
             label="Owner"
-            value={company.ownerId ?? null}
+            value={company.ownerId}
+            options={ownerOptions}
+            optional
+            disabled={mutationBusy}
             placeholder="Unassigned"
-            saving={mutationBusy}
-            render={(ownerId) => company.owner?.name ?? ownerId}
-            onSave={(ownerId) => {
-              const next = ownerId || null;
-              onUpdate({ ownerId: next }, { ownerId: next, owner: null });
-            }}
+            onChange={(ownerId) =>
+              onUpdate(
+                { ownerId },
+                { ownerId, owner: null },
+              )
+            }
           />
           <InlineTextArea
             label="Description"
@@ -449,6 +775,7 @@ function CompanyOverview({
           />
         </div>
       </section>
+      <CompanySocialLinks company={company} />
       <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
         <div>
           <dt className="text-xs font-medium text-muted-foreground">Primary contact</dt>
@@ -566,6 +893,7 @@ interface CompanyContactsProps {
   busy?: boolean;
   onOpenContact?: (id: string) => void;
   onSetPrimary?: (id: string | null) => void;
+  onAddContact?: () => void;
 }
 
 function CompanyContacts({
@@ -573,6 +901,7 @@ function CompanyContacts({
   busy = false,
   onOpenContact,
   onSetPrimary,
+  onAddContact,
 }: CompanyContactsProps) {
   const contacts = company.contacts ?? [];
   if (contacts.length === 0) {
@@ -581,20 +910,36 @@ function CompanyContacts({
         icon="UserRound"
         title="No contacts linked"
         description="Contacts assigned to this company will appear here."
+        action={onAddContact ? (
+          <Button type="button" variant="outline" size="sm" onClick={onAddContact}>
+            <Icon name="Plus" aria-hidden="true" />
+            Add contact
+          </Button>
+        ) : undefined}
         className="min-h-56 border-0 bg-transparent"
       />
     );
   }
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company contacts">
-      {contacts.map((contact) => {
-        const name = contactName(contact);
-        const isPrimary = contact.id === company.primaryContactId;
-        return (
-          <li
-            key={contact.id}
-            className="flex min-w-0 items-center gap-2 px-3 py-2.5"
-          >
+    <section className="space-y-3" aria-label="Company contacts">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium">Contacts</h3>
+        {onAddContact ? (
+          <Button type="button" variant="outline" size="sm" onClick={onAddContact}>
+            <Icon name="Plus" aria-hidden="true" />
+            Add contact
+          </Button>
+        ) : null}
+      </div>
+      <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company contacts list">
+        {contacts.map((contact) => {
+          const name = contactName(contact);
+          const isPrimary = contact.id === company.primaryContactId;
+          return (
+            <li
+              key={contact.id}
+              className="flex min-w-0 items-center gap-2 px-3 py-2.5"
+            >
             <Button
               type="button"
               variant="ghost"
@@ -623,19 +968,22 @@ function CompanyContacts({
                 {displayValue(contact.title)} · {displayValue(contact.email)}
               </span>
             </button>
-        </li>
-        );
-      })}
-    </ul>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
 function CompanyDeals({
   company,
   onOpenDeal,
+  onAddDeal,
 }: {
   company: Company;
   onOpenDeal?: (id: string) => void;
+  onAddDeal?: () => void;
 }) {
   const deals = company.deals ?? [];
   if (deals.length === 0) {
@@ -644,27 +992,44 @@ function CompanyDeals({
         icon="Target"
         title="No deals linked"
         description="Deals for this company will appear here."
+        action={onAddDeal ? (
+          <Button type="button" variant="outline" size="sm" onClick={onAddDeal}>
+            <Icon name="Plus" aria-hidden="true" />
+            New deal
+          </Button>
+        ) : undefined}
         className="min-h-56 border-0 bg-transparent"
       />
     );
   }
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company deals">
-      {deals.map((deal) => (
-        <li key={deal.id} className="px-3 py-2.5">
-          <button
-            type="button"
-            className="w-full rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
-            onClick={() => onOpenDeal?.(deal.id)}
-            disabled={onOpenDeal === undefined}
-            aria-label={`Open ${deal.name}`}
-          >
-            <span className="block truncate text-sm font-medium">{deal.name}</span>
-            <span className="block truncate text-xs text-muted-foreground">{deal.id}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <section className="space-y-3" aria-label="Company deals">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium">Deals</h3>
+        {onAddDeal ? (
+          <Button type="button" variant="outline" size="sm" onClick={onAddDeal}>
+            <Icon name="Plus" aria-hidden="true" />
+            New deal
+          </Button>
+        ) : null}
+      </div>
+      <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company deals list">
+        {deals.map((deal) => (
+          <li key={deal.id} className="px-3 py-2.5">
+            <button
+              type="button"
+              className="w-full rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
+              onClick={() => onOpenDeal?.(deal.id)}
+              disabled={onOpenDeal === undefined}
+              aria-label={`Open ${deal.name}`}
+            >
+              <span className="block truncate text-sm font-medium">{deal.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">{deal.id}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -821,6 +1186,8 @@ export function CompaniesView({
   const [recordTab, setRecordTab] = useState<CompanyTab>("overview");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<"archive" | "purge" | null>(null);
   const [nestedStack, setNestedStack] = useState<NestedCompanyRecord[]>([]);
   const [nestedLoading, setNestedLoading] = useState(false);
   const [nestedError, setNestedError] = useState<string | null>(null);
@@ -832,10 +1199,26 @@ export function CompaniesView({
   });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
+  const [quickAddKind, setQuickAddKind] = useState<"contact" | "deal" | null>(null);
+  const [quickAddContactValue, setQuickAddContactValue] = useState<ContactCreateInput>({
+    firstName: "",
+    companyId: null,
+    ownerId: null,
+  });
+  const [quickAddDealValue, setQuickAddDealValue] = useState<QuickAddDealFormValue>({
+    name: "",
+    ownerId: "",
+    stage: "DEMO_BOOKED",
+    amountCents: "",
+    currency: "USD",
+    expectedCloseDate: "",
+  });
+  const [quickAddError, setQuickAddError] = useState<string | null>(null);
+  const [quickAddSaving, setQuickAddSaving] = useState(false);
 
   const columnDefinitions = useMemo<readonly TableColumnPreference[]>(
     () => [
-      ...COMPANY_COLUMNS,
+      ...(showArchived ? [...COMPANY_COLUMNS, COMPANY_ARCHIVED_COLUMN] : COMPANY_COLUMNS),
       ...tableDefinitions
         .filter(
           (definition) =>
@@ -849,7 +1232,7 @@ export function CompaniesView({
           className: "min-w-36",
         })),
     ],
-    [tableDefinitions],
+    [showArchived, tableDefinitions],
   );
   const columnPreferences = usePersistentColumnPreferences(
     "crm:table-columns:company",
@@ -937,12 +1320,15 @@ export function CompaniesView({
   }, [initialRecordId]);
 
   useEffect(() => {
+    setRecordTab("overview");
+  }, [recordId]);
+
+  useEffect(() => {
     if (recordId === null) return;
     let active = true;
     setRecordLoading(true);
     setRecordError(null);
     setMutationError(null);
-    setRecordTab("overview");
     void rpc
       .call("companies_get", { id: recordId })
       .then((next) => {
@@ -1125,12 +1511,6 @@ export function CompaniesView({
 
   const purgeRecord = useCallback(async () => {
     if (record === null) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Delete ${record.name} permanently? This cannot be undone.`)
-    ) {
-      return;
-    }
     setMutationBusy(true);
     setMutationError(null);
     try {
@@ -1139,6 +1519,7 @@ export function CompaniesView({
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setMutationError(errorMessage(cause));
+      throw cause;
     } finally {
       setMutationBusy(false);
     }
@@ -1248,6 +1629,110 @@ export function CompaniesView({
           .map((company) => [company.ownerId, company.owner?.name as string]),
       ),
     [list.rows],
+  );
+  const ownerOptions = useMemo(
+    () => ownerOptionsFromRecords(record ? [...list.rows, record] : list.rows),
+    [list.rows, record],
+  );
+  const openQuickAdd = useCallback(
+    (kind: "contact" | "deal") => {
+      if (record === null) return;
+      setQuickAddError(null);
+      setQuickAddKind(kind);
+      if (kind === "contact") {
+        setQuickAddContactValue({
+          firstName: "",
+          lastName: undefined,
+          email: undefined,
+          phone: undefined,
+          title: undefined,
+          companyId: record.id,
+          ownerId: null,
+        });
+      } else {
+        setQuickAddDealValue({
+          name: "",
+          ownerId: record.ownerId ?? ownerOptions[0]?.value ?? "",
+          stage: "DEMO_BOOKED",
+          amountCents: "",
+          currency: "USD",
+          expectedCloseDate: "",
+        });
+      }
+    },
+    [ownerOptions, record],
+  );
+  const submitQuickAdd = useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (record === null || quickAddKind === null) return;
+      setQuickAddSaving(true);
+      setQuickAddError(null);
+      try {
+        if (quickAddKind === "contact") {
+          const firstName = quickAddContactValue.firstName.trim();
+          if (!firstName) {
+            setQuickAddError("First name is required.");
+            return;
+          }
+          await listRpc(rpc).call("contacts_create", {
+            firstName,
+            ...(quickAddContactValue.lastName?.trim()
+              ? { lastName: quickAddContactValue.lastName.trim() }
+              : {}),
+            ...(quickAddContactValue.email?.trim()
+              ? { email: quickAddContactValue.email.trim() }
+              : {}),
+            ...(quickAddContactValue.phone?.trim()
+              ? { phone: quickAddContactValue.phone.trim() }
+              : {}),
+            ...(quickAddContactValue.title?.trim()
+              ? { title: quickAddContactValue.title.trim() }
+              : {}),
+            companyId: record.id,
+            ownerId: quickAddContactValue.ownerId ?? null,
+          });
+        } else {
+          const name = quickAddDealValue.name.trim();
+          const ownerId = quickAddDealValue.ownerId.trim();
+          const amountText = quickAddDealValue.amountCents.trim();
+          const amountCents = amountText === "" ? null : Number(amountText);
+          if (!name) {
+            setQuickAddError("Deal name is required.");
+            return;
+          }
+          if (!ownerId) {
+            setQuickAddError("Choose an existing CRM owner before creating a deal.");
+            return;
+          }
+          if (
+            amountCents !== null &&
+            (!Number.isSafeInteger(amountCents) || amountCents < 0)
+          ) {
+            setQuickAddError("Amount must be a non-negative integer in minor units.");
+            return;
+          }
+          await listRpc(rpc).call("deals_create", {
+            name,
+            companyId: record.id,
+            ownerId,
+            stage: quickAddDealValue.stage,
+            amountCents,
+            currency: quickAddDealValue.currency,
+            expectedCloseDate: quickAddDealValue.expectedCloseDate || null,
+          } satisfies DealCreateInput);
+        }
+        setQuickAddKind(null);
+        setQuickAddError(null);
+        setRecordRefreshKey((value) => value + 1);
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setQuickAddError(errorMessage(cause));
+      } finally {
+        setQuickAddSaving(false);
+      }
+    },
+    [quickAddContactValue, quickAddDealValue, quickAddKind, record, rpc],
   );
   const facets = useMemo<ListFacet[]>(
     () => [
@@ -1504,21 +1989,7 @@ export function CompaniesView({
                   variant="outline"
                   size="sm"
                   disabled={bulkBusy}
-                  onClick={() => {
-                    const confirmed =
-                      typeof window === "undefined" ||
-                      typeof window.confirm !== "function" ||
-                      window.confirm(
-                        `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"}?`,
-                      );
-                    if (confirmed) {
-                      void runBulk(
-                        "companies_bulkArchive",
-                        { ids: selectedIds },
-                        `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} archived.`,
-                      );
-                    }
-                  }}
+                  onClick={() => setBulkConfirm("archive")}
                 >
                   Archive selected
                 </Button>
@@ -1545,21 +2016,7 @@ export function CompaniesView({
                   variant="destructive"
                   size="sm"
                   disabled={bulkBusy}
-                  onClick={() => {
-                    const confirmed =
-                      typeof window === "undefined" ||
-                      typeof window.confirm !== "function" ||
-                      window.confirm(
-                        `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} permanently? This cannot be undone.`,
-                      );
-                    if (confirmed) {
-                      void runBulk(
-                        "companies_bulkPurge",
-                        { ids: selectedIds },
-                        `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} deleted.`,
-                      );
-                    }
-                  }}
+                  onClick={() => setBulkConfirm("purge")}
                 >
                   Delete selected
                 </Button>
@@ -1665,17 +2122,25 @@ export function CompaniesView({
                 <td
                   key={column.id}
                   className={
-                    column.id === "company"
-                      ? "px-3 py-3 font-medium"
-                      : column.id === "contacts" || column.id === "open-deals"
-                        ? "px-3 py-3 text-right tabular-nums"
-                        : column.id === "last-activity" || column.id.startsWith("field:")
+                      column.id === "company"
+                        ? "px-3 py-3 font-medium"
+                        : column.id === "contacts" || column.id === "open-deals"
+                          ? "px-3 py-3 text-right tabular-nums"
+                        : column.id === "last-activity" || column.id === "createdAt" || column.id === "archivedAt" || column.id.startsWith("field:")
                           ? "whitespace-nowrap px-3 py-3 text-muted-foreground"
                           : "px-3 py-3 text-muted-foreground"
                   }
                 >
                   {column.id === "last-activity" && company.lastActivityAt ? (
                     <time dateTime={company.lastActivityAt}>
+                      {companyColumnValue(company, column.id, tableDefinitions)}
+                    </time>
+                  ) : column.id === "createdAt" && company.createdAt ? (
+                    <time dateTime={company.createdAt}>
+                      {companyColumnValue(company, column.id, tableDefinitions)}
+                    </time>
+                  ) : column.id === "archivedAt" && company.archivedAt ? (
+                    <time dateTime={company.archivedAt}>
                       {companyColumnValue(company, column.id, tableDefinitions)}
                     </time>
                   ) : (
@@ -1717,6 +2182,44 @@ export function CompaniesView({
         </div>
       </div>
 
+      <AlertDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title={`Delete ${record?.name ?? "company"} permanently?`}
+        description="This cannot be undone."
+        confirmLabel="Delete permanently"
+        destructive
+        onConfirm={purgeRecord}
+      />
+      <AlertDialog
+        open={bulkConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setBulkConfirm(null);
+        }}
+        title={
+          bulkConfirm === "purge"
+            ? `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} permanently?`
+            : `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"}?`
+        }
+        description={bulkConfirm === "purge" ? "This cannot be undone." : "Archived companies can be restored later."}
+        confirmLabel={bulkConfirm === "purge" ? "Delete permanently" : "Archive"}
+        destructive={bulkConfirm === "purge"}
+        onConfirm={async () => {
+          if (bulkConfirm === "purge") {
+            await runBulk(
+              "companies_bulkPurge",
+              { ids: selectedIds },
+              `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} deleted.`,
+            );
+          } else if (bulkConfirm === "archive") {
+            await runBulk(
+              "companies_bulkArchive",
+              { ids: selectedIds },
+              `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} archived.`,
+            );
+          }
+        }}
+      />
       <RecordDrawer
         open={recordId !== null}
         onOpenChange={(open) => {
@@ -1768,6 +2271,7 @@ export function CompaniesView({
             {recordTab === "overview" ? (
               <CompanyOverview
                 company={record}
+                ownerOptions={ownerOptions}
                 onUpdate={(data, optimistic) => void runRecordUpdate(data, optimistic)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
@@ -1775,7 +2279,7 @@ export function CompaniesView({
                 onResearch={() => void requestRecordEnrichment("companies_research")}
                 onArchive={() => void runArchiveMutation("companies_archive")}
                 onRestore={() => void runArchiveMutation("companies_restore")}
-                onPurge={() => void purgeRecord()}
+                onPurge={() => setPurgeOpen(true)}
               />
             ) : recordTab === "contacts" ? (
               <CompanyContacts
@@ -1783,11 +2287,13 @@ export function CompaniesView({
                 busy={mutationBusy}
                 onOpenContact={(id) => openNestedRecord("contact", id)}
                 onSetPrimary={(id) => void setPrimaryContact(id)}
+                onAddContact={() => openQuickAdd("contact")}
               />
             ) : recordTab === "deals" ? (
               <CompanyDeals
                 company={record}
                 onOpenDeal={(id) => openNestedRecord("deal", id)}
+                onAddDeal={() => openQuickAdd("deal")}
               />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
@@ -1888,9 +2394,68 @@ export function CompaniesView({
           value={createValue}
           error={createError}
           saving={createSaving}
+          ownerOptions={ownerOptions}
           onChange={setCreateValue}
           onSubmit={submitCreate}
         />
+      </RecordDrawer>
+
+      <RecordDrawer
+        open={quickAddKind !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setQuickAddKind(null);
+            setQuickAddError(null);
+          }
+        }}
+        title={quickAddKind === "deal" ? "New deal" : "Add contact"}
+        description={record ? `Link a record to ${record.name}.` : "Add a related CRM record."}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={quickAddSaving}
+              onClick={() => setQuickAddKind(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form={quickAddKind === "deal" ? "quick-add-deal-form" : "quick-add-contact-form"}
+              disabled={quickAddSaving}
+            >
+              {quickAddSaving
+                ? "Creating…"
+                : quickAddKind === "deal"
+                  ? "Create deal"
+                  : "Add contact"}
+            </Button>
+          </>
+        }
+      >
+        {record === null ? null : quickAddKind === "deal" ? (
+          <QuickAddDealForm
+            formId="quick-add-deal-form"
+            companyName={record.name}
+            value={quickAddDealValue}
+            error={quickAddError}
+            saving={quickAddSaving}
+            ownerOptions={ownerOptions}
+            onChange={setQuickAddDealValue}
+            onSubmit={submitQuickAdd}
+          />
+        ) : (
+          <QuickAddContactForm
+            formId="quick-add-contact-form"
+            value={quickAddContactValue}
+            error={quickAddError}
+            saving={quickAddSaving}
+            ownerOptions={ownerOptions}
+            onChange={setQuickAddContactValue}
+            onSubmit={submitQuickAdd}
+          />
+        )}
       </RecordDrawer>
     </div>
   );

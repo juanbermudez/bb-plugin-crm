@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
@@ -110,6 +110,20 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const openQuickSwitcher = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
+      event.preventDefault();
+      setOpen(true);
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    window.addEventListener("keydown", openQuickSwitcher);
+    return () => window.removeEventListener("keydown", openQuickSwitcher);
+  }, []);
 
   useEffect(() => {
     const normalized = query.trim();
@@ -151,6 +165,7 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
           })),
         ];
         setResults(next);
+        setActiveIndex(0);
       })
       .catch((cause: unknown) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
@@ -163,9 +178,38 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
     };
   }, [query, rpc]);
 
+  const openResult = (result: GlobalSearchResult) => {
+    onOpen(result);
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(0);
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (!open || results.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) => (current + direction + results.length) % results.length);
+      return;
+    }
+    if (event.key === "Enter") {
+      const result = results[activeIndex];
+      if (result) {
+        event.preventDefault();
+        openResult(result);
+      }
+    }
+  };
+
   return (
     <div className={`relative min-w-0 ${className ?? ""}`}>
       <SearchField
+        ref={inputRef}
         label="Search CRM"
         value={query}
         onFocus={() => setOpen(true)}
@@ -177,6 +221,7 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
           setQuery("");
           setOpen(false);
         }}
+        onKeyDown={handleKeyDown}
         placeholder="Search CRM…"
         className="h-8 w-full bg-background text-xs sm:w-72"
       />
@@ -200,17 +245,14 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
             </p>
           ) : (
             <ul className="max-h-80 overflow-y-auto p-1">
-              {results.map((result) => (
-                <li key={`${result.kind}:${result.id}`} role="option" aria-selected="false">
+              {results.map((result, index) => (
+                <li key={`${result.kind}:${result.id}`} role="option" aria-selected={activeIndex === index}>
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-auto w-full justify-start px-3 py-2 text-left"
-                    onClick={() => {
-                      onOpen(result);
-                      setOpen(false);
-                      setQuery("");
-                    }}
+                    className={`h-auto w-full justify-start px-3 py-2 text-left ${activeIndex === index ? "bg-state-hover" : ""}`}
+                    onMouseMove={() => setActiveIndex(index)}
+                    onClick={() => openResult(result)}
                   >
                     <Icon
                       name={result.kind === "company" ? "Layers" : result.kind === "contact" ? "UserRound" : "Target"}

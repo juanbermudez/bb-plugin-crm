@@ -61,6 +61,10 @@ export interface AgentsRpcClient {
   call(method: "agents_pause", input: { id: string }): Promise<AgentDefinition>;
   call(method: "agents_resume", input: { id: string }): Promise<AgentDefinition>;
   call(method: "agents_archive", input: { id: string }): Promise<AgentDefinition>;
+  call(
+    method: "agents_delete",
+    input: { id: string },
+  ): Promise<AgentDefinition & { disabledTriggers: number; cancelledRuns: number }>;
   call(method: "agents_restore", input: { id: string }): Promise<AgentDefinition>;
   call(
     method: "agents_triggers_list",

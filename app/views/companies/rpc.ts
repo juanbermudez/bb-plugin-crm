@@ -6,6 +6,10 @@ import type {
   CompanyListInput,
   CompanyListOutput,
   CompanyUpdateInput,
+  Contact,
+  ContactCreateInput,
+  Deal,
+  DealCreateInput,
   Id,
 } from "../../../contracts/core.js";
 import { rpcContract } from "../../../contracts/rpc.js";
@@ -23,6 +27,8 @@ export interface CompaniesRpcClient {
   call(method: "companies_archive", input: { id: Id }): Promise<Company>;
   call(method: "companies_restore", input: { id: Id }): Promise<Company>;
   call(method: "companies_purge", input: { id: Id }): Promise<Company>;
+  call(method: "contacts_create", input: ContactCreateInput): Promise<Contact>;
+  call(method: "deals_create", input: DealCreateInput): Promise<Deal>;
   call(
     method: "companies_enrich" | "companies_research",
     input: { id: Id; agentId?: Id },

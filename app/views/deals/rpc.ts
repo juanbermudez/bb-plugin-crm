@@ -6,6 +6,10 @@ import type {
   DealListInput,
   DealListOutput,
   DealUpdateInput,
+  ContactListInput,
+  ContactListOutput,
+  CompanyListInput,
+  CompanyListOutput,
   Id,
   SetDealStageInput,
 } from "../../../contracts/core.js";
@@ -21,6 +25,20 @@ export interface DealsRpcClient {
   call(method: "deals_archive", input: { id: Id }): Promise<Deal>;
   call(method: "deals_restore", input: { id: Id }): Promise<Deal>;
   call(method: "deals_purge", input: { id: Id }): Promise<Deal>;
+  call(method: "companies_list", input: CompanyListInput): Promise<CompanyListOutput>;
+  call(method: "contacts_list", input: ContactListInput): Promise<ContactListOutput>;
+  call(
+    method: "deals_contacts_attach",
+    input: { dealId: Id; contactId: Id; role?: string | null },
+  ): Promise<Deal>;
+  call(
+    method: "deals_contacts_detach",
+    input: { dealId: Id; contactId: Id },
+  ): Promise<Deal>;
+  call(
+    method: "deals_contacts_updateRole",
+    input: { dealId: Id; contactId: Id; role: string | null },
+  ): Promise<Deal>;
 }
 
 /** Use BB's host RPC client while keeping the view easy to preview and test. */

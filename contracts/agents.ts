@@ -253,6 +253,13 @@ export const agentEventTriggerConfigSchema = z
   .object({ event: crmEventTypeSchema })
   .strict();
 
+export const agentSandboxPolicySchema = z
+  .object({
+    permissionMode: z.enum(["accept-edits", "auto", "full"]).optional(),
+  })
+  .strict();
+export type AgentSandboxPolicy = z.infer<typeof agentSandboxPolicySchema>;
+
 export const agentDefinitionSchema = z
   .object({
     id: idSchema,
@@ -289,7 +296,7 @@ export const agentVersionSchema = z
     manifest: jsonObject,
     modelId: nonEmptyText,
     modelContextWindowTokens: z.number().int().finite().min(1),
-    sandboxPolicy: jsonObject,
+    sandboxPolicy: agentSandboxPolicySchema,
     validation: jsonValue.nullable(),
     sourceConversationId: idSchema.nullable(),
     createdById: idSchema,
@@ -515,7 +522,7 @@ export const agentVersionCreateDataSchema = z
     manifest: jsonObject.default({}),
     modelId: nonEmptyText.default("default"),
     modelContextWindowTokens: z.number().int().finite().min(1).default(1_000_000),
-    sandboxPolicy: jsonObject.default({}),
+    sandboxPolicy: agentSandboxPolicySchema.default({}),
     validation: jsonValue.nullable().default(null),
     sourceConversationId: idSchema.nullable().default(null),
     createdById: idSchema.optional(),
@@ -649,6 +656,16 @@ export const agentWebhookTokenRevokeInputSchema = z
   .strict();
 
 export const agentTriggerDeleteInputSchema = agentIdActionInputSchema;
+/** Soft-delete an agent definition while retaining its auditable history. */
+export const agentDeleteInputSchema = agentIdActionInputSchema;
+
+export const agentDeleteOutputSchema = agentDefinitionSchema
+  .extend({
+    disabledTriggers: z.number().int().finite().min(0),
+    cancelledRuns: z.number().int().finite().min(0),
+  })
+  .strict();
+
 export const agentTriggerEnableInputSchema = z
   .object({ id: idSchema, enabled: z.boolean().default(true), actorId: idSchema.optional() })
   .strict();

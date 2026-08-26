@@ -10,7 +10,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Contact, ContactListOutput } from "../../../contracts/core.js";
+import type {
+  Contact,
+  ContactListOutput,
+  CompanyListOutput,
+} from "../../../contracts/core.js";
 import { ContactsView, type ContactsRpcClient } from "./index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
@@ -58,12 +62,21 @@ function listResult(rows: Contact[] = [contact]): ContactListOutput {
   return { rows, total: rows.length, facetCounts: {} };
 }
 
+function companyListResult(): CompanyListOutput {
+  return {
+    rows: [{ id: "cmp_acme", name: "Acme Corporation", domain: "acme.example", fields: {} }],
+    total: 1,
+    facetCounts: {},
+  };
+}
+
 function makeRpc(
   implementation?: (method: string, input: unknown) => Promise<unknown>,
 ) {
   const call = vi.fn(
     implementation ?? (async (method: string) => {
       if (method === "contacts_list") return listResult();
+      if (method === "companies_list") return companyListResult();
       if (method === "contacts_get") return contact;
       if (method === "contacts_create") return contact;
       if (method === "contacts_update") return contact;
@@ -182,6 +195,7 @@ describe("ContactsView", () => {
     const created: Contact = { ...contact, id: "con_grace", firstName: "Grace", lastName: "Hopper" };
     const rpc = makeRpc(async (method) => {
       if (method === "contacts_list") return listResult();
+      if (method === "companies_list") return companyListResult();
       if (method === "contacts_create") return created;
       if (method === "contacts_get") return contact;
       return contact;
@@ -203,12 +217,10 @@ describe("ContactsView", () => {
     fireEvent.change(screen.getByLabelText("Title (optional)"), {
       target: { value: "Admiral" },
     });
-    fireEvent.change(screen.getByLabelText("Company ID (optional)"), {
-      target: { value: "cmp_acme" },
-    });
-    fireEvent.change(screen.getByLabelText("Owner ID (optional)"), {
-      target: { value: "usr_juan" },
-    });
+    fireEvent.focus(screen.getByRole("combobox", { name: "Company" }));
+    fireEvent.click(screen.getByRole("option", { name: /Acme Corporation/ }));
+    fireEvent.focus(screen.getByRole("combobox", { name: "Owner" }));
+    fireEvent.click(screen.getByRole("option", { name: /Juan Bermudez/ }));
     fireEvent.click(screen.getByRole("button", { name: "Create contact" }));
 
     await waitFor(() =>
@@ -291,12 +303,17 @@ describe("ContactsView", () => {
       if (method === "contacts_purge") return archived;
       return archived;
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<ContactsView rpcClient={rpc} />);
     await screen.findByText("Ada Lovelace");
     fireEvent.click(screen.getByRole("row", { name: /Open Ada Lovelace/ }));
     await screen.findByRole("dialog", { name: "Ada Lovelace" });
     fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: "Delete Ada Lovelace permanently?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Delete permanently" }),
+    );
 
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("contacts_purge", { id: "con_ada" }),
@@ -304,10 +321,6 @@ describe("ContactsView", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Ada Lovelace" })).toBeNull(),
     );
-    expect(confirm).toHaveBeenCalledWith(
-      "Delete Ada Lovelace permanently? This cannot be undone.",
-    );
-    confirm.mockRestore();
   });
 
   it("sends contact facets and sorting, supports clear-all chips, and assigns a company in bulk", async () => {

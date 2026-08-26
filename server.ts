@@ -41,6 +41,9 @@ import {
   contactWorkHistoryCreateInputSchema,
   currencyCodeSchema,
   currencyRateUpsertFetchedInputSchema,
+  dealContactAttachInputSchema,
+  dealContactDetachInputSchema,
+  dealContactRoleUpdateInputSchema,
   dealCreateInputSchema,
   dealListInputSchema,
   dealUpdateDataSchema,
@@ -111,6 +114,7 @@ import {
 import { createEvidenceStore } from "./db/evidence.js";
 import {
   createAgentStore,
+  type AgentDeletionResult,
   type AgentJsonValue,
   type AgentRunDetail,
   type AgentTrigger,
@@ -624,16 +628,11 @@ export default async function plugin(bb: BbPluginApi) {
       ],
       default: "USD",
     },
-    researchApiKey: {
-      type: "string",
-      label: "Research API key",
-      secret: true,
-    },
     researchAgentId: {
       type: "string",
       label: "Research agent id",
       description:
-        "Optional live BB agent used for provider-backed company and contact research.",
+        "Optional live BB agent used for company/contact research and field fill-rest. Provider credentials belong to that agent's configured tools, not this plugin.",
       default: "",
     },
     taskAgentId: {
@@ -1512,6 +1511,80 @@ export default async function plugin(bb: BbPluginApi) {
     ...agentExecutionSelection,
   });
 
+  /**
+   * Fence one exact due-task run when its activity wins a completion race.
+   * The run id comes from the durable dispatch row (or the just-created run
+   * returned by queueRun); it is never inferred by searching run input.
+   * AgentDispatcher first persists CANCELLED and then best-effort archives/
+   * stops a linked hidden thread, so a queued run cannot become a worker after
+   * completion wins.
+   */
+  async function cancelDueTaskRun(
+    activityId: string,
+    runId: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const before = agents.getRunRequired(runId);
+      const run = await dispatcher.cancelRun(runId, reason, "crm-task-dispatcher");
+      const wasActive = before.status === "QUEUED" || before.status === "RUNNING" || before.status === "WAITING_FOR_APPROVAL";
+      if (wasActive && run.status === "CANCELLED") {
+        changed("agent-run", "cancelled", run.id);
+        changed("agent", "run-updated", run.agentId);
+      }
+    } catch (error) {
+      // queueRun/dispatch-row linkage is exact; retain the error for operator
+      // reconciliation instead of guessing at another run to cancel.
+      bb.log.error(
+        `CRM due activity task ${activityId} could not fence agent run ${runId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Delete one agent in two phases: persist DELETED/trigger shutdown first,
+   * then let the dispatcher cancel every captured run and clean up its hidden
+   * BB workers before the deletion audit is finalized.  If host cleanup fails
+   * before all runs settle, the durable DELETED fence remains in place and a
+   * later request can retry the unfinished cancellation safely.
+   */
+  async function deleteAgentDefinition(
+    id: string,
+    actorId: string,
+  ): Promise<AgentDeletionResult> {
+    const plan = agents.beginDeletion(id, actorId);
+    for (const runId of plan.activeRunIds) {
+      const before = agents.getRunRequired(runId);
+      const run = await dispatcher.cancelRun(
+        runId,
+        "The agent was deleted before this run completed.",
+        actorId,
+        "AGENT_DELETED",
+      );
+      const wasActive = before.status === "QUEUED" ||
+        before.status === "RUNNING" ||
+        before.status === "WAITING_FOR_APPROVAL";
+      if (wasActive && run.status === "CANCELLED") {
+        changed("agent-run", "cancelled", run.id);
+        changed("agent", "run-updated", run.agentId);
+      }
+    }
+    return agents.completeDeletion(plan, actorId);
+  }
+
+  async function completeDueTaskDispatch(activityId: string): Promise<void> {
+    const completion = activityTaskDispatch.markCompletedWithRun(activityId);
+    if (completion.runId !== null) {
+      await cancelDueTaskRun(
+        activityId,
+        completion.runId,
+        "CRM task completed before its due-task agent run finished.",
+      );
+    }
+  }
+
   async function createRecordAgentThread(
     agentId: string,
     recordType: AgentRecordType,
@@ -1894,11 +1967,19 @@ export default async function plugin(bb: BbPluginApi) {
           },
           "crm-task-dispatcher",
         );
-        activityTaskDispatch.attachRun(
+        const attached = activityTaskDispatch.attachRun(
           claim.activity.id,
           claim.dispatch.leaseToken ?? "",
           run.id,
         );
+        if (!attached) {
+          await cancelDueTaskRun(
+            claim.activity.id,
+            run.id,
+            "CRM task completed or its dispatch lease was lost before the agent run could be attached.",
+          );
+          continue;
+        }
         changed("agent-run", "queued", run.id);
         changed("agent", "run-queued", run.agentId);
       } catch (error) {
@@ -2361,12 +2442,16 @@ export default async function plugin(bb: BbPluginApi) {
           | undefined)
       : undefined;
     const deals = db.prepare(`
-      SELECT deals.id, deals.name
+      SELECT deals.id, deals.name, deals.stage, deals.currency,
+        deals.amount_cents AS amountCents,
+        deals.expected_close_date AS expectedCloseDate,
+        deals.owner_id AS ownerId,
+        deal_contacts.role
       FROM deals
       INNER JOIN deal_contacts ON deal_contacts.deal_id = deals.id
       WHERE deal_contacts.contact_id = ? AND deals.archived_at IS NULL
       ORDER BY deals.created_at DESC
-    `).all(contact.id) as Array<{ id: string; name: string }>;
+    `).all(contact.id) as NonNullable<ContactOutput["deals"]>;
     const isPrimaryContact =
       db.prepare("SELECT 1 FROM companies WHERE primary_contact_id = ? LIMIT 1").get(contact.id) !==
       undefined;
@@ -2731,15 +2816,6 @@ export default async function plugin(bb: BbPluginApi) {
     }
 
     const settingsValue = await settings.get();
-    const researchKey = typeof settingsValue.researchApiKey === "string"
-      ? settingsValue.researchApiKey.trim()
-      : "";
-    if (researchKey === "") {
-      const reason = "Research provider credentials are not configured; no external data was fetched.";
-      const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
-      return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
-    }
-
     const configuredAgent = typeof settingsValue.researchAgentId === "string"
       ? settingsValue.researchAgentId.trim()
       : "";
@@ -2832,11 +2908,6 @@ export default async function plugin(bb: BbPluginApi) {
     }
 
     const settingsValue = await settings.get();
-    const researchKey = typeof settingsValue.researchApiKey === "string"
-      ? settingsValue.researchApiKey.trim()
-      : "";
-    if (researchKey === "") return { queued: false };
-
     const agentId = typeof settingsValue.researchAgentId === "string"
       ? settingsValue.researchAgentId.trim()
       : "";
@@ -3160,10 +3231,8 @@ export default async function plugin(bb: BbPluginApi) {
     tracking_tokens_list(input) {
       return trackingSites.listTokens(input.siteId, input.scope);
     },
-    tracking_tokens_provision({ scope, siteId, at }) {
-      const token = scope === "INTAKE"
-        ? trackingSites.createIntakeToken(at)
-        : trackingSites.createTrackingToken(siteId!, at);
+    tracking_tokens_provision({ siteId, at }) {
+      const token = trackingSites.createTrackingToken(siteId, at);
       changed("tracking-token", "provisioned", token.id);
       return token;
     },
@@ -3292,6 +3361,11 @@ export default async function plugin(bb: BbPluginApi) {
     agents_archive({ id, actorId }) {
       const agent = agents.archive(id, actorId ?? LOCAL_OWNER_ID);
       changed("agent", "archived", agent.id);
+      return agent;
+    },
+    async agents_delete({ id, actorId }) {
+      const agent = await deleteAgentDefinition(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent", "deleted", agent.id);
       return agent;
     },
     agents_restore({ id, actorId }) {
@@ -3994,6 +4068,47 @@ export default async function plugin(bb: BbPluginApi) {
       changed("deal", "updated", deal.id);
       return dealOutput(deal);
     },
+    deals_contacts_attach({ dealId, contactId, role }) {
+      const deal = deals.getRequired(dealId);
+      const contact = contacts.getRequired(contactId);
+      if (deal.companyId !== contact.companyId) {
+        throw new Error("That contact must belong to the deal's company.");
+      }
+      db.prepare(`
+        INSERT INTO deal_contacts (deal_id, contact_id, role)
+        VALUES (?, ?, ?)
+        ON CONFLICT(deal_id, contact_id) DO UPDATE SET role = excluded.role
+      `).run(dealId, contactId, role?.trim() || null);
+      changed("deal", "contact-attached", dealId);
+      changed("contact", "deal-updated", contactId);
+      return dealOutput(deals.getRequired(dealId));
+    },
+    deals_contacts_detach({ dealId, contactId }) {
+      deals.getRequired(dealId);
+      contacts.getRequired(contactId);
+      const result = db
+        .prepare("DELETE FROM deal_contacts WHERE deal_id = ? AND contact_id = ?")
+        .run(dealId, contactId);
+      if (result.changes === 0) {
+        throw new Error("That contact is not on this deal.");
+      }
+      changed("deal", "contact-detached", dealId);
+      changed("contact", "deal-updated", contactId);
+      return dealOutput(deals.getRequired(dealId));
+    },
+    deals_contacts_updateRole({ dealId, contactId, role }) {
+      deals.getRequired(dealId);
+      contacts.getRequired(contactId);
+      const result = db
+        .prepare("UPDATE deal_contacts SET role = ? WHERE deal_id = ? AND contact_id = ?")
+        .run(role?.trim() || null, dealId, contactId);
+      if (result.changes === 0) {
+        throw new Error("That contact is not on this deal.");
+      }
+      changed("deal", "contact-role-updated", dealId);
+      changed("contact", "deal-updated", contactId);
+      return dealOutput(deals.getRequired(dealId));
+    },
     deals_setStage({ id, stage, closedReason }) {
       if (stage === "CLOSED_LOST" && !closedReason?.trim()) {
         throw new Error("A close reason is required for a lost deal.");
@@ -4147,10 +4262,10 @@ export default async function plugin(bb: BbPluginApi) {
       changed("activity", "created", activity.id);
       return activityOutput(activity);
     },
-    activity_complete({ id, completed }) {
+    async activity_complete({ id, completed }) {
       const activity = activities.complete(id, completed);
       if (activity.type === "TASK") {
-        if (completed) activityTaskDispatch.markCompleted(activity.id);
+        if (completed) await completeDueTaskDispatch(activity.id);
         else activityTaskDispatch.markReopened(activity.id);
       }
       changed("activity", completed ? "completed" : "reopened", activity.id);
@@ -4408,6 +4523,25 @@ export default async function plugin(bb: BbPluginApi) {
       "Ask only when the user's answer changes what happens next. Use two to four distinct options when they clarify a real choice; use allowFreeform when a custom answer is valid. Do not ask for optional detail or invent an option. Wait for the response before continuing.",
     parameters: askQuestionInputSchema,
     async execute(input, context) {
+      // Hidden dispatcher threads have no host attention surface. Never leave
+      // an unattended schedule/event/webhook/due-task run waiting on a
+      // question the user cannot see. Fail closed if visibility itself cannot
+      // be verified; visible record conversations can still ask normally.
+      try {
+        const thread = await bb.sdk.threads.get({
+          threadId: context.threadId,
+          signal: context.signal,
+        });
+        if (thread.visibility !== "visible") {
+          return clarificationError(
+            "This is a non-interactive background CRM run, so a clarification cannot be shown. Continue only with a safe supported default; otherwise leave the material decision unresolved for a visible record conversation.",
+          );
+        }
+      } catch {
+        return clarificationError(
+          "The CRM could not verify that this thread has a visible question surface. Do not guess; leave the material decision unresolved for a visible record conversation.",
+        );
+      }
       const requestId = randomUUID();
       const payload = clarificationPayload(input, requestId);
       let result;
@@ -4646,14 +4780,14 @@ export default async function plugin(bb: BbPluginApi) {
     instructions:
       "Use the activity id from crm_list_tasks or a focused CRM read. Only mark the task complete when the requested work is actually done; use completed=false to reopen it. Never infer an id from a subject or claim completion from a summary alone.",
     parameters: activityTaskCompletionToolInputSchema,
-    execute({ id, completed }) {
+    async execute({ id, completed }) {
       const activity = activities.complete(id, completed);
       if (activity.type !== "TASK") {
         // ActivityStore.complete already rejects this, but retain the guard
         // if its implementation is ever widened independently.
         throw new Error("Only TASK activities can be completed.");
       }
-      if (completed) activityTaskDispatch.markCompleted(activity.id);
+      if (completed) await completeDueTaskDispatch(activity.id);
       else activityTaskDispatch.markReopened(activity.id);
       changed("activity", completed ? "completed" : "reopened", activity.id);
       return JSON.stringify(activityOutput(activity));

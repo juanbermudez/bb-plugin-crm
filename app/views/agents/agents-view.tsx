@@ -11,6 +11,7 @@ import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
   EmptyState,
+  AlertDialog,
   PageHeader,
   RecordDrawer,
   SearchField,
@@ -447,13 +448,16 @@ function LifecycleActions({
   agent,
   rpc,
   onChanged,
+  onDeleted,
 }: {
   agent: AgentDetail;
   rpc: AgentsRpcClient;
   onChanged: () => Promise<void>;
+  onDeleted?: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const run = async (method: "agents_pause" | "agents_resume" | "agents_archive" | "agents_restore") => {
     setBusy(method);
@@ -463,6 +467,21 @@ function LifecycleActions({
       await onChanged();
     } catch (cause) {
       setError(errorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteAgent = async () => {
+    setBusy("agents_delete");
+    setError(null);
+    try {
+      await rawRpc(rpc).call("agents_delete", { id: agent.id });
+      await onChanged();
+      onDeleted?.();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      throw cause;
     } finally {
       setBusy(null);
     }
@@ -522,7 +541,30 @@ function LifecycleActions({
           {busy === "agents_restore" ? "Restoring…" : "Restore"}
         </Button>
       ) : null}
+      {agent.status !== "DELETED" ? (
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          disabled={busy !== null}
+          aria-label="Delete agent"
+          onClick={() => { setError(null); setDeleteOpen(true); }}
+        >
+          <Icon name="Trash2" aria-hidden="true" />
+          Delete
+        </Button>
+      ) : null}
       {error ? <span className="basis-full text-xs text-destructive" role="alert">{error}</span> : null}
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${agent.name}?`}
+        description="This soft-deletes the agent, disables its triggers, cancels queued, running, and waiting runs, and stops linked hidden BB workers. Run, action, and audit history stays available for review."
+        confirmLabel="Delete agent"
+        destructive
+        disabled={busy !== null}
+        onConfirm={deleteAgent}
+      />
     </div>
   );
 }
@@ -596,9 +638,9 @@ function VersionEditor({
       setError(manifest.error ?? "Manifest must be a JSON object.");
       return;
     }
-    const sandboxPolicy = parseJsonObject(value.sandboxPolicy, "Sandbox policy");
+    const sandboxPolicy = parseJsonObject(value.sandboxPolicy, "BB permission policy");
     if (sandboxPolicy.error || !sandboxPolicy.value) {
-      setError(sandboxPolicy.error ?? "Sandbox policy must be a JSON object.");
+      setError(sandboxPolicy.error ?? "BB permission policy must be a JSON object.");
       return;
     }
     setSaving(true);
@@ -655,7 +697,7 @@ function VersionEditor({
   return (
     <Section
       title="Version draft editor"
-      description="Instructions and execution policy are versioned together. JSON fields accept objects only and are checked before the RPC is sent."
+      description="Instructions and BB execution permission policy are versioned together. The policy maps directly to the host permissionMode used for every spawned or resumed run."
       actions={
         <select
           className={`${SELECT_CLASS} w-auto min-w-40`}
@@ -738,7 +780,7 @@ function VersionEditor({
           </div>
           <div className="space-y-2">
             <label className="text-xs font-medium" htmlFor={`agent-sandbox-${agent.id}`}>
-              Sandbox policy JSON
+              BB permission policy JSON
             </label>
             <textarea
               id={`agent-sandbox-${agent.id}`}
@@ -746,7 +788,11 @@ function VersionEditor({
               value={value.sandboxPolicy}
               onChange={(event) => setValue((current) => ({ ...current, sandboxPolicy: event.target.value }))}
               spellCheck={false}
+              placeholder={'{ "permissionMode": "accept-edits" }'}
             />
+            <p className="text-xs text-muted-foreground">
+              Optional key: <code>permissionMode</code> with <code>accept-edits</code>, <code>auto</code>, or <code>full</code>. Unknown keys are rejected.
+            </p>
           </div>
         </div>
         <InlineError message={error} />
@@ -1796,7 +1842,7 @@ export function AgentsView({
         onOpenChange={(open) => { if (!open) closeAgent(); }}
         title={detail?.name ?? "Agent"}
         description={detail ? `${statusLabel(detail.status)} · ${detail.id}` : "Agent details"}
-        actions={detail ? <LifecycleActions agent={detail} rpc={rpc} onChanged={reloadDetail} /> : undefined}
+        actions={detail ? <LifecycleActions agent={detail} rpc={rpc} onChanged={reloadDetail} onDeleted={closeAgent} /> : undefined}
         className="sm:w-[min(72rem,calc(100vw-1.5rem))]"
         bodyClassName="px-5 py-4 sm:px-7"
       >

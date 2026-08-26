@@ -36,7 +36,7 @@ const version: AgentVersion = {
   manifest: { output: "summary" },
   modelId: "default",
   modelContextWindowTokens: 1_000_000,
-  sandboxPolicy: { network: "deny" },
+  sandboxPolicy: { permissionMode: "accept-edits" },
   validation: null,
   sourceConversationId: null,
   createdById: "bb-user-local",
@@ -191,6 +191,32 @@ describe("AgentsView", () => {
       agentId: agent.id,
       versionId: version.id,
     }));
+  });
+
+  it("requires destructive confirmation before deleting an agent", async () => {
+    let currentAgent = agent;
+    const deletedAgent: AgentDetail = {
+      ...agent,
+      status: "DELETED",
+      deletedAt: "2026-08-25T09:30:00.000Z",
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "agents_list") return currentAgent.status === "DELETED" ? [] : [listItem];
+      if (method === "agents_get") return currentAgent;
+      if (method === "agents_delete") {
+        currentAgent = deletedAgent;
+        return deletedAgent;
+      }
+      return [];
+    });
+    render(<AgentsView rpcClient={rpc} initialRecordId={agent.id} />);
+    const drawer = await screen.findByRole("dialog", { name: agent.name });
+    fireEvent.click(within(drawer).getByRole("button", { name: "Delete agent" }));
+
+    const confirmation = await screen.findByRole("dialog", { name: `Delete ${agent.name}?` });
+    expect(rpc.call).not.toHaveBeenCalledWith("agents_delete", { id: agent.id });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Delete agent" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_delete", { id: agent.id }));
   });
 
   it("creates, enables, and deletes a trigger", async () => {

@@ -45,7 +45,9 @@ describe("connections and tracking wire contracts", () => {
     }).success).toBe(true);
     expect(trackingTokenProvisionInputSchema.safeParse({
       scope: "INTAKE",
-      siteId: "site_1",
+    }).success).toBe(false);
+    expect(trackingTokenProvisionInputSchema.safeParse({
+      scope: "TRACKING",
     }).success).toBe(false);
   });
 

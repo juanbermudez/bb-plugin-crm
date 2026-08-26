@@ -10,7 +10,12 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Deal, DealListOutput } from "../../../contracts/core.js";
+import type {
+  CompanyListOutput,
+  Contact,
+  Deal,
+  DealListOutput,
+} from "../../../contracts/core.js";
 import { DealsView, type DealsRpcClient } from "./index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
@@ -83,12 +88,21 @@ function listResult(rows: Deal[] = [deal]): DealListOutput {
   };
 }
 
+function companyListResult(): CompanyListOutput {
+  return {
+    rows: [{ id: "cmp_acme", name: "Acme Corporation", domain: "acme.example", fields: {} }],
+    total: 1,
+    facetCounts: {},
+  };
+}
+
 function makeRpc(
   implementation?: (method: string, input: unknown) => Promise<unknown>,
 ) {
   const call = vi.fn(
     implementation ?? (async (method: string) => {
       if (method === "deals_list") return listResult();
+      if (method === "companies_list") return companyListResult();
       if (method === "deals_get") return deal;
       if (method === "deals_create") return deal;
       if (method === "deals_update") return deal;
@@ -167,9 +181,110 @@ describe("DealsView", () => {
     expect(screen.getByText("Contacts assigned to this deal will appear here.")).toBeDefined();
   });
 
+  it("attaches, edits, and detaches a same-company deal contact", async () => {
+    let current = deal;
+    const contactRecord: Contact = {
+      id: "con_ada",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+      title: "VP Engineering",
+      companyId: "cmp_acme",
+      ownerId: "usr_juan",
+      fields: {},
+    };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "deals_list") return listResult([current]);
+      if (method === "deals_get") return current;
+      if (method === "contacts_list") {
+        return { rows: [contactRecord], total: 1, facetCounts: {} };
+      }
+      if (method === "deals_contacts_updateRole") {
+        const { role } = input as { role: string | null };
+        current = {
+          ...current,
+          contacts: current.contacts?.map((item) =>
+            item.id === "con_ada" ? { ...item, role } : item,
+          ),
+        };
+        return current;
+      }
+      if (method === "deals_contacts_detach") {
+        current = { ...current, contacts: [] };
+        return current;
+      }
+      if (method === "deals_contacts_attach") {
+        const { role } = input as { role: string | null };
+        current = {
+          ...current,
+          contacts: [{
+            id: contactRecord.id,
+            firstName: contactRecord.firstName,
+            lastName: contactRecord.lastName ?? null,
+            email: contactRecord.email ?? null,
+            title: contactRecord.title ?? null,
+            imageUrl: null,
+            role,
+          }],
+        };
+        return current;
+      }
+      return current;
+    });
+    render(<DealsView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Expansion");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Expansion/ }));
+    await screen.findByRole("dialog", { name: "Acme Expansion" });
+    fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Role for Ada Lovelace" }));
+    const roleInput = screen.getByLabelText("Role for Ada Lovelace");
+    fireEvent.change(roleInput, { target: { value: "Economic buyer" } });
+    fireEvent.blur(roleInput);
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_contacts_updateRole", {
+        dealId: deal.id,
+        contactId: "con_ada",
+        role: "Economic buyer",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Ada Lovelace from deal" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_contacts_detach", {
+        dealId: deal.id,
+        contactId: "con_ada",
+      }),
+    );
+    expect(await screen.findByText("No contacts linked")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add contact" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("contacts_list", expect.objectContaining({
+        company: ["cmp_acme"],
+        pageSize: 100,
+      })),
+    );
+    fireEvent.focus(screen.getByRole("combobox", { name: "Contact" }));
+    fireEvent.click(screen.getByRole("option", { name: /Ada Lovelace/ }));
+    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+      target: { value: "Champion" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Attach contact" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_contacts_attach", {
+        dealId: deal.id,
+        contactId: "con_ada",
+        role: "Champion",
+      }),
+    );
+  });
+
   it("creates a deal with explicit stage, minor-unit amount, and currency", async () => {
     const rpc = makeRpc(async (method) => {
       if (method === "deals_list") return listResult();
+      if (method === "companies_list") return companyListResult();
       if (method === "deals_create") return { ...deal, id: "deal_new" };
       if (method === "deals_get") return deal;
       return deal;
@@ -182,12 +297,10 @@ describe("DealsView", () => {
     fireEvent.change(screen.getByLabelText("Deal name"), {
       target: { value: "New Expansion" },
     });
-    fireEvent.change(screen.getByLabelText("Company ID"), {
-      target: { value: "cmp_acme" },
-    });
-    fireEvent.change(screen.getByLabelText("Owner ID"), {
-      target: { value: "usr_juan" },
-    });
+    fireEvent.focus(screen.getByRole("combobox", { name: "Company" }));
+    fireEvent.click(screen.getByRole("option", { name: /Acme Corporation/ }));
+    fireEvent.focus(screen.getByRole("combobox", { name: "Owner" }));
+    fireEvent.click(screen.getByRole("option", { name: /Juan Bermudez/ }));
     fireEvent.change(screen.getByLabelText("Stage"), {
       target: { value: "CONTRACT_SENT" },
     });
@@ -313,12 +426,17 @@ describe("DealsView", () => {
       if (method === "deals_purge") return archived;
       return archived;
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<DealsView rpcClient={rpc} />);
     await screen.findByText("Acme Expansion");
     fireEvent.click(screen.getByRole("row", { name: /Open Acme Expansion/ }));
     await screen.findByRole("dialog", { name: "Acme Expansion" });
     fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: "Delete Acme Expansion permanently?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Delete permanently" }),
+    );
 
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("deals_purge", { id: "deal_acme_expand" }),
@@ -326,10 +444,36 @@ describe("DealsView", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Acme Expansion" })).toBeNull(),
     );
-    expect(confirm).toHaveBeenCalledWith(
-      "Delete Acme Expansion permanently? This cannot be undone.",
+  });
+
+  it("opens an inline stage menu and requires a reason before closing a deal as lost", async () => {
+    const rpc = makeRpc();
+    render(<DealsView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Expansion");
+    fireEvent.click(screen.getByRole("button", { name: "Demo booked" }));
+    const menu = screen.getByRole("menu", {
+      name: "Change stage for Acme Expansion",
+    });
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: "Closed lost" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Close as lost" });
+    expect(
+      (within(dialog).getByRole("button", { name: "Save stage" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText(/Reason/), {
+      target: { value: "Budget" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save stage" }));
+
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
+        id: deal.id,
+        stage: "CLOSED_LOST",
+        closedReason: "Budget",
+      }),
     );
-    confirm.mockRestore();
   });
 
   it("carries deal sorting/facets and selected ids to bulk stage RPC", async () => {

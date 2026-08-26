@@ -1,5 +1,6 @@
 export { EmptyState, type EmptyStateProps } from "./empty-state.js";
 export { ClarificationQuestion } from "./clarification-question.js";
+export { AlertDialog, type AlertDialogProps } from "./alert-dialog.js";
 export { PageHeader, type PageHeaderProps } from "./page-header.js";
 export { RecordDrawer, type RecordDrawerProps } from "./record-drawer.js";
 export { PersonAvatar, type PersonAvatarProps } from "./person-avatar.js";
@@ -14,6 +15,15 @@ export {
   type InlineTextAreaProps,
 } from "./inline-field.js";
 export { SearchField, type SearchFieldProps } from "./search-field.js";
+export {
+  COMPANY_PICKER_INPUT,
+  EntityPicker,
+  companyOptionsFromRows,
+  ownerOptionsFromRecords,
+  type EntityOption,
+  type EntityPickerProps,
+  type OwnerOptionSource,
+} from "./entity-picker.js";
 export {
   TableShell,
   type TableColumn,

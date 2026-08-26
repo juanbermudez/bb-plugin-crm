@@ -166,6 +166,7 @@ the server.
 | Builder home/chat | CRM Agents route, editor, runs, and linked record chat | done | 6 |
 | Builder attachments | Bounded upload/read/copy through resolved BB project attachment APIs | done | 6 |
 | Agent definitions and versions | Plugin tables and editor | done | 6 |
+| Delete agent definition | Durable DELETED fence, trigger shutdown, active-run cancellation, and hidden-worker cleanup with retained history | done | 6 |
 | Draft validation/deploy | Version state machine | done | 6 |
 | Manual trigger | Run-now action and durable queue | done | 6 |
 | Schedule trigger | BB background service plus stored trigger | done | 6 |
@@ -192,12 +193,12 @@ an external relay.
 | Slack channels and creation | Channel settings | planned | 7 |
 | Slack people matching | Exact-email match plus review | planned | 7 |
 | HubSpot/Linear coming-soon rows | Omitted until supported | host-owned | 7 |
-| Intake endpoint | Fixed unauthenticated route with site-token authority | done | 7 |
+| Intake endpoint | Source route explicitly says unavailable; no endpoint or unused intake credential is exposed | host-owned | 7 |
 | Tracking loader and script | Fixed `GET /tracking/loader.js` route | done | 7 |
 | Anonymous tracking collector | Domain/token/privacy-validated HTTP collector | done | 7 |
 | Tracking privacy rules | Boundary sanitizer and tests | done | 7 |
 | Allowed domains and scopes | Tracking settings | done | 7 |
-| Site verify/pause/rotate | Tracking operations | done | 7 |
+| Site confirm/pause/rotate | Operator-confirmed allowed domain plus token-and-Origin authorization | done | 7 |
 | Attribution and sources | Tracking aggregates | done | 7 |
 | Retention rollup | Bounded rollup/prune RPCs | done | 7 |
 | Workspace name | Plugin setting | done | 1 |

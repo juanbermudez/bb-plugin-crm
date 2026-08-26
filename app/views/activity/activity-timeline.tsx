@@ -618,6 +618,7 @@ export function ActivityTimeline({
   const timelineId = useId();
   const [filter, setFilter] = useState<ActivitySourceTab>("all");
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  const [outstandingTasks, setOutstandingTasks] = useState<ActivityEntry[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [counts, setCounts] = useState<TimelineCountsOutput | null>(null);
   const [loading, setLoading] = useState(true);
@@ -642,12 +643,21 @@ export function ActivityTimeline({
     setLoading(true);
     setError(null);
     setEntries([]);
+    setOutstandingTasks([]);
     setNextCursor(null);
-    void rpc
-      .call("activity_timeline", timelineInput(anchorInput, filter))
-      .then((result: TimelineOutput) => {
+    const timelineRequest = rpc.call("activity_timeline", timelineInput(anchorInput, filter));
+    const outstandingRequest = filter === "all"
+      ? rpc.call("activity_timeline", { ...anchorInput, filter: "upcoming", limit: 100 })
+      : Promise.resolve({ entries: [], nextCursor: null } satisfies TimelineOutput);
+    void Promise.all([timelineRequest, outstandingRequest])
+      .then(([result, outstanding]: [TimelineOutput, TimelineOutput]) => {
         if (!active) return;
         setEntries(mergeEntries([], result.entries));
+        setOutstandingTasks(
+          mergeEntries([], outstanding.entries).filter(
+            (entry) => entry.type === "TASK" && entry.completedAt === null,
+          ),
+        );
         setNextCursor(result.nextCursor);
       })
       .catch((cause: unknown) => {
@@ -684,12 +694,22 @@ export function ActivityTimeline({
     };
   }, [anchorInput, anchorKey, refreshKey, rpc]);
 
-  const groupedEntries = useMemo(() => groupEntries(entries), [entries]);
+  const groupedEntries = useMemo(
+    () => groupEntries(
+      filter === "all"
+        ? entries.filter((entry) => entry.type !== "TASK" || entry.completedAt !== null)
+        : entries,
+    ),
+    [entries, filter],
+  );
 
   const onCreated = useCallback(
     (entry: ActivityEntry) => {
       if (activityMatchesFilter(entry, filter)) {
         setEntries((current) => mergeEntries([entry], current));
+      }
+      if (filter === "all" && entry.type === "TASK" && entry.completedAt === null) {
+        setOutstandingTasks((current) => mergeEntries([entry], current));
       }
       setCounts((current) => {
         if (!current) return current;
@@ -717,6 +737,11 @@ export function ActivityTimeline({
         });
         setEntries((current) =>
           current.map((item) => (item.id === updated.id ? updated : item)),
+        );
+        setOutstandingTasks((current) =>
+          updated.completedAt === null
+            ? mergeEntries(current, [updated])
+            : current.filter((item) => item.id !== updated.id),
         );
         setCounts((current) => {
           if (!current) return current;
@@ -839,6 +864,25 @@ export function ActivityTimeline({
         aria-label={`${title} entries`}
         aria-busy={loading || loadingOlder || undefined}
       >
+        {filter === "all" && outstandingTasks.length > 0 ? (
+          <section className="mb-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby={`${timelineId}-outstanding`}>
+            <div className="mb-3 flex items-center gap-2">
+              <Icon name="ListTodo" aria-hidden="true" className="size-4 text-muted-foreground" />
+              <h3 id={`${timelineId}-outstanding`} className="text-sm font-semibold">Outstanding</h3>
+              <span className="text-xs tabular-nums text-muted-foreground">{outstandingTasks.length}</span>
+            </div>
+            <ol className="space-y-4">
+              {outstandingTasks.map((entry) => (
+                <TimelineEntry
+                  key={entry.id}
+                  entry={entry}
+                  completingId={completingId}
+                  onComplete={(value) => void onComplete(value)}
+                />
+              ))}
+            </ol>
+          </section>
+        ) : null}
         {error && entries.length === 0 && !loading ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">
             <span>{error}</span>

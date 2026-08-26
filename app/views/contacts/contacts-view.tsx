@@ -11,13 +11,19 @@ import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
   ColumnPreferences,
+  COMPANY_PICKER_INPUT,
+  companyOptionsFromRows,
+  AlertDialog,
   EmptyState,
+  EntityPicker,
   InlineField,
   PageHeader,
   PersonAvatar,
   RecordDrawer,
   SearchField,
   TableShell,
+  ownerOptionsFromRecords,
+  type EntityOption,
   usePersistentColumnPreferences,
   type TableColumnPreference,
 } from "../../components/index.js";
@@ -27,6 +33,7 @@ import type {
   ContactUpdateData,
   ContactListInput,
   ContactListOutput,
+  CompanyListOutput,
   FieldDefinition,
   SavedViewFilters,
   SortDirection,
@@ -113,6 +120,23 @@ function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
 }
 
+function formatMinorAmount(
+  amountCents: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (amountCents === null || amountCents === undefined) return "—";
+  if (!currency) return `${amountCents.toLocaleString()} minor units`;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amountCents / 100);
+  } catch {
+    return `${amountCents.toLocaleString()} ${currency}`;
+  }
+}
+
 function customFieldDisplay(
   definition: FieldDefinition,
   value: unknown,
@@ -173,6 +197,14 @@ function isContact(value: unknown): value is Contact {
     typeof value.id === "string" &&
     "firstName" in value &&
     typeof value.firstName === "string"
+  );
+}
+
+function isCompanyListOutput(value: unknown): value is CompanyListOutput {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { rows?: unknown }).rows)
   );
 }
 
@@ -244,6 +276,8 @@ interface ContactFormProps {
   saving: boolean;
   onChange: (next: ContactCreateInput) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  companyOptions: readonly EntityOption[];
+  ownerOptions: readonly EntityOption[];
 }
 
 function ContactForm({
@@ -253,6 +287,8 @@ function ContactForm({
   saving,
   onChange,
   onSubmit,
+  companyOptions,
+  ownerOptions,
 }: ContactFormProps) {
   return (
     <form id={formId} className="space-y-5" onSubmit={onSubmit}>
@@ -331,36 +367,29 @@ function ContactForm({
           />
         </div>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor={`${formId}-company`}>
-          Company ID <span className="font-normal text-muted-foreground">(optional)</span>
-        </label>
-        <Input
-          id={`${formId}-company`}
-          value={value.companyId ?? ""}
-          onChange={(event) =>
-            onChange({ ...value, companyId: event.target.value || null })
-          }
-          placeholder="Leave blank for an unassigned contact"
-          autoCapitalize="none"
-          spellCheck={false}
-        />
-      </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor={`${formId}-owner`}>
-          Owner ID <span className="font-normal text-muted-foreground">(optional)</span>
-        </label>
-        <Input
-          id={`${formId}-owner`}
-          value={value.ownerId ?? ""}
-          onChange={(event) =>
-            onChange({ ...value, ownerId: event.target.value || null })
-          }
-          placeholder="Leave blank for unassigned"
-          autoCapitalize="none"
-          spellCheck={false}
-        />
-      </div>
+      <EntityPicker
+        id={`${formId}-company`}
+        label="Company"
+        value={value.companyId}
+        options={companyOptions}
+        optional
+        disabled={saving}
+        placeholder="Leave blank for no company"
+        onChange={(companyId) => onChange({ ...value, companyId })}
+      />
+      <EntityPicker
+        id={`${formId}-owner`}
+        label="Owner"
+        value={value.ownerId}
+        options={ownerOptions}
+        optional
+        disabled={saving}
+        placeholder="Leave blank for unassigned"
+        onChange={(ownerId) => onChange({ ...value, ownerId })}
+      />
+      <p className="text-xs text-muted-foreground">
+        Company choices are existing CRM records. Owner choices use only owner IDs already present in CRM data; BB member lookup is not exposed.
+      </p>
       {error === null ? null : (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -378,6 +407,8 @@ function ContactForm({
 interface ContactOverviewProps {
   contact: Contact;
   rpc: ContactsRpcClient;
+  companyOptions: readonly EntityOption[];
+  ownerOptions: readonly EntityOption[];
   onUpdate: (data: ContactUpdateData, optimistic: Partial<Contact>) => void;
   onEvidenceChanged: () => void;
   mutationBusy: boolean;
@@ -392,6 +423,8 @@ interface ContactOverviewProps {
 function ContactOverview({
   contact,
   rpc,
+  companyOptions,
+  ownerOptions,
   onUpdate,
   onEvidenceChanged,
   mutationBusy,
@@ -499,27 +532,27 @@ function ContactOverview({
               )
             }
           />
-          <InlineField
+          <EntityPicker
             label="Company"
-            value={contact.companyId ?? null}
+            value={contact.companyId}
+            options={companyOptions}
+            optional
+            disabled={mutationBusy}
             placeholder="No company"
-            saving={mutationBusy}
-            render={(companyId) => contact.company?.name ?? companyId}
-            onSave={(companyId) => {
-              const next = companyId || null;
-              onUpdate({ companyId: next }, { companyId: next, company: null });
-            }}
+            onChange={(companyId) =>
+              onUpdate({ companyId }, { companyId, company: null })
+            }
           />
-          <InlineField
+          <EntityPicker
             label="Owner"
-            value={contact.ownerId ?? null}
+            value={contact.ownerId}
+            options={ownerOptions}
+            optional
+            disabled={mutationBusy}
             placeholder="Unassigned"
-            saving={mutationBusy}
-            render={(ownerId) => contact.owner?.name ?? ownerId}
-            onSave={(ownerId) => {
-              const next = ownerId || null;
-              onUpdate({ ownerId: next }, { ownerId: next, owner: null });
-            }}
+            onChange={(ownerId) =>
+              onUpdate({ ownerId }, { ownerId, owner: null })
+            }
           />
         </div>
       </section>
@@ -631,7 +664,13 @@ function ContactOverview({
   );
 }
 
-function ContactDeals({ contact }: { contact: Contact }) {
+function ContactDeals({
+  contact,
+  onOpenDeal,
+}: {
+  contact: Contact;
+  onOpenDeal?: (id: string) => void;
+}) {
   const deals = contact.deals ?? [];
   if (deals.length === 0) {
     return (
@@ -646,9 +685,37 @@ function ContactDeals({ contact }: { contact: Contact }) {
   return (
     <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Contact deals">
       {deals.map((deal) => (
-        <li key={deal.id} className="px-4 py-3">
-          <p className="text-sm font-medium">{deal.name}</p>
-          <p className="text-xs text-muted-foreground">{deal.id}</p>
+        <li key={deal.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,0.7fr))] sm:items-center">
+          <div className="min-w-0">
+            {onOpenDeal ? (
+              <button
+                type="button"
+                className="truncate rounded text-left text-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={() => onOpenDeal(deal.id)}
+              >
+                {deal.name}
+              </button>
+            ) : (
+              <p className="truncate text-sm font-medium">{deal.name}</p>
+            )}
+            <p className="truncate text-xs text-muted-foreground">{deal.id}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Role</p>
+            <p className="truncate text-sm">{displayValue(deal.role)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Stage</p>
+            <p className="truncate text-sm">{displayValue(deal.stage)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Amount</p>
+            <p className="truncate text-sm tabular-nums">{formatMinorAmount(deal.amountCents, deal.currency)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Owner</p>
+            <p className="truncate text-sm">{displayValue(deal.ownerId)}</p>
+          </div>
         </li>
       ))}
     </ul>
@@ -690,6 +757,7 @@ export function ContactsView({
   const [filters, setFilters] = useState<ListFilters>({});
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<ContactListOutput>(EMPTY_LIST);
+  const [companyOptions, setCompanyOptions] = useState<readonly EntityOption[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
@@ -709,6 +777,8 @@ export function ContactsView({
   const [recordTab, setRecordTab] = useState<ContactTab>("overview");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<"archive" | "purge" | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createValue, setCreateValue] = useState<ContactCreateInput>({
     firstName: "",
@@ -782,6 +852,23 @@ export function ContactsView({
       active = false;
     };
   }, [listInput, refreshKey, rpc]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("companies_list", COMPANY_PICKER_INPUT)
+      .then((next) => {
+        if (active && isCompanyListOutput(next)) {
+          setCompanyOptions(companyOptionsFromRows(next.rows));
+        }
+      })
+      .catch(() => {
+        // Company choices are optional; an unassigned contact remains valid.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc, refreshKey]);
 
   useEffect(() => {
     let active = true;
@@ -971,14 +1058,6 @@ export function ContactsView({
 
   const purgeRecord = useCallback(async () => {
     if (record === null) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Delete ${contactName(record)} permanently? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
     setMutationBusy(true);
     setMutationError(null);
     try {
@@ -987,6 +1066,7 @@ export function ContactsView({
       setRefreshKey((value) => value + 1);
     } catch (cause) {
       setMutationError(errorMessage(cause));
+      throw cause;
     } finally {
       setMutationBusy(false);
     }
@@ -1068,6 +1148,22 @@ export function ContactsView({
       ),
     [list.rows],
   );
+  const ownerOptions = useMemo(
+    () => ownerOptionsFromRecords(record ? [...list.rows, record] : list.rows),
+    [list.rows, record],
+  );
+  const selectableCompanyOptions = useMemo(() => {
+    const options = [...companyOptions];
+    const current = record?.company;
+    if (current && !options.some((option) => option.value === current.id)) {
+      options.push({
+        value: current.id,
+        label: current.name,
+        description: current.domain ?? current.id,
+      });
+    }
+    return options;
+  }, [companyOptions, record?.company]);
   const facets = useMemo<ListFacet[]>(
     () => [
       {
@@ -1383,21 +1479,7 @@ export function ContactsView({
                   variant="outline"
                   size="sm"
                   disabled={bulkBusy}
-                  onClick={() => {
-                    const confirmed =
-                      typeof window === "undefined" ||
-                      typeof window.confirm !== "function" ||
-                      window.confirm(
-                        `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"}?`,
-                      );
-                    if (confirmed) {
-                      void runBulk(
-                        "contacts_bulkArchive",
-                        { ids: selectedIds },
-                        `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} archived.`,
-                      );
-                    }
-                  }}
+                  onClick={() => setBulkConfirm("archive")}
                 >
                   Archive selected
                 </Button>
@@ -1424,21 +1506,7 @@ export function ContactsView({
                   variant="destructive"
                   size="sm"
                   disabled={bulkBusy}
-                  onClick={() => {
-                    const confirmed =
-                      typeof window === "undefined" ||
-                      typeof window.confirm !== "function" ||
-                      window.confirm(
-                        `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} permanently? This cannot be undone.`,
-                      );
-                    if (confirmed) {
-                      void runBulk(
-                        "contacts_bulkPurge",
-                        { ids: selectedIds },
-                        `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} deleted.`,
-                      );
-                    }
-                  }}
+                  onClick={() => setBulkConfirm("purge")}
                 >
                   Delete selected
                 </Button>
@@ -1609,6 +1677,44 @@ export function ContactsView({
         </div>
       </div>
 
+      <AlertDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        title={`Delete ${record ? contactName(record) : "contact"} permanently?`}
+        description="This cannot be undone."
+        confirmLabel="Delete permanently"
+        destructive
+        onConfirm={purgeRecord}
+      />
+      <AlertDialog
+        open={bulkConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setBulkConfirm(null);
+        }}
+        title={
+          bulkConfirm === "purge"
+            ? `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} permanently?`
+            : `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"}?`
+        }
+        description={bulkConfirm === "purge" ? "This cannot be undone." : "Archived contacts can be restored later."}
+        confirmLabel={bulkConfirm === "purge" ? "Delete permanently" : "Archive"}
+        destructive={bulkConfirm === "purge"}
+        onConfirm={async () => {
+          if (bulkConfirm === "purge") {
+            await runBulk(
+              "contacts_bulkPurge",
+              { ids: selectedIds },
+              `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} deleted.`,
+            );
+          } else if (bulkConfirm === "archive") {
+            await runBulk(
+              "contacts_bulkArchive",
+              { ids: selectedIds },
+              `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} archived.`,
+            );
+          }
+        }}
+      />
       <RecordDrawer
         open={recordId !== null}
         onOpenChange={(open) => {
@@ -1671,6 +1777,8 @@ export function ContactsView({
               <ContactOverview
                 contact={record}
                 rpc={rpc}
+                companyOptions={selectableCompanyOptions}
+                ownerOptions={ownerOptions}
                 onUpdate={(data, optimistic) => void runRecordUpdate(data, optimistic)}
                 onEvidenceChanged={() => setRecordRefreshKey((value) => value + 1)}
                 mutationBusy={mutationBusy}
@@ -1679,7 +1787,7 @@ export function ContactsView({
                 onResearch={(focus) => void requestRecordEnrichment("contacts_research", focus)}
                 onArchive={() => void runArchiveMutation("contacts_archive")}
                 onRestore={() => void runArchiveMutation("contacts_restore")}
-                onPurge={() => void purgeRecord()}
+                onPurge={() => setPurgeOpen(true)}
               />
             ) : recordTab === "deals" ? (
               <ContactDeals contact={record} />
@@ -1732,6 +1840,8 @@ export function ContactsView({
           saving={createSaving}
           onChange={setCreateValue}
           onSubmit={submitCreate}
+          companyOptions={companyOptions}
+          ownerOptions={ownerOptions}
         />
       </RecordDrawer>
     </div>

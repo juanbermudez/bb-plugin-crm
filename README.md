@@ -42,7 +42,8 @@ Currently working end to end:
   fill-rest runs, ordering, options, visibility flags, and agent instructions
 - agent definitions, versions, validation/deployment, manual, scheduled,
   transactional CRM-event, and signed external-webhook triggers; durable
-  runs/actions/audit history; hidden BB-thread dispatch; and the bundled `crm`
+  runs/actions/audit history; safe agent deletion with hidden BB-worker cleanup;
+  hidden BB-thread dispatch; and the bundled `crm`
   operating skill with evidence-backed enrichment tools; record Agent tabs
   render plugin-spawned linked BB threads through host `ThreadChat`; manual
   runs accept bounded BB project attachments, and agents can ask a strict
@@ -51,7 +52,7 @@ Currently working end to end:
 - evidence review for proposed facts/work history, immutable background brief
   versions, approval resolution, auditable run retry, and linked-thread cancel
 - connection health/diagnostics boundaries for Google, Microsoft, and Slack;
-  tracking-site verification, pause/rotate/revoke, a fixed loader and public
+  tracking-site operator confirmation, pause/rotate/revoke, a fixed loader and public
   domain/token/privacy-validated collector, daily rollups, archive/event
   retention services, and one-time token display
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts

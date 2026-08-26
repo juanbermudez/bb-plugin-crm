@@ -46,4 +46,34 @@ describe("global CRM search", () => {
       }),
     );
   });
+
+  it("opens with Cmd/Ctrl-K and supports arrow-and-enter selection", async () => {
+    const call = vi.fn(async (method: string) => {
+      if (method === "contacts_list") {
+        return {
+          rows: [{ id: "contact_ada", firstName: "Ada", lastName: "Lovelace", email: "ada@example.com" }],
+        };
+      }
+      return { rows: [] };
+    });
+    const onOpen = vi.fn();
+    render(
+      <GlobalSearch
+        rpcClient={{ call } as unknown as GlobalSearchRpcClient}
+        onOpen={onOpen}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    const search = screen.getByRole("searchbox", { name: "Search CRM" });
+    expect(document.activeElement).toBe(search);
+    fireEvent.change(search, { target: { value: "Ada" } });
+    await screen.findByRole("button", { name: /Ada Lovelace/ });
+    fireEvent.keyDown(search, { key: "Enter" });
+
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({
+      id: "contact_ada",
+      kind: "contact",
+    })));
+  });
 });

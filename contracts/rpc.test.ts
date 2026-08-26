@@ -82,6 +82,9 @@ describe("CRM RPC contract", () => {
       "deals_get",
       "deals_create",
       "deals_update",
+      "deals_contacts_attach",
+      "deals_contacts_detach",
+      "deals_contacts_updateRole",
       "deals_setStage",
       "deals_archive",
       "deals_restore",
@@ -144,6 +147,7 @@ describe("CRM RPC contract", () => {
       "agents_pause",
       "agents_resume",
       "agents_archive",
+      "agents_delete",
       "agents_restore",
       "agents_triggers_list",
       "agents_triggers_get",
@@ -378,6 +382,28 @@ describe("CRM RPC contract", () => {
       rpcContract.deals_list.input.safeParse({
         page: 1,
         pageSize: 25,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.deals_contacts_attach.input.safeParse({
+        dealId: "deal-1",
+        contactId: "contact-1",
+        role: "Champion",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.deals_contacts_detach.input.safeParse({
+        dealId: "deal-1",
+        contactId: "contact-1",
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.deals_contacts_updateRole.input.safeParse({
+        dealId: "deal-1",
+        contactId: "contact-1",
+        role: null,
         unexpected: true,
       }).success,
     ).toBe(false);

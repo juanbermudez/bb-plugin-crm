@@ -877,6 +877,34 @@ export const dealUpdateInputSchema = z
   .strict();
 export type DealUpdateInput = z.infer<typeof dealUpdateInputSchema>;
 
+const dealContactRoleSchema = z.string().trim().max(80).nullable().optional();
+
+/** Add or update a contact on a deal without introducing a second relation model. */
+export const dealContactAttachInputSchema = z
+  .object({
+    dealId: idSchema,
+    contactId: idSchema,
+    role: dealContactRoleSchema,
+  })
+  .strict();
+export type DealContactAttachInput = z.infer<typeof dealContactAttachInputSchema>;
+
+export const dealContactDetachInputSchema = z
+  .object({ dealId: idSchema, contactId: idSchema })
+  .strict();
+export type DealContactDetachInput = z.infer<typeof dealContactDetachInputSchema>;
+
+export const dealContactRoleUpdateInputSchema = z
+  .object({
+    dealId: idSchema,
+    contactId: idSchema,
+    role: z.string().trim().max(80).nullable(),
+  })
+  .strict();
+export type DealContactRoleUpdateInput = z.infer<
+  typeof dealContactRoleUpdateInputSchema
+>;
+
 export const setDealStageInputSchema = z
   .object({
     id: idSchema,
@@ -1010,6 +1038,13 @@ const dealRefSchema = z
   .object({
     id: idSchema,
     name: nonEmptyText,
+    /** Detail fields are populated for contact-related deals. */
+    stage: dealStageSchema.optional(),
+    currency: currencyCodeSchema.optional(),
+    amountCents: minorAmount.nullable().optional(),
+    expectedCloseDate: dateValueSchema.nullable().optional(),
+    ownerId: idSchema.nullable().optional(),
+    role: nullableText.optional(),
   })
   .strict();
 

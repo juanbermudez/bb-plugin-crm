@@ -211,7 +211,7 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Slack authorization, scopes, channels, people matching, and disconnect.
 - Intake endpoint and connection instructions.
 - Tracking site status, allowed domains, script, cookies, rules,
-  traffic sources, verification, pause, and site-id rotation.
+  traffic sources, operator domain confirmation, pause, and site-id rotation.
 - API key creation, one-time secret display, list, last-used state, and revoke.
 - Compatibility information for members and SSO that BB owns.
 
@@ -393,8 +393,9 @@ Tasks:
 
 - Implement Google and Microsoft authorization, forward sync, health, and disconnect.
 - Implement Slack authorization, scopes, channels, member matching, and delivery checks.
-- Implement intake endpoint and token rotation.
-- Implement tracking loader, tracker config, event collector, filing, verification,
+- Preserve the source's unavailable intake state; do not issue an unused
+  credential until a real, authenticated intake contract exists.
+- Implement tracking loader, tracker config, event collector, filing, operator confirmation,
   daily aggregation, retention, pause, and site-id rotation.
 - Add integration diagnostics to `bb crm doctor`.
 
@@ -472,7 +473,7 @@ Push after the slice passes its checks.
 11. Agent builder and dispatcher.
 12. Mail and calendar.
 13. Slack.
-14. Tracking and intake.
+14. Tracking and source-compatible unavailable intake state.
 15. Settings, API keys, backup, and diagnostics.
 16. Live QA fixes.
 17. Release and marketplace draft.

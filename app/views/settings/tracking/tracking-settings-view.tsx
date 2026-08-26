@@ -333,7 +333,7 @@ function SiteCard({ site, busyAction, onAction }: SiteCardProps) {
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
             <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(site.status)}`} role="status">{site.status === "ACTIVE" ? "Active" : "Paused"}</span>
-            <span className={`rounded-full px-2 py-1 text-xs font-medium ${verificationClass(site.verificationStatus)}`} role="status">{site.verificationStatus === "VERIFIED" ? "Verified" : "Pending verification"}</span>
+            <span className={`rounded-full px-2 py-1 text-xs font-medium ${verificationClass(site.verificationStatus)}`} role="status">{site.verificationStatus === "VERIFIED" ? "Operator confirmed" : "Confirmation required"}</span>
           </div>
         </div>
       </CardHeader>
@@ -368,7 +368,7 @@ function SiteCard({ site, busyAction, onAction }: SiteCardProps) {
           {site.verificationStatus === "VERIFIED" ? null : (
             <Button type="button" size="sm" onClick={() => onAction(site, "verify")} disabled={actionBusy}>
               <Icon name="Check" aria-hidden="true" />
-              Verify site
+              Confirm allowed domain
             </Button>
           )}
           <Button type="button" variant="outline" size="sm" onClick={() => onAction(site, site.status === "ACTIVE" ? "pause" : "resume")} disabled={actionBusy}>
@@ -559,20 +559,6 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
     }
   }, [presentOneTimeToken, rpc, updateSite]);
 
-  const provisionIntakeToken = useCallback(async () => {
-    setBusyAction("intake-token");
-    setError(null);
-    try {
-      const result = await rpc.call("tracking_tokens_provision", { scope: "INTAKE" });
-      presentOneTimeToken(result);
-      setRefreshKey((value) => value + 1);
-    } catch (cause) {
-      setError(`Intake token: ${errorMessage(cause)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }, [presentOneTimeToken, rpc]);
-
   const copyToken = useCallback(async () => {
     const secret = oneTimeToken?.secret;
     if (!secret) return;
@@ -643,16 +629,10 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
         title="Tracking"
         description="Manage first-party site tracking, token access, and privacy-aware retention."
         actions={
-          <>
-            <Button type="button" variant="outline" size="sm" onClick={() => void provisionIntakeToken()} disabled={busyAction !== null}>
-              <Icon name="Lock" aria-hidden="true" />
-              Create intake token
-            </Button>
-            <Button type="button" size="sm" onClick={() => { setCreateError(null); setCreateOpen(true); }}>
-              <Icon name="Plus" aria-hidden="true" />
-              Add tracking site
-            </Button>
-          </>
+          <Button type="button" size="sm" onClick={() => { setCreateError(null); setCreateOpen(true); }}>
+            <Icon name="Plus" aria-hidden="true" />
+            Add tracking site
+          </Button>
         }
       />
       <div className="flex min-w-0 flex-1 flex-col gap-6 p-4 sm:p-5">
@@ -680,7 +660,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 id="tracking-sites-heading" className="text-base font-semibold">Sites</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">Allowed domains, verification, status, site keys, and retention windows.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Allowed domains, explicit operator confirmation, status, site keys, and retention windows. Confirmation records your review; the site token and exact Origin remain the collection authority.</p>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={() => { setCreateError(null); setCreateOpen(true); }}>
                   <Icon name="Plus" aria-hidden="true" />
@@ -712,17 +692,13 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 id="tracking-tokens-heading" className="text-base font-semibold">API tokens</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">Only token fingerprints and usage metadata are retained in this list.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Only site-scoped tracking token fingerprints and usage metadata are retained in this list. The source CRM intake endpoint is not available yet, so this extension does not issue unused intake credentials.</p>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => void provisionIntakeToken()} disabled={busyAction !== null}>
-                  <Icon name="Plus" aria-hidden="true" />
-                  Create intake token
-                </Button>
               </div>
               <TableShell
                 caption="Tracking API tokens"
                 columns={TOKEN_COLUMNS}
-                empty={<EmptyState title="No tracking tokens" description="Provision a site or intake token to see its non-secret metadata here." className="min-h-28 rounded-none border-0 bg-transparent" />}
+                empty={<EmptyState title="No tracking tokens" description="Provision a tracking site to see its non-secret token metadata here." className="min-h-28 rounded-none border-0 bg-transparent" />}
               >
                 {tokens.map((token) => (
                   <tr key={token.id}>
@@ -807,4 +783,3 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
     </div>
   );
 }
-

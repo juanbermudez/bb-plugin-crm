@@ -90,6 +90,34 @@ describe("CompaniesView", () => {
     expect(rpc.call).toHaveBeenCalledWith("companies_get", { id: "cmp_acme" });
   });
 
+  it("renders source company social links in the record overview", async () => {
+    const linkedCompany: Company = {
+      ...company,
+      linkedinUrl: "https://linkedin.com/company/acme",
+      twitterUrl: "https://x.com/acme",
+      githubUrl: "https://github.com/acme",
+      pricingUrl: "https://acme.example/pricing",
+      careersUrl: "https://acme.example/careers",
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "companies_list") return listResult([linkedCompany]);
+      if (method === "companies_get") return linkedCompany;
+      return linkedCompany;
+    });
+    render(<CompaniesView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Corporation");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Corporation/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Acme Corporation" });
+    expect(within(drawer).getByRole("region", { name: "Company social links" })).toBeDefined();
+    expect(
+      within(drawer).getByRole("link", { name: /LinkedIn/ }).getAttribute("href"),
+    ).toBe("https://linkedin.com/company/acme");
+    expect(
+      within(drawer).getByRole("link", { name: /Pricing/ }).getAttribute("href"),
+    ).toBe("https://acme.example/pricing");
+  });
+
   it("creates a company from the BB-native drawer form", async () => {
     const created: Company = { ...company, id: "cmp_new", name: "Newco" };
     const rpc = makeRpc(async (method) => {
@@ -109,9 +137,8 @@ describe("CompaniesView", () => {
     fireEvent.change(screen.getByLabelText("Domain (optional)"), {
       target: { value: "newco.example" },
     });
-    fireEvent.change(screen.getByLabelText("Owner ID (optional)"), {
-      target: { value: "usr_juan" },
-    });
+    fireEvent.focus(screen.getByRole("combobox", { name: "Owner" }));
+    fireEvent.click(screen.getByRole("option", { name: /usr_juan/ }));
     fireEvent.click(screen.getByRole("button", { name: "Create company" }));
 
     await waitFor(() =>
@@ -213,7 +240,6 @@ describe("CompaniesView", () => {
       }
       return company;
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<CompaniesView rpcClient={rpc} />);
 
     await screen.findByText("Acme Corporation");
@@ -246,13 +272,15 @@ describe("CompaniesView", () => {
 
     fireEvent.click(screen.getByLabelText("Select Acme Corporation"));
     fireEvent.click(screen.getByRole("button", { name: "Archive selected" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: "Archive 1 company?",
+    });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Archive" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("companies_bulkArchive", {
         ids: ["cmp_acme"],
       }),
     );
-    expect(confirm).toHaveBeenCalled();
-    confirm.mockRestore();
   });
 
   it("restores query, sorting, direction, and facets from a saved view", async () => {
