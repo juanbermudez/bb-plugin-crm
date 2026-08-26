@@ -30,7 +30,9 @@ Currently working end to end:
 - company, contact, deal, and agent tables with a compact single-row command
   bar; company/contact/deal search and filtering stay grouped on the left,
   while sorting, saved views, columns, and archive scope stay grouped on the
-  right. BB-native facet popovers add search when option volume merits it,
+  right. Status, sort, and saved-view menus use a locally ejected beUI Select
+  adapted to BB tokens and toolbar geometry—no beUI package or registry is
+  installed. BB-native facet popovers add search when option volume merits it,
   while icon-only save-view, sort-direction, columns, and archive controls use
   one ghost-button style and expose accessible top tooltips; pagination,
   standard/custom facets, saved-view restore/defaults, row

@@ -74,7 +74,7 @@ Status meanings:
 | Owner, industry, enrichment facets | Filter bar | done | 2 |
 | Activity and custom-field facets | Contextual filter-bar counts in current search/archive scope; 7/30/90-day activity windows and `field:<key>` custom-field keys | done | 5 |
 | Saved views | Saved-view rows and installation default | done | 5 |
-| Compact list controls | One non-wrapping table toolbar: search/filter left; sort, saved views, columns, and archive right; one icon size/style with top tooltips; no redundant result count | done | 2/5 |
+| Compact list controls | One non-wrapping table toolbar: search/filter left; sort, saved views, columns, and archive right; locally ejected BB-themed beUI Select menus for table dropdowns; one icon size/style with top tooltips; no redundant result count | done | 2/5 |
 | Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
 | Bulk owner | Bulk RPC and CLI | done | 2 |

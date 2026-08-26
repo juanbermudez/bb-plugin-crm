@@ -196,7 +196,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
   facet popover on the left. Sort/direction, saved views, columns, and archived
   scope form a separate right-side table-organization group. All icon actions
   share one size, ghost treatment, padding model, and top tooltip; redundant
-  result counts are omitted above the table.
+  result counts are omitted above the table. Sort and saved-view menus use the
+  locally ejected beUI Select primitive, themed with BB tokens and rendered in
+  a portal so the non-wrapping toolbar cannot clip them.
 - Saved views and column preferences.
 - Standard and custom field columns, with contextual facet counts and 7/30/90-day
   activity facets; custom-field facet keys are `field:<key>`.
@@ -221,7 +223,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - One compact toolbar above the table groups search/filter on the left and
   sort/direction, saved views, columns, and archived scope on the right. The
   saved-view base option is labeled `All records`; no duplicate result count is
-  rendered above the table.
+  rendered above the table. Sort and saved-view dropdowns use the same locally
+  ejected, BB-themed beUI Select primitive as Companies.
 - Saved views, contextual facets, standard fields, custom fields, and bulk
   actions. Activity facets use 7/30/90-day recency windows and custom-field
   keys use `field:<key>`.
@@ -242,7 +245,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - One compact toolbar above the table groups search, status, and filters on the
   left and sort/direction, saved views, columns, and archived scope on the
   right. Redundant deal-count and pipeline-summary text is omitted from the
-  control row.
+  control row. Status, sort, and saved-view dropdowns share the locally ejected,
+  BB-themed beUI Select primitive.
 - Stage, owner, company, contact, currency, close-date, and value facets;
   deal search includes associated company name and custom-field facets use
   `field:<key>`.

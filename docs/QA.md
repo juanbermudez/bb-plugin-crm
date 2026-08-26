@@ -114,6 +114,13 @@ bundle reported app hash `dd8f433df71f490b` and runtime SDK `0.4.8`.
 
 Observed in the live CRM panel:
 
+- A source-development smoke for the ejected beUI Select pass inspected Deals,
+  Contacts, Companies, and Agents at 1280×720. Deal status, shared sort,
+  saved-view, and Agent status controls used the BB-themed local primitive;
+  selections updated their labels, selected rows exposed checkmarks, and the
+  portalled animated panels cleared the toolbar and table instead of being
+  clipped by horizontal overflow. The implementation installs only the
+  primitive's `motion` dependency, not the beUI package or registry.
 - A follow-up source-development smoke after `ca22762` inspected Contacts,
   Companies, and Deals at 1280×720. Each rendered a single 36px control row:
   search/filter controls were grouped left, table-organization controls were
