@@ -13,7 +13,7 @@ Git repository.
 - Plugin repository: `https://github.com/juanbermudez/bb-plugin-crm.git`
 - Plugin package name: `bb-plugin-crm`
 - Derived plugin id: `crm`
-- Current package version: `0.1.0`
+- Current manifest package version (release approval still pending): `0.1.0`
 - Declared engines: BB `>=0.39`; plugin SDK `>=0.4.8`
 - Current plugin icon: `assets/icon.svg` (784 bytes, SHA-256
   `f1ddd8a46e88b19777e38d4a2cbc0fe222a4497d64f5b163248a3d78b91a61b1`)
@@ -21,8 +21,10 @@ Git repository.
   `icons/crm-f1ddd8a4.svg` in the marketplace repository. The entry must
   reference only that copied file, never the plugin repository or a remote URL.
 
-The release commit and tag are intentionally left open until parity work and
-live QA finish. The proposed first Git release is an immutable `v0.1.0` tag.
+The release commit, approved version, tag, source range, and release commands
+are intentionally left as placeholders until parity work, live QA, and
+explicit release approval finish. No production tag or public-tag install is
+claimed by this draft.
 
 ## Proposed `entries/crm.json`
 
@@ -34,7 +36,7 @@ range only if the final plugin manifest or verified feature set changes.
 {
   "id": "crm",
   "displayName": "CRM",
-  "description": "Manage companies, contacts, deals, activities, and agent-driven research inside BB.",
+  "description": "Manage companies, contacts, deals, activities, custom fields, agent automation, connection health, and privacy-safe site tracking inside BB.",
   "icon": {
     "url": "./icons/crm-f1ddd8a4.svg"
   },
@@ -48,6 +50,8 @@ range only if the final plugin manifest or verified feature set changes.
     "pipeline",
     "enrichment",
     "agents",
+    "custom-fields",
+    "tracking",
     "interface"
   ],
   "author": {
@@ -62,62 +66,84 @@ range only if the final plugin manifest or verified feature set changes.
   "source": {
     "git": {
       "url": "https://github.com/juanbermudez/bb-plugin-crm.git",
-      "range": "^0.1.0"
+      "range": "<approved-source-range>"
     }
   }
 }
 ```
 
 The source is a repository-root plugin, so `subdir` and `tagPrefix` are not
-included. The range is valid only after the public repository has a
-`v0.1.0` tag. If the release is intentionally pinned, replace `range` with an
-immutable `ref` and document that choice in the PR.
+included. The placeholder range is valid only after the public repository has
+the approved release tag. If the release is intentionally pinned, replace
+`range` with an immutable `ref` and document that choice in the PR.
 
 ## Marketplace PR body template
 
-Replace all angle-bracket placeholders with evidence from the final release;
-do not claim a check passed until it has run against the release tag.
+Replace all angle-bracket placeholders with evidence from the approved
+release; do not claim a release check passed until it has run against the
+approved release tag.
 
 ```md
 ## What the plugin does
 
 CRM brings the CRM workspace into BB as a native extension for managing
-companies, contacts, deals, activities, saved views, enrichment, and
-agent-driven research.
+companies, contacts, deals, activities, saved views, custom fields, currency
+reporting, agent definitions/runs, connection health, and privacy-safe site
+tracking. The current build includes a BB-thread dispatcher and the
+installation CLI for status, health, lists, CRUD, activities, tasks, and
+versioned import/export.
 
 ## Source release
 
 - Repository: `https://github.com/juanbermudez/bb-plugin-crm.git`
-- Release: `v0.1.0` → `<full-release-commit>`
-- Marketplace range: `^0.1.0`
+- Release: `<approved-release-tag>` → `<approved-release-commit>`
+- Marketplace range: `<approved-source-range>`
 - Plugin id: `crm`, derived from `bb-plugin-crm`
 - Repository layout: root plugin; no `subdir` or `tagPrefix`
 
 ## Plugin checks
 
-- `<test count>` tests passed with `npm test`
+- 29 test files / 146 tests passed with `npm test -- --run`
 - `npm run typecheck` passed
-- `bb plugin types --check` passed against the release BB SDK
-- `bb plugin build` passed and emitted identity-checked metadata
-- Fresh public-tag install/build passed with `npm install --omit=dev`
-- Live BB browser/Electron parity smoke test passed
+- `npm run build` passed and emitted identity-checked metadata
+- `git diff --check` passed
+- `<approved public-tag install/build command>` remains release-gated and
+  unrun
+- Live packaged-BB panel smoke passed for Dashboard Me/Everyone, saved default,
+  advanced Companies facets/selection, Agent creation, Connections/Tracking
+  empty states, tracking site/one-time credential behavior, and CLI
+  status/doctor/list. A focused 390×844 compact dark-theme pass also succeeded;
+  full keyboard, light/custom-theme, and Electron-specific QA were not run.
 
 ## Marketplace checks
 
-- `npm ci --ignore-scripts` passed
-- `npm run build` passed (`<entry count>` entries composed)
-- `npm run check` passed; liveness confirmed `v0.1.0`
-- Entry id matches `entries/crm.json` and the plugin manifest-derived id
-- Icon vendored at `icons/crm-f1ddd8a4.svg` (`<bytes>` bytes, SHA-256
-  `<hash>`, no scripts or remote resources)
+- `<approved marketplace install command>` remains release-gated and unrun.
+- `<approved marketplace build command>` remains release-gated and unrun;
+  `<entry count>` is intentionally unfilled.
+- `<approved marketplace check command>` remains release-gated; liveness for
+  `<approved-release-tag>` is not yet claimed.
+- `<approved entry-id/manifest check>` remains unrun; the intended id is
+  `crm` in `entries/crm.json`.
+- Vendored icon path, byte count, and SHA-256 remain placeholders until the
+  marketplace entry is prepared; the source icon is `assets/icon.svg`.
 
 ## Permissions and security
 
 - The plugin runs as full-trust BB extension code.
-- `<describe exact BB storage, filesystem, network, credentials, and host
-  access used by the final implementation>`
-- `<confirm integrations are optional/fail-safe and secrets are not returned
-  to the frontend>`
+- CRM records, agent state, connection metadata/health, and tracking data are
+  stored in the BB plugin SQLite database. Small plugin settings hold the
+  workspace name, reporting currency, and optional research key; no broad
+  filesystem API or direct provider credential store is bundled.
+- BB threads/projects, realtime invalidation, background services, settings,
+  and the plugin CLI are the host surfaces used by the implementation.
+- Provider authorization and OAuth credentials remain host-managed and are not
+  bundled. Tracking secrets are displayed once at provisioning and are not
+  returned by list/read views; optional integrations fail closed and secrets
+  are not returned to the frontend.
+- BB SDK `0.4.8` exposes no plugin RBAC/current-user identity or blob API. Event
+  and webhook triggers require external producers, a thread reported as
+  `stopping` may remain pending because there is no public cancellation
+  lifecycle, and no public share relay is included.
 - MIT license and upstream attribution are included in the repository.
 ```
 
@@ -125,9 +151,9 @@ agent-driven research.
 
 ### Plugin contract and source
 
-- [ ] Confirm `package.json` still has `name: "bb-plugin-crm"`, the final
-  semver version, `bb.name`, `bb.description`, `bb.branding`, `bb.server`, and
-  `bb.app`.
+- [ ] Confirm `package.json` still has `name: "bb-plugin-crm"`, the
+  `<approved-version>`, `bb.name`, `bb.description`, `bb.branding`, `bb.server`,
+  and `bb.app`.
 - [ ] Run the official ID helper and confirm it returns `crm`:
 
   ```sh
@@ -135,10 +161,11 @@ agent-driven research.
   ```
 
 - [ ] Keep the marketplace id, filename, and manifest-derived id identical.
-- [ ] Run `bb plugin types` against the BB version being released against;
+- [ ] Run `<approved plugin-types command>` against the BB version being
+  released against;
   then run `npm install` and commit the intentional dependency/lockfile
   changes.
-- [ ] Run `npm run typecheck`, `npm test`, `npm run build`, and
+- [ ] Run the clean gate: `npm run typecheck`, `npm test`, `npm run build`, and
   `git diff --check`.
 - [ ] Inspect every generated `dist/*.meta.json` for matching plugin id,
   plugin version, SDK major/version, artifact format, and build metadata.
@@ -147,8 +174,9 @@ agent-driven research.
   package is imported.
 - [ ] Run the frontend/backend SDK harness tests with real temporary SQLite;
   do not mock the database.
-- [ ] Complete live browser/Electron QA for every implemented view, drawer,
-  keyboard path, theme, compact layout, reload, and error/empty state.
+- [ ] Complete live BB panel QA for every implemented view, drawer, keyboard
+  path, theme, compact layout, reload, and error/empty state. Electron-specific
+  QA is a separate, still-open check.
 
 ### Public Git release
 
@@ -161,8 +189,8 @@ agent-driven research.
 
 - [ ] Confirm `https://github.com/juanbermudez/bb-plugin-crm` is public and
   contains the reviewed source, license, attribution, tests, and docs.
-- [ ] Inspect the exact release commit and verify the package version is
-  `0.1.0`.
+- [ ] Inspect `<approved-release-commit>` and verify the package version is
+  `<approved-version>`.
 - [ ] Before the first release mutation, obtain explicit approval for these
   exact values: account, repository/remote, release commit, package/version,
   tag, source range, and commands below.
@@ -170,15 +198,15 @@ agent-driven research.
   move or replace a release tag:
 
   ```sh
-  git tag -a v0.1.0 -m "Release v0.1.0"
-  git push origin HEAD
-  git push origin v0.1.0
-  git ls-remote --tags https://github.com/juanbermudez/bb-plugin-crm.git
+  <approved immutable tag command>
+  <approved push command>
+  <approved remote-tag verification command>
   ```
 
-- [ ] Clone the public tag into a clean temporary directory, run the Git
-  install/build path, and inspect `package.json`, `bb`, and all entry files.
-- [ ] Record the full tag commit for the marketplace PR body.
+- [ ] Clone `<approved-release-tag>` into a clean temporary directory, run the
+  approved Git install/build path, and inspect `package.json`, `bb`, and all
+  entry files.
+- [ ] Record `<approved-release-commit>` for the marketplace PR body.
 
 ### Marketplace entry and PR
 
@@ -194,16 +222,17 @@ agent-driven research.
 - [ ] Run the marketplace checks from the marketplace clone:
 
   ```sh
-  npm ci --ignore-scripts
-  npm run build
-  npm run check
+  <approved marketplace install command>
+  <approved marketplace build command>
+  <approved marketplace check command>
   git status --short
   git diff --check
   git diff -- entries/crm.json icons/
   ```
 
-- [ ] Confirm `npm run check` sees the public `v0.1.0` tag, while separately
-  verifying the tag contains the reviewed plugin. Marketplace liveness checks
+- [ ] Confirm `<approved marketplace check command>` sees the public
+  `<approved-release-tag>`, while separately verifying that tag contains the
+  reviewed plugin. Marketplace liveness checks
   tag/ref existence but do not build or review plugin behavior.
 - [ ] Confirm the entry's engine ranges do not exceed the plugin manifest,
   `author.github` is `juanbermudez`, and the description states observed user
@@ -212,22 +241,17 @@ agent-driven research.
   `get-bb/marketplace:main` after the final validation:
 
   ```sh
-  git add entries/crm.json icons/crm-f1ddd8a4.svg
-  git commit -m "Add plugin entry: crm"
-  git push -u origin submit-crm
-  gh pr create \
-    --repo get-bb/marketplace \
-    --base main \
-    --head juanbermudez:submit-crm \
-    --title "Add plugin entry: crm" \
-    --body-file /path/to/crm-marketplace-pr.md
+  <approved marketplace add/commit command>
+  <approved marketplace push command>
+  <approved marketplace PR command>
   ```
 
 - [ ] Do not wait for merge unless monitoring is explicitly requested.
 
 ### Future releases
 
-- [ ] Publish a new immutable `vX.Y.Z` tag within `^0.1.0` for compatible
+- [ ] Publish a new immutable `<approved-next-version>` tag within
+  `<approved-source-range>` for compatible
   updates; no marketplace PR is needed for ordinary range-compatible releases.
 - [ ] Open a new marketplace PR for source URL, branding, description, owner,
   subdirectory, tag prefix, or range changes.
@@ -272,11 +296,12 @@ required.
      "$BB_SERVER_URL/api/v1/plugins/crm/rpc/<method>"
    ```
 
-6. In browser/Electron, verify the dashboard, company/contact/deal tables,
+6. In the live BB panel, verify the dashboard, company/contact/deal tables,
    filters, saved views, bulk actions, record drawers, timeline/activity
    composer, search, agent surfaces, settings, and connection/error states at
    wide and compact widths. Verify BB light/dark/custom themes and keyboard
-   focus/escape behavior for wide drawers and compact overlays.
+   focus/escape behavior for wide drawers and compact overlays. Electron-
+   specific QA remains a separate, unrun check.
 7. After live QA, run the release commands again, create the clean release
    commit/tag, and repeat the public-tag install test before marketplace
    validation.

@@ -7,29 +7,46 @@ into BB. It preserves the source product's table-first company, contact, deal,
 activity, enrichment, integration, and agent workflows. The interface uses BB
 theme tokens and version-matched vendored components.
 
-The implementation is in progress. The full parity contract and phased task
-breakdown live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md). Track exact source
+The core CRM workspace is implemented; source parity and release validation
+remain tracked explicitly. The full parity contract and phased task breakdown
+live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md). Track exact source
 capabilities in [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and checks that
 have actually run in [docs/QA.md](docs/QA.md).
 
 Currently working end to end:
 
-- source-shaped dashboard with personal/team scope, pipeline, performance,
-  six-month trend, closing totals, overdue work, and recent activity
+- BB-native shell and source-shaped dashboard with Me/Everyone scope,
+  pipeline, performance, six-month trend, closing totals, overdue work, and
+  recent activity
 - append-only SQLite storage for companies, contacts, deals, activities,
-  saved views, and custom fields
-- company, contact, and deal tables with search, pagination, saved views,
-  dynamic-field filtering, deep-linked wide drawers, relationships, archive,
-  restore, purge, bulk RPC, and realtime invalidation
+  saved views, custom fields, agent lifecycles, connection health, and tracking
+  sites/events
+- company, contact, and deal tables with search, pagination, sorting and
+  direction, standard/custom facets, saved-view restore/defaults, row
+  selection, and bulk owner/company/stage/archive/restore/purge operations
+  where applicable, plus deep-linked wide drawers, relationships, and realtime
+  invalidation
 - shared record timelines with note/call/email/meeting/task composition,
   cursor pagination, and task completion/reopen
 - eleven-currency source amounts, frozen reporting money, manual rate
   administration, audit history, missing-rate disclosure, and explicit re-rate
 - custom-field administration, typed record editing, coverage, ordering,
   options, visibility flags, and agent instructions
-- seven native BB agent tools for CRM search, record reads/creates/updates,
-  activities, tasks, and custom fields, plus the bundled `crm` operating skill
+- agent definitions, versions, validation/deployment, manual and scheduled
+  triggers, durable runs/actions/audit history, hidden BB-thread dispatch, and
+  the bundled `crm` operating skill with seven native CRM tools
+- connection health/diagnostics boundaries for Google, Microsoft, and Slack;
+  tracking-site verification, pause/rotate/revoke, privacy-safe ingestion,
+  daily rollups, retention pruning, and one-time token display
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
+
+The current BB SDK does not provide plugin RBAC/current-user identity or a
+plugin blob API. OAuth credentials and provider authorization are not bundled;
+connections remain metadata/health boundaries until a host-authorized flow is
+configured. Agent thread cancellation can remain pending while BB reports a
+thread as stopping. Event/webhook triggers require an external producer, and a
+public share relay is not included. These limits and the remaining source gaps
+are recorded in [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).
 
 ## CLI
 
@@ -97,7 +114,8 @@ from BB's registry and keep runtime-shimmed dependencies in `devDependencies`.
 - `app.tsx` registers the CRM application inside BB.
 - `db/` owns SQLite migrations and record stores.
 - `contracts/` owns strict RPC boundary schemas.
-- `services/` owns CRM domain behavior and integrations.
+- `agent-dispatch.ts` owns BB-thread dispatch and lifecycle reconciliation;
+  connection/tracking and other CRM domain stores live under `db/`.
 - `app/` and `views/` own the BB-native interface.
 - `skills/crm/SKILL.md` teaches BB agents the CRM workflow.
 - `docs/PORT_PLAN.md` is the parity contract and delivery plan.
