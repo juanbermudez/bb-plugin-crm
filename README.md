@@ -14,11 +14,21 @@ have actually run in [docs/QA.md](docs/QA.md).
 
 Currently working end to end:
 
-- BB-native dashboard and inner CRM navigation
+- source-shaped dashboard with personal/team scope, pipeline, performance,
+  six-month trend, closing totals, overdue work, and recent activity
 - append-only SQLite storage for companies, contacts, deals, activities,
   saved views, and custom fields
-- company table, search, pagination, create, deep-linked record drawer,
-  archive, restore, purge, bulk RPC, and realtime invalidation
+- company, contact, and deal tables with search, pagination, saved views,
+  dynamic-field filtering, deep-linked wide drawers, relationships, archive,
+  restore, purge, bulk RPC, and realtime invalidation
+- shared record timelines with note/call/email/meeting/task composition,
+  cursor pagination, and task completion/reopen
+- eleven-currency source amounts, frozen reporting money, manual rate
+  administration, audit history, missing-rate disclosure, and explicit re-rate
+- custom-field administration, typed record editing, coverage, ordering,
+  options, visibility flags, and agent instructions
+- seven native BB agent tools for CRM search, record reads/creates/updates,
+  activities, tasks, and custom fields, plus the bundled `crm` operating skill
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
 
 ## Install
