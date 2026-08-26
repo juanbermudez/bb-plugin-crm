@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.js";
+import { createAgentStore } from "./db/agents.js";
 import { createCurrencyStore } from "./db/currency.js";
+import { CRM_SCHEMA_VERSION } from "./db/schema.js";
 
 describe("CRM plugin foundation", () => {
   it("registers status RPC and CLI over migrated storage", async () => {
@@ -17,7 +19,7 @@ describe("CRM plugin foundation", () => {
 
     await expect(harness.behavior.callRpc("status", null)).resolves.toEqual({
       version: "0.1.0",
-      schemaVersion: 5,
+      schemaVersion: CRM_SCHEMA_VERSION,
       workspaceName: "Revenue",
       reportingCurrency: "EUR",
     });
@@ -136,6 +138,170 @@ describe("CRM plugin foundation", () => {
       expect.arrayContaining([
         { channel: "changed", payload: { entity: "company", action: "created", id } },
         { channel: "changed", payload: { entity: "company", action: "restored", id } },
+      ]),
+    );
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("serves the agent definition, version, trigger, and run lifecycles", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    const created = (await harness.behavior.callRpc("agents_create", {
+      id: "agent_server_lifecycle",
+      name: "Renewal watcher",
+      description: "Watch account renewals.",
+    })) as { id: string; createdById: string; status: string };
+    expect(created).toMatchObject({
+      id: "agent_server_lifecycle",
+      createdById: "local_user",
+      status: "DRAFT",
+    });
+
+    await expect(
+      harness.behavior.callRpc("agents_list", { search: "renewal" }),
+    ).resolves.toEqual([expect.objectContaining({ id: created.id, runCount: 0 })]);
+
+    const version = (await harness.behavior.callRpc("agents_versions_create", {
+      agentId: created.id,
+      data: {
+        id: "version_server_lifecycle",
+        instructions: "Watch renewal changes and summarize them.",
+        manifest: { actions: ["crm.note.write"] },
+      },
+    })) as { id: string; status: string; createdById: string };
+    expect(version).toMatchObject({
+      id: "version_server_lifecycle",
+      status: "DRAFT",
+      createdById: "local_user",
+    });
+    await expect(
+      harness.behavior.callRpc("agents_versions_validate", {
+        id: version.id,
+      }),
+    ).resolves.toMatchObject({ id: version.id, status: "READY" });
+
+    const trigger = (await harness.behavior.callRpc("agents_triggers_create", {
+      agentId: created.id,
+      data: {
+        id: "trigger_server_lifecycle",
+        versionId: version.id,
+        type: "MANUAL",
+        name: "Run manually",
+      },
+    })) as { id: string; enabled: boolean };
+    expect(trigger).toMatchObject({ id: "trigger_server_lifecycle", enabled: false });
+
+    await expect(
+      harness.behavior.callRpc("agents_deploy", {
+        agentId: created.id,
+        versionId: version.id,
+        requestId: "deployment_server_lifecycle",
+      }),
+    ).resolves.toEqual({ id: created.id, versionId: version.id, status: "LIVE" });
+    await expect(
+      harness.behavior.callRpc("agents_get", { id: created.id }),
+    ).resolves.toMatchObject({
+      id: created.id,
+      status: "LIVE",
+      currentVersionId: version.id,
+      currentVersion: { id: version.id, status: "DEPLOYED" },
+      triggers: [{ id: trigger.id, enabled: true }],
+    });
+
+    const queued = (await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: created.id,
+      id: "run_server_lifecycle",
+      input: { companyId: "company_1" },
+      idempotencyKey: "run_server_lifecycle_key",
+    })) as { id: string; agentId: string; status: string; triggerType: string; events: unknown[] };
+    expect(queued).toMatchObject({
+      id: "run_server_lifecycle",
+      agentId: created.id,
+      status: "QUEUED",
+      triggerType: "MANUAL",
+    });
+    expect(queued.events).toHaveLength(1);
+    await expect(
+      harness.behavior.callRpc("agents_threads_list", { agentId: created.id }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      harness.behavior.callRpc("agents_runs_start", { id: queued.id }),
+    ).resolves.toMatchObject({ status: "RUNNING" });
+    await expect(
+      harness.behavior.callRpc("agents_runs_requestApproval", {
+        id: queued.id,
+        reason: "The run writes a CRM note.",
+      }),
+    ).resolves.toMatchObject({ status: "WAITING_FOR_APPROVAL" });
+    await expect(
+      harness.behavior.callRpc("agents_runs_approve", { id: queued.id }),
+    ).resolves.toMatchObject({ status: "RUNNING", approvedById: "local_user" });
+    await expect(
+      harness.behavior.callRpc("agents_runs_success", {
+        id: queued.id,
+        result: { noteId: "note_1" },
+        summary: "Renewal note written",
+      }),
+    ).resolves.toMatchObject({ status: "SUCCEEDED", result: { noteId: "note_1" } });
+    await expect(
+      harness.behavior.callRpc("agents_runs_list", {
+        agentId: created.id,
+        status: ["SUCCEEDED"],
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: queued.id, status: "SUCCEEDED" })]);
+
+    const agentStore = createAgentStore(bb.storage.database());
+    const action = agentStore.createAction(queued.id, {
+      id: "action_server_lifecycle",
+      type: "crm.note.write",
+      provider: "crm",
+      summary: "Write renewal note",
+    });
+    await expect(
+      harness.behavior.callRpc("agents_actions_get", { id: action.id }),
+    ).resolves.toMatchObject({ id: action.id, status: "PLANNED" });
+    await expect(
+      harness.behavior.callRpc("agents_actions_list", { runId: queued.id }),
+    ).resolves.toEqual([expect.objectContaining({ id: action.id })]);
+
+    const thread = agentStore.linkThread(created.id, {
+      id: "thread_server_lifecycle",
+      threadId: "bb-thread-server-lifecycle",
+      kind: "BUILDER",
+      versionId: version.id,
+      summary: "Builder transcript",
+    }, "local_user");
+    await expect(
+      harness.behavior.callRpc("agents_threads_get", { id: thread.id }),
+    ).resolves.toMatchObject({ id: thread.id, threadId: thread.threadId });
+    await expect(
+      harness.behavior.callRpc("agents_threads_list", { agentId: created.id, kind: "BUILDER" }),
+    ).resolves.toEqual([expect.objectContaining({ id: thread.id })]);
+    await expect(
+      harness.behavior.callRpc("agents_audit_list", { agentId: created.id }),
+    ).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ type: "agent.deployed" })]));
+
+    await expect(
+      harness.behavior.callRpc("agents_pause", { id: created.id }),
+    ).resolves.toMatchObject({ status: "PAUSED" });
+    await expect(
+      harness.behavior.callRpc("agents_resume", { id: created.id }),
+    ).resolves.toMatchObject({ status: "LIVE" });
+    await expect(
+      harness.behavior.callRpc("agents_archive", { id: created.id }),
+    ).resolves.toMatchObject({ status: "ARCHIVED" });
+    await expect(
+      harness.behavior.callRpc("agents_restore", { id: created.id }),
+    ).resolves.toMatchObject({ status: "PAUSED" });
+
+    expect(harness.realtimeSignals).toEqual(
+      expect.arrayContaining([
+        { channel: "changed", payload: { entity: "agent", action: "created", id: created.id } },
+        { channel: "changed", payload: { entity: "agent", action: "deployed", id: created.id } },
+        { channel: "changed", payload: { entity: "agent-run", action: "queued", id: queued.id } },
       ]),
     );
 

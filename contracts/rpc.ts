@@ -1,6 +1,45 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
+  agentActionGetInputSchema,
+  agentActionListInputSchema,
+  agentActionSchema,
+  agentAuditEventSchema,
+  agentAuditListInputSchema,
+  agentCancelledRunSchema,
+  agentCreateInputSchema,
+  agentDefinitionSchema,
+  agentDeployInputSchema,
+  agentDetailSchema,
+  agentIdActionInputSchema,
+  agentListInputSchema,
+  agentListItemSchema,
+  agentRunApprovalRequestInputSchema,
+  agentRunApproveInputSchema,
+  agentRunCancelInputSchema,
+  agentRunDetailSchema,
+  agentRunFailureInputSchema,
+  agentRunGetInputSchema,
+  agentRunListInputSchema,
+  agentRunQueueInputSchema,
+  agentRunSuccessInputSchema,
+  agentRunSchema,
+  agentThreadGetInputSchema,
+  agentThreadListInputSchema,
+  agentThreadLinkSchema,
+  agentTriggerCreateInputSchema,
+  agentTriggerDeleteInputSchema,
+  agentTriggerEnableInputSchema,
+  agentTriggerListInputSchema,
+  agentTriggerSchema,
+  agentTriggerUpdateInputSchema,
+  agentUpdateInputSchema,
+  agentVersionCreateInputSchema,
+  agentVersionListInputSchema,
+  agentVersionSchema,
+  agentVersionValidateInputSchema,
+} from "./agents.js";
+import {
   archiveInputSchema,
   activityCompleteInputSchema,
   activityCreateInputSchema,
@@ -89,6 +128,7 @@ import {
   fieldValueListOutputSchema,
   fieldValueOutputSchema,
   fieldValueUpdateInputSchema,
+  idSchema,
   purgeInputSchema,
   recordIdInputSchema,
   rerateSummarySchema,
@@ -476,5 +516,139 @@ export const rpcContract = defineRpcContract({
   fields_values_delete: {
     input: fieldValueDeleteInputSchema,
     output: fieldValueDeleteOutputSchema,
+  },
+  agents_list: {
+    input: agentListInputSchema,
+    output: z.array(agentListItemSchema),
+  },
+  agents_get: {
+    input: recordIdInputSchema,
+    output: agentDetailSchema,
+  },
+  agents_create: {
+    input: agentCreateInputSchema,
+    output: agentDefinitionSchema,
+  },
+  agents_update: {
+    input: agentUpdateInputSchema,
+    output: agentDefinitionSchema,
+  },
+  agents_versions_list: {
+    input: agentVersionListInputSchema,
+    output: z.array(agentVersionSchema),
+  },
+  agents_versions_get: {
+    input: recordIdInputSchema,
+    output: agentVersionSchema,
+  },
+  agents_versions_create: {
+    input: agentVersionCreateInputSchema,
+    output: agentVersionSchema,
+  },
+  agents_versions_validate: {
+    input: agentVersionValidateInputSchema,
+    output: agentVersionSchema,
+  },
+  agents_deploy: {
+    input: agentDeployInputSchema,
+    output: z
+      .object({ id: idSchema, versionId: idSchema, status: z.literal("LIVE") })
+      .strict(),
+  },
+  agents_pause: {
+    input: agentIdActionInputSchema,
+    output: agentDefinitionSchema,
+  },
+  agents_resume: {
+    input: agentIdActionInputSchema,
+    output: agentDefinitionSchema,
+  },
+  agents_archive: {
+    input: agentIdActionInputSchema,
+    output: agentDefinitionSchema,
+  },
+  agents_restore: {
+    input: agentIdActionInputSchema,
+    output: agentDefinitionSchema,
+  },
+  agents_triggers_list: {
+    input: agentTriggerListInputSchema,
+    output: z.array(agentTriggerSchema),
+  },
+  agents_triggers_get: {
+    input: recordIdInputSchema,
+    output: agentTriggerSchema,
+  },
+  agents_triggers_create: {
+    input: agentTriggerCreateInputSchema,
+    output: agentTriggerSchema,
+  },
+  agents_triggers_update: {
+    input: agentTriggerUpdateInputSchema,
+    output: agentTriggerSchema,
+  },
+  agents_triggers_delete: {
+    input: agentTriggerDeleteInputSchema,
+    output: z.object({ id: idSchema }).strict(),
+  },
+  agents_triggers_enable: {
+    input: agentTriggerEnableInputSchema,
+    output: agentTriggerSchema,
+  },
+  agents_runs_list: {
+    input: agentRunListInputSchema,
+    output: z.array(agentRunDetailSchema),
+  },
+  agents_runs_get: {
+    input: agentRunGetInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_queue: {
+    input: agentRunQueueInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_start: {
+    input: agentIdActionInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_requestApproval: {
+    input: agentRunApprovalRequestInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_approve: {
+    input: agentRunApproveInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_success: {
+    input: agentRunSuccessInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_fail: {
+    input: agentRunFailureInputSchema,
+    output: agentRunDetailSchema,
+  },
+  agents_runs_cancel: {
+    input: agentRunCancelInputSchema,
+    output: agentCancelledRunSchema,
+  },
+  agents_actions_list: {
+    input: agentActionListInputSchema,
+    output: z.array(agentActionSchema),
+  },
+  agents_actions_get: {
+    input: agentActionGetInputSchema,
+    output: agentActionSchema,
+  },
+  agents_audit_list: {
+    input: agentAuditListInputSchema,
+    output: z.array(agentAuditEventSchema),
+  },
+  agents_threads_list: {
+    input: agentThreadListInputSchema,
+    output: z.array(agentThreadLinkSchema),
+  },
+  agents_threads_get: {
+    input: agentThreadGetInputSchema,
+    output: agentThreadLinkSchema,
   },
 });

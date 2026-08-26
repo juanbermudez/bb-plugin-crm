@@ -95,7 +95,89 @@ describe("CRM RPC contract", () => {
       "fields_values_create",
       "fields_values_update",
       "fields_values_delete",
+      "agents_list",
+      "agents_get",
+      "agents_create",
+      "agents_update",
+      "agents_versions_list",
+      "agents_versions_get",
+      "agents_versions_create",
+      "agents_versions_validate",
+      "agents_deploy",
+      "agents_pause",
+      "agents_resume",
+      "agents_archive",
+      "agents_restore",
+      "agents_triggers_list",
+      "agents_triggers_get",
+      "agents_triggers_create",
+      "agents_triggers_update",
+      "agents_triggers_delete",
+      "agents_triggers_enable",
+      "agents_runs_list",
+      "agents_runs_get",
+      "agents_runs_queue",
+      "agents_runs_start",
+      "agents_runs_requestApproval",
+      "agents_runs_approve",
+      "agents_runs_success",
+      "agents_runs_fail",
+      "agents_runs_cancel",
+      "agents_actions_list",
+      "agents_actions_get",
+      "agents_audit_list",
+      "agents_threads_list",
+      "agents_threads_get",
     ]);
+  });
+
+  it("keeps agent workspace inputs strict and JSON-safe", () => {
+    expect(
+      rpcContract.agents_create.input.safeParse({ name: "Renewal watcher", unexpected: true })
+        .success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_list.input.safeParse({ status: ["UNKNOWN"] }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_versions_create.input.safeParse({
+        agentId: "agent-1",
+        data: { instructions: "Watch renewals", manifest: { actions: ["crm.note.write"] } },
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.agents_versions_create.input.safeParse({
+        agentId: "agent-1",
+        data: { instructions: "Watch renewals", manifest: { bad: new Date() } },
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_triggers_update.input.safeParse({
+        id: "trigger-1",
+        data: { enabled: true, extra: true },
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_runs_queue.input.safeParse({
+        agentId: "agent-1",
+        input: { companyId: "company-1" },
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_runs_success.input.safeParse({
+        id: "run-1",
+        result: { noteId: "note-1" },
+        costUsd: 0.001,
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.agents_threads_list.input.safeParse({
+        agentId: "agent-1",
+        recordType: "COMPANY",
+        unknown: 1,
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps company RPC inputs and outputs strict", () => {

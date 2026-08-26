@@ -53,6 +53,7 @@ import {
 } from "./db/saved-views.js";
 import { createCustomFieldStore } from "./db/custom-fields.js";
 import { createEvidenceStore } from "./db/evidence.js";
+import { createAgentStore } from "./db/agents.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
 
@@ -98,6 +99,7 @@ export default async function plugin(bb: BbPluginApi) {
   const savedViews = createSavedViewStore(db);
   const customFields = createCustomFieldStore(db);
   const evidenceStore = createEvidenceStore(db);
+  const agents = createAgentStore(db);
 
   function recordFieldValues(entity: FieldEntity, recordId: string): FieldValues {
     return Object.fromEntries(
@@ -276,7 +278,14 @@ export default async function plugin(bb: BbPluginApi) {
       | "custom-field"
       | "contact-fact"
       | "contact-brief"
-      | "contact-work-history",
+      | "contact-work-history"
+      | "agent"
+      | "agent-version"
+      | "agent-trigger"
+      | "agent-run"
+      | "agent-action"
+      | "agent-audit"
+      | "agent-thread",
     action: string,
     id: string,
   ): void {
@@ -695,6 +704,180 @@ export default async function plugin(bb: BbPluginApi) {
         workspaceName,
         reportingCurrency,
       };
+    },
+    agents_list(input) {
+      return agents.list(input);
+    },
+    agents_get({ id }) {
+      return agents.detail(id) ?? (() => {
+        throw new Error(`No agent found for id ${id}.`);
+      })();
+    },
+    agents_create(input) {
+      const agent = agents.create(input, LOCAL_OWNER_ID);
+      changed("agent", "created", agent.id);
+      return agent;
+    },
+    agents_update({ id, data }) {
+      const agent = agents.update(id, data, LOCAL_OWNER_ID);
+      changed("agent", "updated", agent.id);
+      return agent;
+    },
+    agents_versions_list({ agentId, status, limit, offset }) {
+      return agents.listVersions(agentId, { status, limit, offset });
+    },
+    agents_versions_get({ id }) {
+      const version = agents.getVersionRequired(id);
+      return version;
+    },
+    agents_versions_create({ agentId, data }) {
+      const version = agents.createVersion(agentId, data, LOCAL_OWNER_ID);
+      changed("agent-version", "created", version.id);
+      changed("agent", "version-created", agentId);
+      return version;
+    },
+    agents_versions_validate({ id, actorId }) {
+      const version = agents.validateVersion(id, undefined, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-version", "validated", version.id);
+      changed("agent", "version-validated", version.agentId);
+      return version;
+    },
+    agents_deploy({ agentId, versionId, actorId, requestId, clientRequestId }) {
+      const deployment = agents.deploy({
+        agentId,
+        versionId,
+        actorId: actorId ?? LOCAL_OWNER_ID,
+        requestId: requestId ?? clientRequestId,
+      });
+      changed("agent", "deployed", deployment.id);
+      changed("agent-version", "deployed", deployment.versionId);
+      return deployment;
+    },
+    agents_pause({ id, actorId }) {
+      const agent = agents.pause(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent", "paused", agent.id);
+      return agent;
+    },
+    agents_resume({ id, actorId }) {
+      const agent = agents.resume(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent", "resumed", agent.id);
+      return agent;
+    },
+    agents_archive({ id, actorId }) {
+      const agent = agents.archive(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent", "archived", agent.id);
+      return agent;
+    },
+    agents_restore({ id, actorId }) {
+      const agent = agents.restore(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent", "restored", agent.id);
+      return agent;
+    },
+    agents_triggers_list({ agentId, type, enabled, limit, offset }) {
+      return agents.listTriggers(agentId, { type, enabled, limit, offset });
+    },
+    agents_triggers_get({ id }) {
+      return agents.getTriggerRequired(id);
+    },
+    agents_triggers_create({ agentId, data }) {
+      const trigger = agents.createTrigger(agentId, data, LOCAL_OWNER_ID);
+      changed("agent-trigger", "created", trigger.id);
+      changed("agent", "trigger-created", trigger.agentId);
+      return trigger;
+    },
+    agents_triggers_update({ id, data }) {
+      const trigger = agents.updateTrigger(id, data, LOCAL_OWNER_ID);
+      changed("agent-trigger", "updated", trigger.id);
+      changed("agent", "trigger-updated", trigger.agentId);
+      return trigger;
+    },
+    agents_triggers_delete({ id, actorId }) {
+      const trigger = agents.getTriggerRequired(id);
+      const result = agents.deleteTrigger(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-trigger", "deleted", result.id);
+      changed("agent", "trigger-deleted", trigger.agentId);
+      return result;
+    },
+    agents_triggers_enable({ id, enabled, actorId }) {
+      const trigger = agents.enableTrigger(id, enabled, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-trigger", enabled ? "enabled" : "disabled", trigger.id);
+      changed("agent", "trigger-updated", trigger.agentId);
+      return trigger;
+    },
+    agents_runs_list(input) {
+      return agents.listRuns(input);
+    },
+    agents_runs_get({ id }) {
+      return agents.getRunRequired(id);
+    },
+    agents_runs_queue(input) {
+      const { agentId, ...queueInput } = input;
+      // Manual queueing persists a QUEUED run. BB thread dispatch is separate.
+      const run = agents.queueRun(
+        agentId,
+        {
+          ...queueInput,
+          triggerId: null,
+          triggerType: "MANUAL",
+          initiatedById: input.initiatedById ?? LOCAL_OWNER_ID,
+        },
+        LOCAL_OWNER_ID,
+      );
+      changed("agent-run", "queued", run.id);
+      changed("agent", "run-queued", run.agentId);
+      return run;
+    },
+    agents_runs_start({ id, actorId }) {
+      const run = agents.startRun(id, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-run", "started", run.id);
+      changed("agent", "run-updated", run.agentId);
+      return run;
+    },
+    agents_runs_requestApproval({ id, reason, actorId }) {
+      const run = agents.requestApproval(id, { reason }, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-run", "approval-requested", run.id);
+      changed("agent", "run-updated", run.agentId);
+      return run;
+    },
+    agents_runs_approve({ id, approvedById, actorId }) {
+      const approver = approvedById ?? actorId ?? LOCAL_OWNER_ID;
+      const run = agents.approveRun(id, { approvedById: approver }, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-run", "approved", run.id);
+      changed("agent", "run-updated", run.agentId);
+      return run;
+    },
+    agents_runs_success({ id, actorId, ...data }) {
+      const run = agents.succeedRun(id, data, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-run", "succeeded", run.id);
+      changed("agent", "run-updated", run.agentId);
+      return run;
+    },
+    agents_runs_fail({ id, actorId, ...data }) {
+      const run = agents.failRun(id, data, actorId ?? LOCAL_OWNER_ID);
+      changed("agent-run", "failed", run.id);
+      changed("agent", "run-updated", run.agentId);
+      return run;
+    },
+    agents_runs_cancel({ id, reason, actorId }) {
+      const run = agents.cancelRun(id, reason ?? "Cancelled by user.", actorId ?? LOCAL_OWNER_ID);
+      changed("agent-run", run.cancelled ? "cancelled" : "cancel-ignored", run.id);
+      changed("agent", "run-updated", run.agentId);
+      return run;
+    },
+    agents_actions_list({ runId, limit, offset }) {
+      return agents.listActions(runId, limit, offset);
+    },
+    agents_actions_get({ id }) {
+      return agents.getActionRequired(id);
+    },
+    agents_audit_list(input) {
+      return agents.listAudit(input);
+    },
+    agents_threads_list({ agentId, ...options }) {
+      return agents.listThreads(agentId, options);
+    },
+    agents_threads_get({ id }) {
+      return agents.getThreadRequired(id);
     },
     async dashboard_summary({ scope, ownerId }) {
       const { reportingCurrency: configuredCurrency } = await settings.get();
