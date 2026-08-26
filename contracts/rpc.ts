@@ -4,6 +4,7 @@ import {
   archiveInputSchema,
   bulkIdsInputSchema,
   bulkOwnerInputSchema,
+  bulkStageInputSchema,
   bulkResultSchema,
   bulkCompanyInputSchema,
   companyCreateInputSchema,
@@ -16,9 +17,15 @@ import {
   contactListOutputSchema,
   contactSchema,
   contactUpdateInputSchema,
+  dealCreateInputSchema,
+  dealListInputSchema,
+  dealListOutputSchema,
+  dealSchema,
+  dealUpdateInputSchema,
   purgeInputSchema,
   recordIdInputSchema,
   restoreInputSchema,
+  setDealStageInputSchema,
 } from "./core.js";
 
 export const rpcContract = defineRpcContract({
@@ -122,6 +129,58 @@ export const rpcContract = defineRpcContract({
     output: bulkResultSchema,
   },
   contacts_bulkPurge: {
+    input: bulkIdsInputSchema,
+    output: bulkResultSchema,
+  },
+  deals_list: {
+    input: dealListInputSchema,
+    output: dealListOutputSchema,
+  },
+  deals_get: {
+    input: recordIdInputSchema,
+    output: dealSchema,
+  },
+  deals_create: {
+    input: dealCreateInputSchema,
+    output: dealSchema,
+  },
+  deals_update: {
+    input: dealUpdateInputSchema,
+    output: dealSchema,
+  },
+  deals_setStage: {
+    input: setDealStageInputSchema,
+    output: dealSchema,
+  },
+  deals_archive: {
+    input: archiveInputSchema,
+    output: dealSchema,
+  },
+  deals_restore: {
+    input: restoreInputSchema,
+    output: dealSchema,
+  },
+  deals_purge: {
+    input: purgeInputSchema,
+    output: dealSchema,
+  },
+  deals_bulkAssignOwner: {
+    input: bulkOwnerInputSchema,
+    output: bulkResultSchema,
+  },
+  deals_bulkSetStage: {
+    input: bulkStageInputSchema,
+    output: bulkResultSchema,
+  },
+  deals_bulkArchive: {
+    input: bulkIdsInputSchema,
+    output: bulkResultSchema,
+  },
+  deals_bulkRestore: {
+    input: bulkIdsInputSchema,
+    output: bulkResultSchema,
+  },
+  deals_bulkPurge: {
     input: bulkIdsInputSchema,
     output: bulkResultSchema,
   },

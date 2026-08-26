@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rpcContract } from "./rpc.js";
 
 describe("CRM RPC contract", () => {
-  it("uses deterministic flat method names for the company and contact surfaces", () => {
+  it("uses deterministic flat method names for the company, contact, and deal surfaces", () => {
     expect(Object.keys(rpcContract)).toEqual([
       "status",
       "companies_list",
@@ -28,6 +28,19 @@ describe("CRM RPC contract", () => {
       "contacts_bulkArchive",
       "contacts_bulkRestore",
       "contacts_bulkPurge",
+      "deals_list",
+      "deals_get",
+      "deals_create",
+      "deals_update",
+      "deals_setStage",
+      "deals_archive",
+      "deals_restore",
+      "deals_purge",
+      "deals_bulkAssignOwner",
+      "deals_bulkSetStage",
+      "deals_bulkArchive",
+      "deals_bulkRestore",
+      "deals_bulkPurge",
     ]);
   });
 
@@ -56,6 +69,31 @@ describe("CRM RPC contract", () => {
     ).toBe(false);
     expect(
       rpcContract.contacts_list.input.safeParse({
+        page: 1,
+        pageSize: 25,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps deal RPC inputs strict", () => {
+    expect(
+      rpcContract.deals_create.input.safeParse({
+        name: "Expansion",
+        companyId: "company-1",
+        ownerId: "owner-1",
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.deals_setStage.input.safeParse({
+        id: "deal-1",
+        stage: "CLOSED_WON",
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.deals_list.input.safeParse({
         page: 1,
         pageSize: 25,
         unexpected: true,

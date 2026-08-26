@@ -1,9 +1,14 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type {
-  Company as CompanyOutput,
-  CompanyListInput,
-  Contact as ContactOutput,
-  ContactListInput,
+import {
+  currencyCodeSchema,
+  type CurrencyCode,
+  type DealStage,
+  type Company as CompanyOutput,
+  type CompanyListInput,
+  type Contact as ContactOutput,
+  type ContactListInput,
+  type Deal as DealOutput,
+  type DealListInput,
 } from "./contracts/core.js";
 import { rpcContract } from "./contracts/rpc.js";
 import {
@@ -16,6 +21,11 @@ import {
   type Contact as StoredContact,
   type ContactListOptions,
 } from "./db/contacts.js";
+import {
+  createDealStore,
+  type Deal as StoredDeal,
+  type DealListOptions,
+} from "./db/deals.js";
 import { CRM_SCHEMA_VERSION, initializeSchema } from "./db/schema.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
@@ -56,6 +66,7 @@ export default async function plugin(bb: BbPluginApi) {
   initializeSchema(bb, db);
   const companies = createCompanyStore(db);
   const contacts = createContactStore(db);
+  const deals = createDealStore(db);
 
   function companyOutput(company: StoredCompany): CompanyOutput {
     const counts = db
@@ -114,12 +125,12 @@ export default async function plugin(bb: BbPluginApi) {
     return facets;
   }
 
-  function changed(entity: "company" | "contact", action: string, id: string): void {
+  function changed(entity: "company" | "contact" | "deal", action: string, id: string): void {
     bb.realtime.publish("changed", { entity, action, id });
   }
 
   function bulk(
-    entity: "company" | "contact",
+    entity: "company" | "contact" | "deal",
     ids: readonly string[],
     action: (id: string) => void,
   ): { requested: number; succeeded: number; failed: number; message: string | null } {
@@ -220,6 +231,82 @@ export default async function plugin(bb: BbPluginApi) {
     for (const [name, expression] of definitions) {
       const rows = db
         .prepare(`SELECT ${expression} AS value, COUNT(*) AS count FROM contacts WHERE archived_at IS NULL AND ${expression} IS NOT NULL GROUP BY ${expression}`)
+        .all() as Array<{ value: string; count: number }>;
+      facets[name] = Object.fromEntries(rows.map((row) => [row.value, row.count]));
+    }
+    return facets;
+  }
+
+  function dealOutput(deal: StoredDeal): DealOutput {
+    const company = db.prepare(`
+      SELECT id, name, domain, icon_url AS iconUrl, icon_dark_url AS iconDarkUrl,
+        icon_tone AS iconTone, logo_url AS logoUrl
+      FROM companies WHERE id = ?
+    `).get(deal.companyId) as {
+      id: string;
+      name: string;
+      domain: string | null;
+      iconUrl: string | null;
+      iconDarkUrl: string | null;
+      iconTone: string | null;
+      logoUrl: string | null;
+    };
+    const relatedContacts = db.prepare(`
+      SELECT contacts.id, contacts.first_name AS firstName,
+        contacts.last_name AS lastName, contacts.email, contacts.title,
+        contacts.image_url AS imageUrl, deal_contacts.role
+      FROM deal_contacts
+      INNER JOIN contacts ON contacts.id = deal_contacts.contact_id
+      WHERE deal_contacts.deal_id = ? AND contacts.archived_at IS NULL
+      ORDER BY contacts.last_name COLLATE NOCASE, contacts.first_name COLLATE NOCASE
+    `).all(deal.id) as DealOutput["contacts"];
+    return {
+      ...deal,
+      currency: currencyCodeSchema.parse(deal.currency),
+      baseCurrency:
+        deal.baseCurrency === null ? null : currencyCodeSchema.parse(deal.baseCurrency),
+      company,
+      contacts: relatedContacts,
+      fields: {},
+    };
+  }
+
+  function dealListOptions(input: DealListInput): DealListOptions {
+    const sortBy =
+      input.sort === "company" ||
+      input.sort === "owner" ||
+      input.sort === "stage" ||
+      input.sort === "amount" ||
+      input.sort === "expectedClose" ||
+      input.sort === "createdAt" ||
+      input.sort === "lastActivity"
+        ? input.sort
+        : "createdAt";
+    return {
+      search: input.q,
+      archivedOnly: input.archived,
+      status: input.status,
+      ownerIds: input.owner,
+      stages: input.stage,
+      closings: input.closing,
+      sortBy,
+      sortDirection: input.dir,
+      limit: input.pageSize,
+      offset: (input.page - 1) * input.pageSize,
+    };
+  }
+
+  function dealFacetCounts(): Record<string, Record<string, number>> {
+    const facets: Record<string, Record<string, number>> = {};
+    const definitions = [
+      ["owner", "owner_id"],
+      ["company", "company_id"],
+      ["stage", "stage"],
+      ["currency", "currency"],
+    ] as const;
+    for (const [name, expression] of definitions) {
+      const rows = db
+        .prepare(`SELECT ${expression} AS value, COUNT(*) AS count FROM deals WHERE archived_at IS NULL GROUP BY ${expression}`)
         .all() as Array<{ value: string; count: number }>;
       facets[name] = Object.fromEntries(rows.map((row) => [row.value, row.count]));
     }
@@ -362,6 +449,122 @@ export default async function plugin(bb: BbPluginApi) {
       return bulk("contact", ids, (id) => {
         contacts.purge(id);
         changed("contact", "purged", id);
+      });
+    },
+    async deals_list(input) {
+      const options = dealListOptions(input);
+      const { reportingCurrency: configuredCurrency } = await settings.get();
+      const reportingCurrency = currencyCodeSchema.parse(configuredCurrency);
+      const rows = deals.list(options).map(dealOutput);
+      const openValue = db.prepare(`
+        SELECT COALESCE(SUM(base_amount_cents), 0) AS value
+        FROM deals
+        WHERE archived_at IS NULL
+          AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+          AND base_currency = @reportingCurrency
+      `).get({ reportingCurrency }) as { value: number };
+      const missing = db.prepare(`
+        SELECT currency, COUNT(*) AS count
+        FROM deals
+        WHERE archived_at IS NULL
+          AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+          AND amount_cents IS NOT NULL
+          AND base_amount_cents IS NULL
+        GROUP BY currency
+        ORDER BY currency
+      `).all() as Array<{ currency: CurrencyCode; count: number }>;
+      return {
+        rows,
+        total: deals.count(options),
+        facetCounts: dealFacetCounts(),
+        openValueCents: openValue.value,
+        reportingCurrency,
+        unconverted: {
+          count: missing.reduce((total, item) => total + item.count, 0),
+          currencies: missing.map((item) => item.currency),
+        },
+      };
+    },
+    deals_get({ id }) {
+      return dealOutput(deals.getRequired(id));
+    },
+    async deals_create(input) {
+      const { reportingCurrency: configuredCurrency } = await settings.get();
+      const reportingCurrency = currencyCodeSchema.parse(configuredCurrency);
+      const currency = input.currency ?? reportingCurrency;
+      const sameCurrency = input.amountCents != null && currency === reportingCurrency;
+      const deal = deals.create({
+        ...input,
+        currency,
+        baseAmountCents: sameCurrency ? input.amountCents : null,
+        baseCurrency: sameCurrency ? reportingCurrency : null,
+        fxRate: sameCurrency ? 1 : null,
+        fxRateAt: sameCurrency ? new Date().toISOString() : null,
+      });
+      changed("deal", "created", deal.id);
+      return dealOutput(deal);
+    },
+    deals_update({ id, data }) {
+      const { fields: _fields, ...record } = data;
+      const deal = deals.update(id, record);
+      changed("deal", "updated", deal.id);
+      return dealOutput(deal);
+    },
+    deals_setStage({ id, stage, closedReason }) {
+      if (stage === "CLOSED_LOST" && !closedReason?.trim()) {
+        throw new Error("A close reason is required for a lost deal.");
+      }
+      const deal = deals.update(id, { stage, closedReason });
+      changed("deal", "stage-changed", deal.id);
+      return dealOutput(deal);
+    },
+    deals_archive({ id }) {
+      const deal = deals.archive(id);
+      changed("deal", "archived", deal.id);
+      return dealOutput(deal);
+    },
+    deals_restore({ id }) {
+      const deal = deals.restore(id);
+      changed("deal", "restored", deal.id);
+      return dealOutput(deal);
+    },
+    deals_purge({ id }) {
+      const deal = deals.purge(id);
+      changed("deal", "purged", deal.id);
+      return dealOutput(deal);
+    },
+    deals_bulkAssignOwner({ ids, ownerId }) {
+      if (ownerId === null) throw new Error("Deals must have an owner.");
+      return bulk("deal", ids, (id) => {
+        deals.update(id, { ownerId });
+        changed("deal", "updated", id);
+      });
+    },
+    deals_bulkSetStage({ ids, stage, closedReason }) {
+      if (stage === "CLOSED_LOST" && !closedReason?.trim()) {
+        throw new Error("A close reason is required for lost deals.");
+      }
+      return bulk("deal", ids, (id) => {
+        deals.update(id, { stage: stage as DealStage, closedReason });
+        changed("deal", "stage-changed", id);
+      });
+    },
+    deals_bulkArchive({ ids }) {
+      return bulk("deal", ids, (id) => {
+        deals.archive(id);
+        changed("deal", "archived", id);
+      });
+    },
+    deals_bulkRestore({ ids }) {
+      return bulk("deal", ids, (id) => {
+        deals.restore(id);
+        changed("deal", "restored", id);
+      });
+    },
+    deals_bulkPurge({ ids }) {
+      return bulk("deal", ids, (id) => {
+        deals.purge(id);
+        changed("deal", "purged", id);
       });
     },
   });

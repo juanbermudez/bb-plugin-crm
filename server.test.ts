@@ -128,4 +128,60 @@ describe("CRM plugin foundation", () => {
 
     await harness.lifecycle.dispose();
   });
+
+  it("persists deals with frozen reporting money and guarded stage changes", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "USD" },
+    });
+    await plugin(bb);
+
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Pipeline Co",
+    })) as { id: string };
+    const deal = await harness.behavior.callRpc("deals_create", {
+      name: "Expansion",
+      companyId: company.id,
+      ownerId: "owner_1",
+      amountCents: 25_000,
+      currency: "USD",
+      expectedCloseDate: "2026-09-30",
+    });
+    expect(deal).toMatchObject({
+      name: "Expansion",
+      amountCents: 25_000,
+      currency: "USD",
+      baseAmountCents: 25_000,
+      baseCurrency: "USD",
+      fxRate: 1,
+      company: { id: company.id, name: "Pipeline Co" },
+      contacts: [],
+    });
+
+    const listed = await harness.behavior.callRpc("deals_list", { status: "open" });
+    expect(listed).toMatchObject({
+      total: 1,
+      openValueCents: 25_000,
+      reportingCurrency: "USD",
+      unconverted: { count: 0, currencies: [] },
+    });
+
+    const id = (deal as { id: string }).id;
+    await expect(
+      harness.behavior.callRpc("deals_setStage", { id, stage: "CLOSED_LOST" }),
+    ).rejects.toThrow(/close reason/i);
+    await expect(
+      harness.behavior.callRpc("deals_setStage", {
+        id,
+        stage: "CLOSED_LOST",
+        closedReason: "Budget moved",
+      }),
+    ).resolves.toMatchObject({
+      stage: "CLOSED_LOST",
+      closedReason: "Budget moved",
+      closedAt: expect.any(String),
+    });
+
+    await harness.lifecycle.dispose();
+  });
 });
