@@ -98,7 +98,7 @@ function makeRpc(
 }
 
 describe("DealsView", () => {
-  it("loads status-filtered deal rows and opens the overview tabs", async () => {
+  it("loads status-filtered deal rows and opens the related contacts tab", async () => {
     const rpc = makeRpc();
     render(<DealsView rpcClient={rpc} />);
 
@@ -141,8 +141,28 @@ describe("DealsView", () => {
       "true",
     );
     fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
-    expect(screen.getByText("Contacts is staged next")).toBeDefined();
+    expect(screen.getByRole("list", { name: "Deal contacts" })).toBeDefined();
+    expect(screen.getByText("Ada Lovelace")).toBeDefined();
+    expect(screen.getByText("Champion")).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith("deals_get", { id: "deal_acme_expand" });
+  });
+
+  it("shows an empty state when a deal has no related contacts", async () => {
+    const noContacts = { ...deal, contacts: [] };
+    const rpc = makeRpc(async (method) => {
+      if (method === "deals_list") return listResult([noContacts]);
+      if (method === "deals_get") return noContacts;
+      return noContacts;
+    });
+    render(<DealsView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Expansion");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Expansion/ }));
+    await screen.findByRole("dialog", { name: "Acme Expansion" });
+    fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
+
+    expect(screen.getByText("No contacts linked")).toBeDefined();
+    expect(screen.getByText("Contacts assigned to this deal will appear here.")).toBeDefined();
   });
 
   it("creates a deal with explicit stage, minor-unit amount, and currency", async () => {

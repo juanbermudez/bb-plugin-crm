@@ -373,7 +373,31 @@ function ContactOverview({
   );
 }
 
-function StagedContactTab({ tab }: { tab: Exclude<ContactTab, "overview"> }) {
+function ContactDeals({ contact }: { contact: Contact }) {
+  const deals = contact.deals ?? [];
+  if (deals.length === 0) {
+    return (
+      <EmptyState
+        icon="Target"
+        title="No deals linked"
+        description="Deals for this contact will appear here."
+        className="min-h-56 border-0 bg-transparent"
+      />
+    );
+  }
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Contact deals">
+      {deals.map((deal) => (
+        <li key={deal.id} className="px-4 py-3">
+          <p className="text-sm font-medium">{deal.name}</p>
+          <p className="text-xs text-muted-foreground">{deal.id}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StagedContactTab({ tab }: { tab: "agent" }) {
   const label = CONTACT_TABS.find((item) => item.id === tab)?.label ?? tab;
   return (
     <EmptyState
@@ -868,6 +892,8 @@ export function ContactsView({
                 onRestore={() => void runArchiveMutation("contacts_restore")}
                 onPurge={() => void purgeRecord()}
               />
+            ) : recordTab === "deals" ? (
+              <ContactDeals contact={record} />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
                 anchor={{ contactId: record.id }}

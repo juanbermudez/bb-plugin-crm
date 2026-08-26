@@ -549,7 +549,40 @@ function DealOverview({
   );
 }
 
-function StagedDealTab({ tab }: { tab: Exclude<DealTab, "overview"> }) {
+function DealContacts({ deal }: { deal: Deal }) {
+  const contacts = deal.contacts ?? [];
+  if (contacts.length === 0) {
+    return (
+      <EmptyState
+        icon="UserRound"
+        title="No contacts linked"
+        description="Contacts assigned to this deal will appear here."
+        className="min-h-56 border-0 bg-transparent"
+      />
+    );
+  }
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Deal contacts">
+      {contacts.map((contact) => (
+        <li key={contact.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div>
+            <p className="text-sm font-medium">
+              {[contact.firstName, contact.lastName].filter(Boolean).join(" ")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {displayValue(contact.role ?? contact.title)}
+            </p>
+          </div>
+          <p className="text-sm text-muted-foreground sm:text-right">
+            {displayValue(contact.email)}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StagedDealTab({ tab }: { tab: "agent" }) {
   const label = DEAL_TABS.find((item) => item.id === tab)?.label ?? tab;
   return (
     <EmptyState
@@ -1130,6 +1163,8 @@ export function DealsView({
                 onRestore={() => void runArchiveMutation("deals_restore")}
                 onPurge={() => void purgeRecord()}
               />
+            ) : recordTab === "contacts" ? (
+              <DealContacts deal={record} />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
                 anchor={{ dealId: record.id }}

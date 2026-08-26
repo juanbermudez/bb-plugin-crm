@@ -72,7 +72,7 @@ function makeRpc(
 }
 
 describe("ContactsView", () => {
-  it("loads a searchable contact table and opens the staged record tabs", async () => {
+  it("loads a searchable contact table and opens the related deals tab", async () => {
     const rpc = makeRpc();
     render(<ContactsView rpcClient={rpc} />);
 
@@ -108,8 +108,28 @@ describe("ContactsView", () => {
       screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected"),
     ).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "Deals" }));
-    expect(screen.getByText("Deals is staged next")).toBeDefined();
+    expect(screen.getByRole("list", { name: "Contact deals" })).toBeDefined();
+    expect(screen.getByText("Expansion")).toBeDefined();
+    expect(screen.getByText("deal_1")).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith("contacts_get", { id: "con_ada" });
+  });
+
+  it("shows an empty state when a contact has no related deals", async () => {
+    const noDeals = { ...contact, deals: [] };
+    const rpc = makeRpc(async (method) => {
+      if (method === "contacts_list") return listResult([noDeals]);
+      if (method === "contacts_get") return noDeals;
+      return noDeals;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    await screen.findByText("Ada Lovelace");
+    fireEvent.click(screen.getByRole("row", { name: /Open Ada Lovelace/ }));
+    await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    fireEvent.click(screen.getByRole("tab", { name: "Deals" }));
+
+    expect(screen.getByText("No deals linked")).toBeDefined();
+    expect(screen.getByText("Deals for this contact will appear here.")).toBeDefined();
   });
 
   it("creates a contact from the wide BB-native drawer form", async () => {
