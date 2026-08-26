@@ -5,6 +5,7 @@ import {
   type NewThreadRequest,
 } from "@get-bb/plugin-sdk/app";
 import { Icon } from "../../components/ui/icon.js";
+import { cn } from "../../lib/utils.js";
 import type {
   AgentDefinition,
   AgentThreadBuilderSpawnRequest,
@@ -22,6 +23,8 @@ export interface AgentBuilderHomeProps {
   rpc: AgentsRpcClient;
   /** Opens the newly-created definition on its visible BB builder thread. */
   onOpenBuilder: (agentId: string) => void;
+  /** Optional surface styling when the builder is hosted inside a modal. */
+  className?: string;
 }
 
 function textFromPrompt(request: NewThreadRequest): string {
@@ -40,7 +43,7 @@ function textFromPrompt(request: NewThreadRequest): string {
  * submitted request, and lets AgentBuilderConversation render the host-owned
  * transcript/composer after routing to the Conversation tab.
  */
-export function AgentBuilderHome({ rpc, onOpenBuilder }: AgentBuilderHomeProps) {
+export function AgentBuilderHome({ rpc, onOpenBuilder, className }: AgentBuilderHomeProps) {
   const [suggestedPrompt, setSuggestedPrompt] = useState<string | undefined>();
   const [composerKey, setComposerKey] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -77,7 +80,7 @@ export function AgentBuilderHome({ rpc, onOpenBuilder }: AgentBuilderHomeProps) 
   return (
     <section
       aria-label="Build an agent with BB"
-      className="border-b border-border bg-card px-4 py-6 sm:px-5 sm:py-8"
+      className={cn("border-b border-border bg-card px-4 py-6 sm:px-5 sm:py-8", className)}
     >
       <div className="mx-auto w-full max-w-3xl">
         <div className="mb-5 text-center">

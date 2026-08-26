@@ -10,6 +10,13 @@ import { Button } from "../../../components/ui/button.js";
 import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../../components/ui/dialog.js";
+import {
   EmptyState,
   AlertDialog,
   PageHeader,
@@ -1721,6 +1728,7 @@ export function AgentsView({
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailRefreshKey, setDetailRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(initialCreate);
+  const [builderOpen, setBuilderOpen] = useState(false);
   const [createValue, setCreateValue] = useState<AgentFormValue>({ name: "", description: "" });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
@@ -1793,6 +1801,8 @@ export function AgentsView({
   };
 
   const openBuilder = (id: string) => {
+    setBuilderOpen(false);
+    void loadList();
     setSelectedId(id);
     setSelectedTab("conversation");
     // A tab callback carries both the record and the visible builder tab in
@@ -1856,6 +1866,15 @@ export function AgentsView({
           <>
             <Button
               type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setBuilderOpen(true)}
+            >
+              <Icon name="Brain" aria-hidden="true" />
+              Build with BB
+            </Button>
+            <Button
+              type="button"
               variant={includeArchived ? "secondary" : "outline"}
               size="sm"
               aria-pressed={includeArchived}
@@ -1879,7 +1898,6 @@ export function AgentsView({
         }
       />
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
-        <AgentBuilderHome rpc={rpc} onOpenBuilder={openBuilder} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchField
             label="Search agents"
@@ -1941,6 +1959,22 @@ export function AgentsView({
           {agents.map((agent) => <AgentListRow key={agent.id} agent={agent} onOpen={openAgent} />)}
         </TableShell>
       </div>
+
+      <Dialog open={builderOpen} onOpenChange={setBuilderOpen}>
+        <DialogContent className="max-h-[min(52rem,calc(100vh-2rem))] max-w-4xl overflow-y-auto p-0">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Build an agent with BB</DialogTitle>
+            <DialogDescription>
+              Describe an automation and open a private BB builder conversation.
+            </DialogDescription>
+          </DialogHeader>
+          <AgentBuilderHome
+            rpc={rpc}
+            onOpenBuilder={openBuilder}
+            className="border-b-0 bg-background"
+          />
+        </DialogContent>
+      </Dialog>
 
       <RecordDrawer
         open={selectedId !== null}

@@ -258,10 +258,13 @@ describe("AgentsView", () => {
     });
 
     render(<AgentsView rpcClient={rpc} onTabChange={onTabChange} />);
-    fireEvent.change(screen.getByLabelText("Describe the CRM automation"), {
+    expect(screen.queryByLabelText("Describe the CRM automation")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Build with BB" }));
+    const builder = screen.getByRole("dialog", { name: "Build an agent with BB" });
+    fireEvent.change(within(builder).getByLabelText("Describe the CRM automation"), {
       target: { value: "Flag deals with no activity for 14 days." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Start building" }));
+    fireEvent.click(within(builder).getByRole("button", { name: "Start building" }));
 
     await waitFor(() => expect(rpc.call).toHaveBeenNthCalledWith(1, "agents_list", expect.anything()));
     await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_create", {
@@ -284,9 +287,23 @@ describe("AgentsView", () => {
       },
     }));
     expect(onTabChange).toHaveBeenCalledWith("conversation", created.id);
+    expect(screen.queryByRole("dialog", { name: "Build an agent with BB" })).toBeNull();
 
     const drawer = await screen.findByRole("dialog", { name: created.name });
     expect(await within(drawer).findByTestId("agent-thread-chat")).toBeDefined();
+  });
+
+  it("keeps the BB composer hidden until requested and dismisses its modal", async () => {
+    render(<AgentsView rpcClient={makeRpc()} />);
+
+    expect(screen.queryByLabelText("Describe the CRM automation")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Build with BB" }));
+    const builder = screen.getByRole("dialog", { name: "Build an agent with BB" });
+    expect(within(builder).getByLabelText("Describe the CRM automation")).toBeDefined();
+    fireEvent.click(within(builder).getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Build an agent with BB" })).toBeNull();
+    });
   });
 
   it("creates an agent and deep-links the new definition", async () => {
