@@ -358,6 +358,8 @@ function DealOverview({
     stageDraft === "CLOSED_LOST" &&
     closedReasonDraft.trim() !== (deal.closedReason ?? "");
   const stageDirty = stageDraft !== deal.stage || reasonChanged;
+  const missingLostReason =
+    stageDraft === "CLOSED_LOST" && closedReasonDraft.trim() === "";
 
   return (
     <div className="space-y-6">
@@ -392,18 +394,23 @@ function DealOverview({
               ))}
             </select>
           </div>
-          <Button type="submit" variant="outline" disabled={mutationBusy || !stageDirty}>
+          <Button
+            type="submit"
+            variant="outline"
+            disabled={mutationBusy || !stageDirty || missingLostReason}
+          >
             {mutationBusy ? "Saving…" : "Save stage"}
           </Button>
         </div>
         {stageDraft === "CLOSED_LOST" ? (
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground" htmlFor="deal-closed-reason">
-              Close reason <span className="font-normal">(optional)</span>
+              Close reason <span className="font-normal">(required)</span>
             </label>
             <Input
               id="deal-closed-reason"
               value={closedReasonDraft}
+              required
               disabled={mutationBusy}
               onChange={(event) => setClosedReasonDraft(event.target.value)}
               placeholder="Budget, timing, competitor…"

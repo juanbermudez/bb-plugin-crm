@@ -237,6 +237,10 @@ describe("DealsView", () => {
     fireEvent.change(screen.getByLabelText("Stage"), {
       target: { value: "CLOSED_LOST" },
     });
+    expect(screen.getByLabelText(/Close reason/).hasAttribute("required")).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Save stage" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     fireEvent.change(screen.getByLabelText(/Close reason/), {
       target: { value: "Budget" },
     });
