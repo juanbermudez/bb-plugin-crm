@@ -1882,13 +1882,8 @@ export function CompaniesView({
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
       <PageHeader title="Companies" className="border-b-0 pb-2 sm:pb-2" />
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
-        <ListToolbar
-          aria-label="Company table controls"
-          summary={<span role="status" aria-live="polite">
-            {list.total} {list.total === 1 ? "company" : "companies"}
-            {showArchived ? " · archived" : ""}
-          </span>}
-        >
+        <ListToolbar aria-label="Company table controls">
+          <div className="flex shrink-0 items-center gap-2">
           <SearchField
             label="Search companies"
             value={query}
@@ -1901,7 +1896,44 @@ export function CompaniesView({
               setPage(1);
             }}
             placeholder="Search companies…"
-            containerClassName="w-full sm:w-56"
+            containerClassName="w-56 shrink-0"
+          />
+          <ListControls
+            compact
+            compactMode="filters"
+            entityLabel="companies"
+            sort={sort}
+            dir={dir}
+            sortOptions={COMPANY_SORT_OPTIONS}
+            filters={filters}
+            facets={facets}
+            onSortChange={setSort}
+            onDirChange={setDir}
+            onFiltersChange={(next) => {
+              setFilters(cleanFilters(next));
+              setPage(1);
+            }}
+          />
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1 border-l border-border pl-2">
+          <ListControls
+            compact
+            compactMode="sort"
+            entityLabel="companies"
+            sort={sort}
+            dir={dir}
+            sortOptions={COMPANY_SORT_OPTIONS}
+            filters={filters}
+            facets={facets}
+            onSortChange={(next) => {
+              setSort(next);
+              setPage(1);
+            }}
+            onDirChange={(next) => {
+              setDir(next);
+              setPage(1);
+            }}
+            onFiltersChange={setFilters}
           />
           <SavedViewBar
             compact
@@ -1929,38 +1961,19 @@ export function CompaniesView({
               setPage(1);
             }}
           />
-          <ListControls
-            compact
-            entityLabel="companies"
-            sort={sort}
-            dir={dir}
-            sortOptions={COMPANY_SORT_OPTIONS}
-            filters={filters}
-            facets={facets}
-            onSortChange={(next) => {
-              setSort(next);
-              setPage(1);
-            }}
-            onDirChange={(next) => {
-              setDir(next);
-              setPage(1);
-            }}
-            onFiltersChange={(next) => {
-              setFilters(cleanFilters(next));
-              setPage(1);
-            }}
-          />
           <ColumnPreferences preference={columnPreferences} iconOnly />
           <TooltipIconButton
             label="Archived companies"
             icon="Archive"
-            variant={showArchived ? "secondary" : "outline"}
+            variant="ghost"
+            className="size-9 text-muted-foreground"
             aria-pressed={showArchived}
             onClick={() => {
               setShowArchived((value) => !value);
               setPage(1);
             }}
           />
+          </div>
         </ListToolbar>
         {listError === null ? null : (
           <div

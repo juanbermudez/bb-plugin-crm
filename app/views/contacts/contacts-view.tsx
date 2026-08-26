@@ -1600,28 +1600,60 @@ export function ContactsView({
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
       <PageHeader title="Contacts" className="border-b-0 pb-2 sm:pb-2" />
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
-        <ListToolbar
-          aria-label="Contact table controls"
-          summary={<span role="status" aria-live="polite">
-            {list.total} {list.total === 1 ? "contact" : "contacts"}
-            {showArchived ? " · archived" : ""}
-          </span>}
-        >
-          <SearchField
-            label="Search contacts"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(1);
-            }}
-            onClear={() => {
-              setQuery("");
-              setPage(1);
-            }}
-            placeholder="Search contacts by name, email, or company…"
-            containerClassName="w-full sm:w-56"
-          />
-          <SavedViewBar
+        <ListToolbar aria-label="Contact table controls">
+          <div className="flex shrink-0 items-center gap-2">
+            <SearchField
+              label="Search contacts"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              onClear={() => {
+                setQuery("");
+                setPage(1);
+              }}
+              placeholder="Search contacts by name, email, or company…"
+              containerClassName="w-56 shrink-0"
+            />
+            <ListControls
+              compact
+              compactMode="filters"
+              entityLabel="contacts"
+              sort={sort}
+              dir={dir}
+              sortOptions={CONTACT_SORT_OPTIONS}
+              filters={filters}
+              facets={facets}
+              onSortChange={setSort}
+              onDirChange={setDir}
+              onFiltersChange={(next) => {
+                setFilters(cleanFilters(next));
+                setPage(1);
+              }}
+            />
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1 border-l border-border pl-2">
+            <ListControls
+              compact
+              compactMode="sort"
+              entityLabel="contacts"
+              sort={sort}
+              dir={dir}
+              sortOptions={CONTACT_SORT_OPTIONS}
+              filters={filters}
+              facets={facets}
+              onSortChange={(next) => {
+                setSort(next);
+                setPage(1);
+              }}
+              onDirChange={(next) => {
+                setDir(next);
+                setPage(1);
+              }}
+              onFiltersChange={setFilters}
+            />
+            <SavedViewBar
             compact
             entity="CONTACT"
             currentFilters={{
@@ -1645,39 +1677,20 @@ export function ContactsView({
               if (filters.columns.length > 0) columnPreferences.apply(filters.columns);
               setPage(1);
             }}
-          />
-          <ListControls
-            compact
-            entityLabel="contacts"
-            sort={sort}
-            dir={dir}
-            sortOptions={CONTACT_SORT_OPTIONS}
-            filters={filters}
-            facets={facets}
-            onSortChange={(next) => {
-              setSort(next);
-              setPage(1);
-            }}
-            onDirChange={(next) => {
-              setDir(next);
-              setPage(1);
-            }}
-            onFiltersChange={(next) => {
-              setFilters(cleanFilters(next));
-              setPage(1);
-            }}
-          />
-          <ColumnPreferences preference={columnPreferences} iconOnly />
-          <TooltipIconButton
-            label="Archived contacts"
-            icon="Archive"
-            variant={showArchived ? "secondary" : "outline"}
-            aria-pressed={showArchived}
-            onClick={() => {
-              setShowArchived((value) => !value);
-              setPage(1);
-            }}
-          />
+            />
+            <ColumnPreferences preference={columnPreferences} iconOnly />
+            <TooltipIconButton
+              label="Archived contacts"
+              icon="Archive"
+              variant="ghost"
+              className="size-9 text-muted-foreground"
+              aria-pressed={showArchived}
+              onClick={() => {
+                setShowArchived((value) => !value);
+                setPage(1);
+              }}
+            />
+          </div>
         </ListToolbar>
         {listError === null ? null : (
           <div

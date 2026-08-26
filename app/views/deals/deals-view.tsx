@@ -1943,19 +1943,8 @@ export function DealsView({
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
       <PageHeader title="Deals" className="border-b-0 pb-2 sm:pb-2" />
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
-        <ListToolbar
-          aria-label="Deal table controls"
-          summary={
-            <>
-            <span role="status" aria-live="polite">
-              {list.total} {list.total === 1 ? "deal" : "deals"}
-            </span>
-            <span>
-              Open pipeline ({list.reportingCurrency}): {formatMinorAmount(list.openValueCents, list.reportingCurrency)}
-            </span>
-            </>
-          }
-        >
+        <ListToolbar aria-label="Deal table controls">
+          <div className="flex shrink-0 items-center gap-2">
           <SearchField
             label="Search deals"
             value={query}
@@ -1968,7 +1957,7 @@ export function DealsView({
               setPage(1);
             }}
             placeholder="Search deals by name or company…"
-            containerClassName="w-full sm:w-56"
+            containerClassName="w-56 shrink-0"
           />
           <label className="sr-only" htmlFor="deal-status-filter">Deal status</label>
           <select
@@ -1985,6 +1974,43 @@ export function DealsView({
               <option key={option.id} value={option.id}>{option.label}</option>
             ))}
           </select>
+          <ListControls
+            compact
+            compactMode="filters"
+            entityLabel="deals"
+            sort={sort}
+            dir={dir}
+            sortOptions={DEAL_SORT_OPTIONS}
+            filters={filters}
+            facets={facets}
+            onSortChange={setSort}
+            onDirChange={setDir}
+            onFiltersChange={(next) => {
+              setFilters(cleanFilters(next));
+              setPage(1);
+            }}
+          />
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1 border-l border-border pl-2">
+          <ListControls
+            compact
+            compactMode="sort"
+            entityLabel="deals"
+            sort={sort}
+            dir={dir}
+            sortOptions={DEAL_SORT_OPTIONS}
+            filters={filters}
+            facets={facets}
+            onSortChange={(next) => {
+              setSort(next);
+              setPage(1);
+            }}
+            onDirChange={(next) => {
+              setDir(next);
+              setPage(1);
+            }}
+            onFiltersChange={setFilters}
+          />
           <SavedViewBar
             compact
             entity="DEAL"
@@ -2012,38 +2038,19 @@ export function DealsView({
               setPage(1);
             }}
           />
-          <ListControls
-            compact
-            entityLabel="deals"
-            sort={sort}
-            dir={dir}
-            sortOptions={DEAL_SORT_OPTIONS}
-            filters={filters}
-            facets={facets}
-            onSortChange={(next) => {
-              setSort(next);
-              setPage(1);
-            }}
-            onDirChange={(next) => {
-              setDir(next);
-              setPage(1);
-            }}
-            onFiltersChange={(next) => {
-              setFilters(cleanFilters(next));
-              setPage(1);
-            }}
-          />
           <ColumnPreferences preference={columnPreferences} iconOnly />
           <TooltipIconButton
             label="Archived deals"
             icon="Archive"
-            variant={showArchived ? "secondary" : "outline"}
+            variant="ghost"
+            className="size-9 text-muted-foreground"
             aria-pressed={showArchived}
             onClick={() => {
               setShowArchived((value) => !value);
               setPage(1);
             }}
           />
+          </div>
         </ListToolbar>
         {unconverted.count > 0 ? (
           <div

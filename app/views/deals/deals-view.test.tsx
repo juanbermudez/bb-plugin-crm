@@ -134,7 +134,6 @@ describe("DealsView", () => {
     expect(screen.getByRole("columnheader", { name: "Last activity" })).toBeDefined();
     expect(screen.getByText("Demo booked")).toBeDefined();
     expect(screen.getByText("$1,250.00")).toBeDefined();
-    expect(screen.getByText(/Open pipeline \(EUR\)/)).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith(
       "deals_list",
       expect.objectContaining({

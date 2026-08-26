@@ -94,6 +94,8 @@ export interface ListControlsProps {
   className?: string;
   /** Use one label-free command cluster for table toolbars. */
   compact?: boolean;
+  /** Places filtering and table-organization controls in their semantic toolbar groups. */
+  compactMode?: "all" | "filters" | "sort";
 }
 
 /**
@@ -113,6 +115,7 @@ export function ListControls({
   onFiltersChange,
   className,
   compact = false,
+  compactMode = "all",
 }: ListControlsProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
@@ -160,9 +163,11 @@ export function ListControls({
   };
 
   if (compact) {
+    const showFilters = compactMode !== "sort";
+    const showSort = compactMode !== "filters";
     return (
       <div className={cn("flex shrink-0 items-center gap-1", className)}>
-        {facets.length > 0 ? (
+        {showFilters && facets.length > 0 ? (
           <Popover
             open={filtersOpen}
             onOpenChange={(open) => {
@@ -175,6 +180,7 @@ export function ListControls({
                 type="button"
                 variant={activeFilters.length > 0 ? "secondary" : "outline"}
                 size="sm"
+                className="h-9"
                 disabled={availableFacets.length === 0}
               >
                 <Icon name="SlidersHorizontal" aria-hidden="true" />
@@ -264,7 +270,7 @@ export function ListControls({
             </PopoverContent>
           </Popover>
         ) : null}
-        <div className="relative">
+        {showSort ? <div className="relative">
           <Icon
             name="Sort"
             aria-hidden="true"
@@ -284,12 +290,14 @@ export function ListControls({
               </option>
             ))}
           </select>
-        </div>
-        <TooltipIconButton
+        </div> : null}
+        {showSort ? <TooltipIconButton
           label={dir === "desc" ? "Sort descending" : "Sort ascending"}
           icon={dir === "desc" ? "ArrowDown" : "ArrowUp"}
+          variant="ghost"
+          className="size-9 text-muted-foreground"
           onClick={() => onDirChange(dir === "desc" ? "asc" : "desc")}
-        />
+        /> : null}
       </div>
     );
   }

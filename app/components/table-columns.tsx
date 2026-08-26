@@ -333,6 +333,8 @@ export function ColumnPreferences({
         <TooltipIconButton
           label={label}
           icon="Columns2"
+          variant="ghost"
+          className="size-9 text-muted-foreground"
           aria-expanded={open}
           aria-controls={panelId}
           onClick={() => setOpen((current) => !current)}

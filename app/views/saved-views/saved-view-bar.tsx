@@ -324,7 +324,7 @@ export function SavedViewBar({
             aria-label="Saved views"
             onChange={(event) => chooseView(event.target.value)}
           >
-            <option value="">Base filters</option>
+            <option value="">All records</option>
             {views.map((view) => {
               const isDefault = view.id === defaultViewId || view.isDefault;
               return (
@@ -340,6 +340,7 @@ export function SavedViewBar({
             label="Manage saved view"
             icon="MoreHorizontal"
             variant="ghost"
+            className="size-9 text-muted-foreground"
             aria-expanded={manageOpen}
             onClick={() => setManageOpen((open) => !open)}
           />
@@ -347,7 +348,8 @@ export function SavedViewBar({
         <TooltipIconButton
           label="Save current view"
           icon="Plus"
-          variant="outline"
+          variant="ghost"
+          className="size-9 text-muted-foreground"
           disabled={loading}
           onClick={openSaveDrawer}
         />
