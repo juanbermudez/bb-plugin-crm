@@ -90,9 +90,13 @@ CRM brings the CRM workspace into BB as a native extension for managing
 companies, contacts, deals, activities, saved views, custom fields, currency
 reporting, agent definitions/runs, connection health, and privacy-safe site
 tracking. The current build includes persisted onboarding/columns, linked
-record Agent threads, evidence review, fixed tracking loader/collector routes,
-archive retention, a BB-thread dispatcher, and the installation CLI for
-status, health, lists, CRUD, activities, tasks, and versioned import/export.
+record Agent threads, evidence review, provider-gated enrichment/research,
+transactional CRM event triggers, signed external webhook triggers, fixed
+tracking loader/collector routes, inline record editing, contact portrait URL
+fallbacks, bounded custom-field fill-rest, due-task leasing, native agent
+clarification, BB project attachments, archive retention, a BB-thread
+dispatcher, and the installation CLI for status, health, lists, CRUD,
+activities, tasks, and versioned import/export.
 
 ## Source release
 
@@ -104,7 +108,7 @@ status, health, lists, CRUD, activities, tasks, and versioned import/export.
 
 ## Plugin checks
 
-- 37 test files / 160 tests passed with `npm test -- --run`
+- 45 test files / 197 tests passed with `npm test`
 - `npm run typecheck` passed
 - `npm run build` passed and emitted identity-checked metadata
 - `git diff --check` passed
@@ -115,8 +119,10 @@ status, health, lists, CRUD, activities, tasks, and versioned import/export.
   empty states, tracking site/one-time credential behavior, and CLI
   status/doctor/list. A focused 390×844 compact dark-theme pass also succeeded;
   the refreshed panel also covered onboarding, global search, column controls,
-  record Agent empty-state behavior, and the fixed public tracking loader. Full
-  keyboard, light/custom-theme, and Electron-specific QA were not run.
+  record Agent empty-state behavior, provider-backed enrichment controls, the
+  deal stage stepper, contact portraits/Photo URL editing, and the fixed public
+  tracking loader. Full keyboard, light/custom-theme, and Electron-specific QA
+  were not run.
 
 ## Marketplace checks
 
@@ -139,12 +145,17 @@ status, health, lists, CRUD, activities, tasks, and versioned import/export.
   filesystem API or direct provider credential store is bundled.
 - BB threads/projects, realtime invalidation, background services, settings,
   and the plugin CLI are the host surfaces used by the implementation.
+- Agent attachments are bounded, copied through resolved BB project APIs, and
+  never accept an arbitrary local path. Due CRM task dispatch is installation-
+  local, opt-in, lease-fenced, and does not create or claim host-visible BB
+  Tasks.
 - Provider authorization and OAuth credentials remain host-managed and are not
   bundled. Tracking secrets are displayed once at provisioning and are not
   returned by list/read views; optional integrations fail closed and secrets
   are not returned to the frontend.
-- BB SDK `0.4.8` exposes no plugin RBAC/current-user identity or blob API. Event
-  and webhook triggers require external producers, a thread reported as
+- BB SDK `0.4.8` exposes no plugin RBAC/current-user identity or blob API;
+  contact photos therefore keep an HTTPS source URL with initials fallback.
+  Webhook triggers require external producers, a thread reported as
   `stopping` may remain pending because there is no public cancellation
   lifecycle, and no public share relay is included.
 - MIT license and upstream attribution are included in the repository.

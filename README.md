@@ -30,15 +30,24 @@ Currently working end to end:
 - persisted first-open onboarding, CRM header actions, and cross-record global
   search for companies, contacts, and deals
 - shared record timelines with note/call/email/meeting/task composition,
-  cursor pagination, and task completion/reopen
-- eleven-currency source amounts, frozen reporting money, manual rate
-  administration, audit history, missing-rate disclosure, and explicit re-rate
-- custom-field administration, typed record editing, coverage, ordering,
-  options, visibility flags, and agent instructions
-- agent definitions, versions, validation/deployment, manual and scheduled
-  triggers, durable runs/actions/audit history, hidden BB-thread dispatch, and
-  the bundled `crm` operating skill with seven native CRM tools; record Agent
-  tabs render plugin-spawned linked BB threads through host `ThreadChat`
+  sticky day groups, automatic cursor pagination, readable stage/enrichment
+  transitions, task completion/reopen, and opt-in leased dispatch of due tasks
+  to one explicitly configured live BB agent
+- eleven-currency source amounts, frozen reporting money, manual and trusted
+  provider-labelled rate ingestion, audit history, missing-rate disclosure,
+  and explicit re-rate
+- optimistic inline editing with rollback across company, contact, and deal
+  drawers; HTTPS contact portraits with initials fallback; and custom-field
+  administration, typed record editing, coverage, bounded evidence-only
+  fill-rest runs, ordering, options, visibility flags, and agent instructions
+- agent definitions, versions, validation/deployment, manual, scheduled,
+  transactional CRM-event, and signed external-webhook triggers; durable
+  runs/actions/audit history; hidden BB-thread dispatch; and the bundled `crm`
+  operating skill with evidence-backed enrichment tools; record Agent tabs
+  render plugin-spawned linked BB threads through host `ThreadChat`; manual
+  runs accept bounded BB project attachments, and agents can ask a strict
+  native clarification question when the selected provider does not already
+  supply that capability
 - evidence review for proposed facts/work history, immutable background brief
   versions, approval resolution, auditable run retry, and linked-thread cancel
 - connection health/diagnostics boundaries for Google, Microsoft, and Slack;
@@ -48,11 +57,13 @@ Currently working end to end:
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
 
 The current BB SDK does not provide plugin RBAC/current-user identity or a
-plugin blob API. OAuth credentials and provider authorization are not bundled;
+plugin blob API. Contact portraits therefore retain an HTTPS source URL rather
+than copying remote bytes into plugin storage. OAuth credentials and provider
+authorization are not bundled;
 connections remain metadata/health boundaries until a host-authorized flow is
 configured. Agent thread cancellation can remain pending while BB reports a
-thread as stopping. Event/webhook triggers require an external producer, and a
-public share relay is not included. General-purpose API keys are not issued
+thread as stopping. External webhook triggers require a producer, and a public
+share relay is not included. General-purpose API keys are not issued
 because BB exposes no safe current-user/RBAC authority for them. These limits
 and the remaining source gaps are recorded in
 [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).
@@ -124,6 +135,7 @@ from BB's registry and keep runtime-shimmed dependencies in `devDependencies`.
 - `db/` owns SQLite migrations and record stores.
 - `contracts/` owns strict RPC boundary schemas.
 - `agent-dispatch.ts` owns BB-thread dispatch and lifecycle reconciliation;
+  `agent-attachments.ts` owns bounded BB project attachment operations;
   connection/tracking and other CRM domain stores live under `db/`.
 - `app/` and `views/` own the BB-native interface.
 - `skills/crm/SKILL.md` teaches BB agents the CRM workflow.

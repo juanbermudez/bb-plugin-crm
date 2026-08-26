@@ -44,4 +44,3 @@ describe("CRM due-task run contract", () => {
     expect(result.success).toBe(false);
   });
 });
-

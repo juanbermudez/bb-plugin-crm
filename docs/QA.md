@@ -5,14 +5,16 @@ port plan and marketplace draft and are not treated as passing evidence.
 
 ## Clean local gate
 
-Verified on 2026-08-26 at main revision `943dbaa` (the source tree was clean
+Verified on 2026-08-26 at implementation revision `7166be5` (the source tree was clean
 before this documentation-only update), against BB `0.39.0` and plugin SDK
 `0.4.8`:
 
-- `npm test -- --run`: 37 test files and 160 tests passed.
+- `npm test`: 45 test files and 197 tests passed.
 - `npm run typecheck`: passed.
 - `npm run build`: passed and emitted the server/app bundles and metadata.
 - `git diff --check`: passed.
+- `npm pack --json --dry-run`: passed with 155 entries; the package includes
+  the task-dispatch, portrait, clarification, and BB attachment runtime paths.
 
 The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite
@@ -39,13 +41,27 @@ databases for migrations and persistence. They cover:
   record-linked Agent tabs, evidence decisions/brief history, run retry/cancel,
   approval resolution, agent execution settings, fixed tracking HTTP routes,
   and dependency-safe archive retention.
+- Provider-gated company/contact enrichment and bulk enrichment, focused
+  company/contact research, sourced evidence/finalization, fetched-rate
+  ingestion, stage/enrichment timeline rows, sticky day headers, and automatic
+  cursor pagination with an explicit fallback.
+- Transactional company/contact/deal event outbox delivery, event-trigger run
+  idempotency, trigger-scoped webhook credential hashing/rotation, exact-body
+  HMAC verification, replay-window checks, and webhook run deduplication.
+- Optimistic company/contact/deal inline edits with rollback, bounded
+  custom-field fill-rest queues, contact portrait URL validation/fallback,
+  native clarification rendering, bounded BB project attachments, and
+  provider-native clarification capability gating.
+- Due-task lease fencing, retry bounds, deterministic run idempotency, explicit
+  live-agent selection, strict `CRM_DUE_TASK` snapshots, completion/reopen
+  tooling, and the rule that activity authors are never inferred as assignees.
 
 ## Packaged BB reload smoke
 
 The freshly built package was installed and reloaded in packaged BB `0.39.0`.
 The plugin reported `running`; both `crm-agent-dispatcher` and
 `crm-archive-retention` background services were running. `bb crm doctor`
-reported schema version 6, SQLite integrity `ok`, and zero foreign-key
+reported schema version 8, SQLite integrity `ok`, and zero foreign-key
 violations. No secret, one-time credential, or token value is recorded here.
 
 Observed in the live CRM panel:
@@ -75,6 +91,12 @@ Observed in the live CRM panel:
   CRM header actions, cross-record search results, accessible column controls,
   and the company record Agent tab. With no deployed live agent, the tab
   correctly disabled thread creation and explained the empty state.
+- After the schema-8 reload, the company drawer rendered the provider-backed
+  enrichment/research controls and the deal drawer rendered all seven stages
+  as an accessible stepper with the persisted current stage selected.
+- The Contacts table rendered a BB-tokenized portrait with initials fallback;
+  the contact drawer repeated that portrait and exposed inline HTTPS Photo URL
+  editing.
 - The public fixed tracking loader returned JavaScript with `PAGE_VIEW` and
   `crmTrack`, cross-origin resource policy, and no site-token-shaped value.
 
@@ -90,8 +112,8 @@ The following are not claimed as passing evidence in this log:
 
 The public SDK limitations are part of the parity record: BB provides no
 current-user/RBAC API or plugin blob API; real OAuth credentials and provider
-authorization are not bundled; an external producer is required for event and
-webhook triggers; a thread reported as `stopping` can remain pending because
+authorization are not bundled; an external producer is required for webhook
+triggers; a thread reported as `stopping` can remain pending because
 BB exposes no public cancellation lifecycle; and no public share relay is
 included. See [docs/PARITY_MATRIX.md](PARITY_MATRIX.md) for the chosen
 fallbacks and remaining gaps.

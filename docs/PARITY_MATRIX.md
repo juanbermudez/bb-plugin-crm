@@ -28,7 +28,7 @@ Status meanings:
 | Quick switcher | Cross-record CRM search and deep links | done | 5 |
 | Deep links | BB `subPath` routes | done | 1 |
 | Browser back/forward | `useBbNavigate` panel history | done | 1 |
-| Global record sheet host | Responsive CRM drawer and record stack | building | 2–5 |
+| Global record sheet host | Responsive CRM drawer and nested record stack | done | 2–5 |
 
 ## Dashboard
 
@@ -62,7 +62,7 @@ Status meanings:
 | Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
 | Bulk owner | Bulk RPC and CLI | done | 2 |
-| Bulk enrichment | Bulk RPC and CLI | planned | 2 |
+| Bulk enrichment | Provider-gated bulk RPC and list action | done | 2/6 |
 | Bulk archive/restore/purge | Bulk RPC and CLI | done | 2 |
 | Create company | Wide responsive drawer | done | 2 |
 | Company record header | Shared record drawer | done | 2 |
@@ -72,7 +72,7 @@ Status meanings:
 | Company activity | Record tab | done | 5 |
 | Company Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
 | Primary contact | Company relation operation | done | 2 |
-| Company enrichment/research | Optional integration and agent tools | planned | 3/6 |
+| Company enrichment/research | Provider-gated BB agent run, sourced update tool, and explicit skipped state | done | 3/6 |
 
 ## Contacts and evidence
 
@@ -83,7 +83,7 @@ Status meanings:
 | Company/owner/title facets | Filter bar | done | 3 |
 | Seniority/persona/activity facets | Filter bar | done | 3 |
 | Dynamic-field facets | Filter bar | done | 5 |
-| Bulk owner/company/enrich | Bulk owner/company RPC; enrichment remains planned | building | 3 |
+| Bulk owner/company/enrich | Bulk owner/company RPC plus provider-gated enrichment action | done | 3/6 |
 | Bulk archive/restore/purge | Bulk RPC and CLI | done | 3 |
 | Create contact | Wide responsive drawer | done | 3 |
 | Contact overview | Record tab | done | 3 |
@@ -95,12 +95,13 @@ Status meanings:
 | Dismiss/supersede | Evidence state transitions | done | 3 |
 | Background brief | Versioned brief display/create/history | done | 3 |
 | Email/meeting relationship summary | Timeline aggregate | planned | 7 |
-| Social lookup and work history | Optional research tools | building | 3/6 |
-| Contact portrait | Bounded plugin asset storage | gap | 3 |
+| Social lookup and work history | Provider-gated research runs plus evidence-backed fact/work-history tools | done | 3/6 |
+| Contact portrait | HTTPS source portrait in list/drawer, inline URL editing, and initials/error fallback | done | 3 |
 
-Fallback for portraits: keep the source URL/reference only until a BB file or
-blob surface exists; portrait binary storage and serving are not implemented.
-BB has no plugin blob API.
+Portrait binary mirroring is intentionally omitted because BB has no plugin
+blob API. The source outcome is retained with a validated HTTPS reference and
+deterministic fallback; the plugin never fetches an arbitrary portrait URL on
+the server.
 
 ## Deals and currency
 
@@ -114,14 +115,14 @@ BB has no plugin blob API.
 | Bulk owner/stage/archive | Bulk RPC and CLI | done | 4 |
 | Create deal | Wide responsive drawer | done | 4 |
 | Deal overview and stats | Record tab | done | 4 |
-| Stage stepper | BB-tokenized stage control | building | 4 |
+| Stage stepper | BB-tokenized accessible stage control | done | 4 |
 | Attached contacts and roles | Record tab | done | 4 |
 | Deal activity | Record tab | done | 5 |
 | Deal Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
 | Source amount/currency | Integer minor units and code | done | 4 |
 | Frozen base amount | Stored converted minor units | done | 4 |
 | Manual rates | Currency settings | done | 4/8 |
-| Fetched rates | Scheduled optional service | building | 4 |
+| Fetched rates | Trusted provider-labelled ingestion boundary | done | 4/7 |
 | Explicit re-rate | Admin operation | done | 4 |
 | Unconverted disclosure | Lists and dashboard warning | done | 4 |
 
@@ -132,23 +133,23 @@ BB has no plugin blob API.
 | Nested record stack | Company relation drawer stack with Back navigation | done | 2–5 |
 | Record back/close | Drawer navigation | done | 2–5 |
 | Record deep link | `subPath` record ID | done | 1 |
-| Inline field edit | Optimistic typed mutation | building | 2–5 |
+| Inline field edit | Optimistic typed mutation with rollback | done | 2–5 |
 | Company/contact/deal custom fields | Typed field system | done | 5 |
 | Standard field visibility/order | Persisted table-column visibility/order | done | 5 |
 | Field archive/restore/delete | Field operations | done | 5 |
 | Agent-filled field instructions | Field agent metadata | done | 5/6 |
-| Field coverage and fill-rest | Coverage RPC and agent task | building | 5/6 |
-| Saved filter/sort/columns | Versioned saved-view JSON | building | 5 |
+| Field coverage and fill-rest | Bounded missing-record query and idempotent evidence-only research runs | done | 5/6 |
+| Saved filter/sort/columns | Versioned saved-view JSON, including ordered/hidden dynamic columns | done | 5 |
 | Timeline All/Notes/Email/Meetings | Unified timeline | done | 5/7 |
 | Timeline Upcoming/Done | Task filters | done | 5 |
 | Note/call/email/meeting/task composer | Activity composer | done | 5 |
 | Task completion | Activity mutation | done | 5 |
-| Sticky day groups | Timeline UI | building | 5 |
-| Infinite older history | Cursor pagination | building | 5 |
-| Stage/enrichment rows | Timeline events | building | 4/5 |
+| Sticky day groups | Sticky timeline day headers | done | 5 |
+| Infinite older history | Cursor pagination with observer-driven loading and button fallback | done | 5 |
+| Stage/enrichment rows | Transactional stage/enrichment activity rows | done | 4/5 |
 | Email thread expansion | Integration-backed row | planned | 7 |
 | Meeting attendee and join details | Integration-backed row | planned | 7 |
-| Website activity | Tracking aggregate | planned | 7 |
+| Website activity | Tracking aggregate without unsafe record attribution | gap | 7 |
 
 ## Agent workspace
 
@@ -157,19 +158,19 @@ BB has no plugin blob API.
 | CRM operating skill | Plugin `crm` skill | done | 6 |
 | Search/read/update native tools | `bb.agents.registerTool` | done | 6 |
 | Evidence and identity rules | Skill references and tool validation | done | 6 |
-| Due-task leasing | SQLite transaction and dispatcher | planned | 6 |
+| Due-task leasing | Opt-in CRM-local CAS leases, bounded retries, and one explicit live-agent policy | done | 6 |
 | Durable worker | Hidden BB thread and `crm-agent-dispatcher` service | done | 6 |
 | Record conversation | Idempotent plugin-spawned linked BB thread | done | 6 |
 | Transcript and tools | Host `ThreadChat` for linked record threads | done | 6 |
-| Clarification question | BB pending interaction | planned | 6 |
+| Clarification question | Strict `ask_question` pending interaction and native BB input renderer | done | 6 |
 | Builder home/chat | CRM Agents route, editor, runs, and linked record chat | done | 6 |
-| Builder attachments | BB project attachment inputs | planned | 6 |
+| Builder attachments | Bounded upload/read/copy through resolved BB project attachment APIs | done | 6 |
 | Agent definitions and versions | Plugin tables and editor | done | 6 |
 | Draft validation/deploy | Version state machine | done | 6 |
 | Manual trigger | Run-now action and durable queue | done | 6 |
 | Schedule trigger | BB background service plus stored trigger | done | 6 |
-| CRM event trigger | Domain-event dispatcher | planned | 6 |
-| Webhook trigger | External producer boundary | gap | 6 |
+| CRM event trigger | Transactional CRM outbox and idempotent event dispatcher | done | 6 |
+| Webhook trigger | Trigger-scoped, signed, replay-bounded public HTTP boundary | done | 6 |
 | Run/action/audit history | Plugin tables and drawer | done | 6 |
 | Approval | Durable approve/deny actions and run UI | done | 6 |
 | Retry/cancel | Auditable retry plus linked-thread cancel cleanup | done | 6 |
@@ -236,9 +237,19 @@ parity claims:
   cancellation lifecycle for a thread that reports `stopping`; the linked run
   remains pending until an unambiguous idle, failed, or deleted signal (or an
   explicit cancellation signal from an integration).
-- Event and webhook triggers have a strict persisted boundary, but require an
-  external event/webhook producer. The plugin does not invent or bundle those
-  producers.
+- CRM domain-event triggers are emitted transactionally for supported company,
+  contact, and deal writes. Webhook triggers expose a strict HMAC boundary but
+  still require an external producer; the plugin does not invent one.
+- Tracking events intentionally remain site/path aggregates. The public intake
+  contract has no verified CRM record identifier, so website events are not
+  attributed to a company/contact/deal by heuristic.
+- CRM due-task dispatch is opt-in and installation-local. It leases ordinary
+  CRM timeline TASK rows and starts a manual hidden agent run for one explicitly
+  configured live/deployed agent; it never infers the activity author as an
+  assignee and does not create or claim a host-visible BB Task.
+- Agent attachments use bounded bytes and BB-resolved project-relative paths.
+  Arbitrary filesystem paths, traversal, oversized payloads, and unscoped
+  project access are rejected.
 - A plugin record can be linked atomically to a thread the plugin spawns. The
   SDK has no callback for attaching an arbitrary pre-existing user-composed BB
   thread, so that path is not claimed.
@@ -259,6 +270,6 @@ parity claims:
 | Marketplace PR body draft | done |
 | Production release tag | planned |
 | Fresh public-tag install test | planned |
-| Browser parity QA | building; packaged-BB smoke covers dashboard, list controls, agent creation, settings empty states, tracking token flow, and focused compact dark-theme layout |
+| Browser parity QA | building; packaged-BB smoke covers dashboard, list controls, records/Agent tabs, enrichment controls, deal stage stepper, settings, tracking token flow, and focused compact dark-theme layout |
 | Electron parity QA | planned |
 | Marketplace PR submission | planned |

@@ -104,4 +104,3 @@ describe("CRM due activity task leasing", () => {
     }
   });
 });
-

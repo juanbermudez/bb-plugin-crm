@@ -14,6 +14,21 @@ Source baselines:
 - BB application: `>=0.39`.
 - BB plugin SDK: `>=0.4.8`.
 
+## Implementation status for the `0.1.0` release candidate
+
+Phases 0–6 are implemented, including all core records, responsive BB-native
+views, inline editing, saved/dynamic columns, unified activity, enrichment,
+CRM-event/webhook automation, leased due-task dispatch, clarification prompts,
+and bounded BB project attachments. Phase 7 is implemented for privacy-safe
+tracking plus integration health boundaries; real Google, Microsoft, and Slack
+authorization remains provider-credential work. Phase 8 is implemented except
+for general API keys and per-user roles, which cannot be issued safely without
+a public BB current-user/RBAC authority. Phase 9 has automated coverage and a
+focused packaged-browser smoke; Electron, complete keyboard, and full
+light/custom-theme passes remain open. Phase 10 is prepared through the public
+repository and marketplace draft, while the immutable tag and marketplace PR
+remain release-gated.
+
 ## Product and interaction thesis
 
 Visual thesis: a dense, quiet sales workspace with a wide table canvas,
@@ -54,7 +69,7 @@ that BB already owns.
 | Postgres and Prisma | Plugin-owned SQLite with append-only migrations |
 | Eve sessions | BB hidden and visible threads with CRM agent tools and skills |
 | Vercel cron | `bb.background.schedule` and abort-aware services |
-| Vercel Blob | BB file APIs or plugin-local persisted files |
+| Vercel Blob | Validated HTTPS source references for portraits; bounded BB project attachments for agent inputs |
 | URL query state | Encoded BB panel `subPath` plus client preferences |
 | Next.js record routes | Persistent, stack-aware BB responsive drawers |
 
@@ -242,7 +257,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Serve a small loader and per-site tracker through plugin HTTP routes.
 - Validate origin, site ID, visitor ID, event shape, batch size, and rate.
 - Remove query strings, sensitive fields, card-shaped values, files, and passwords.
-- Convert form submissions into contacts through the same suppression rules.
+- Keep form submissions aggregate-only unless a future first-party signed
+  identity contract supplies an exact CRM filing target; never infer identity
+  from anonymous visitor properties.
 - Aggregate daily page views before bounded event retention.
 - Make pause and site-id rotation effective within the documented cache window.
 
