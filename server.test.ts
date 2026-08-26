@@ -16,7 +16,7 @@ describe("CRM plugin foundation", () => {
 
     await expect(harness.behavior.callRpc("status", null)).resolves.toEqual({
       version: "0.1.0",
-      schemaVersion: 3,
+      schemaVersion: 4,
       workspaceName: "Revenue",
       reportingCurrency: "EUR",
     });

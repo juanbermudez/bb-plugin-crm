@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 3;
+export const CRM_SCHEMA_VERSION = 4;
 
 const MIGRATIONS: string[] = [
   `
@@ -364,6 +364,53 @@ const MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '3', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS exchange_rates (
+      id TEXT PRIMARY KEY NOT NULL,
+      base_currency TEXT NOT NULL CHECK (length(trim(base_currency)) = 3),
+      quote_currency TEXT NOT NULL CHECK (length(trim(quote_currency)) = 3),
+      rate REAL NOT NULL CHECK (rate > 0),
+      as_of TEXT NOT NULL CHECK (length(trim(as_of)) > 0),
+      source TEXT NOT NULL CHECK (source IN ('FETCHED', 'MANUAL')),
+      provider TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (base_currency, quote_currency, source),
+      CHECK (base_currency <> quote_currency)
+    );
+
+    CREATE TABLE IF NOT EXISTS exchange_rate_audit (
+      id TEXT PRIMARY KEY NOT NULL,
+      exchange_rate_id TEXT REFERENCES exchange_rates(id) ON DELETE SET NULL,
+      base_currency TEXT NOT NULL CHECK (length(trim(base_currency)) = 3),
+      quote_currency TEXT NOT NULL CHECK (length(trim(quote_currency)) = 3),
+      source TEXT NOT NULL CHECK (source IN ('FETCHED', 'MANUAL')),
+      action TEXT NOT NULL CHECK (action IN ('UPSERT', 'DELETE')),
+      rate REAL CHECK (rate IS NULL OR rate > 0),
+      as_of TEXT,
+      provider TEXT,
+      previous_rate REAL CHECK (previous_rate IS NULL OR previous_rate > 0),
+      previous_as_of TEXT,
+      previous_provider TEXT,
+      actor_id TEXT,
+      recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS exchange_rates_pair_idx
+      ON exchange_rates(base_currency, quote_currency);
+    CREATE INDEX IF NOT EXISTS exchange_rates_source_idx
+      ON exchange_rates(source, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS exchange_rate_audit_pair_idx
+      ON exchange_rate_audit(base_currency, quote_currency, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS exchange_rate_audit_rate_idx
+      ON exchange_rate_audit(exchange_rate_id, recorded_at DESC);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '4', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;
