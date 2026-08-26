@@ -144,6 +144,50 @@ import {
   savedViewUpdateInputSchema,
   setDealStageInputSchema,
 } from "./core.js";
+import {
+  connectionDiagnosticsSchema,
+  connectionDisableInputSchema,
+  connectionHealthSchema,
+  connectionIdInputSchema,
+  connectionListInputSchema,
+  connectionListSchema,
+  connectionSchema,
+  connectionStatusInputSchema,
+  connectionSyncResultInputSchema,
+  connectionTimestampSchema,
+  connectionUpsertInputSchema,
+  provisionedTrackingSiteSchema,
+  provisionedTrackingTokenSchema,
+  syncCursorSchema,
+  syncFailureInputSchema,
+  syncSuccessInputSchema,
+  trackingAggregateListInputSchema,
+  trackingAggregateListSchema,
+  trackingAggregateSchema,
+  trackingEventBatchInputSchema,
+  trackingEventIdInputSchema,
+  trackingEventInputSchema,
+  trackingEventListInputSchema,
+  trackingEventListSchema,
+  trackingEventSchema,
+  trackingPruneInputSchema,
+  trackingPruneResultSchema,
+  trackingRollupInputSchema,
+  trackingRollupResultSchema,
+  trackingSiteCreateInputSchema,
+  trackingSiteListInputSchema,
+  trackingSiteListSchema,
+  trackingSitePauseInputSchema,
+  trackingSiteRotateInputSchema,
+  trackingSiteSchema,
+  trackingSiteVerifyInputSchema,
+  trackingTokenListInputSchema,
+  trackingTokenListSchema,
+  trackingTokenProvisionInputSchema,
+  trackingTokenRevokeInputSchema,
+  trackingTokenRotateInputSchema,
+  trackingTokenSchema,
+} from "./connections.js";
 
 export const rpcContract = defineRpcContract({
   status: {
@@ -156,6 +200,114 @@ export const rpcContract = defineRpcContract({
         reportingCurrency: z.string(),
       })
       .strict(),
+  },
+  connections_list: {
+    input: connectionListInputSchema,
+    output: connectionListSchema,
+  },
+  connections_get: {
+    input: connectionIdInputSchema,
+    output: connectionSchema,
+  },
+  connections_health: {
+    input: connectionIdInputSchema,
+    output: connectionHealthSchema,
+  },
+  connections_upsert: {
+    input: connectionUpsertInputSchema,
+    output: connectionSchema,
+  },
+  connections_disable: {
+    input: connectionDisableInputSchema,
+    output: connectionSchema,
+  },
+  connections_syncSuccess: {
+    input: syncSuccessInputSchema,
+    output: connectionSchema,
+  },
+  connections_syncFailure: {
+    input: syncFailureInputSchema,
+    output: connectionSchema,
+  },
+  connections_syncCursors: {
+    input: connectionIdInputSchema,
+    output: z.array(syncCursorSchema),
+  },
+  connections_syncResult: {
+    input: connectionSyncResultInputSchema,
+    output: connectionSchema,
+  },
+  connections_diagnostics: {
+    input: connectionIdInputSchema,
+    output: connectionDiagnosticsSchema,
+  },
+  tracking_sites_list: {
+    input: trackingSiteListInputSchema,
+    output: trackingSiteListSchema,
+  },
+  tracking_sites_get: {
+    input: connectionIdInputSchema,
+    output: trackingSiteSchema,
+  },
+  tracking_sites_create: {
+    input: trackingSiteCreateInputSchema,
+    output: trackingSiteSchema,
+  },
+  tracking_sites_verify: {
+    input: trackingSiteVerifyInputSchema,
+    output: trackingSiteSchema,
+  },
+  tracking_sites_pause: {
+    input: trackingSitePauseInputSchema,
+    output: trackingSiteSchema,
+  },
+  tracking_sites_rotate: {
+    input: trackingSiteRotateInputSchema,
+    output: provisionedTrackingSiteSchema,
+  },
+  tracking_tokens_list: {
+    input: trackingTokenListInputSchema,
+    output: trackingTokenListSchema,
+  },
+  tracking_tokens_provision: {
+    input: trackingTokenProvisionInputSchema,
+    output: provisionedTrackingTokenSchema,
+  },
+  tracking_tokens_rotate: {
+    input: trackingTokenRotateInputSchema,
+    output: provisionedTrackingTokenSchema,
+  },
+  tracking_tokens_revoke: {
+    input: trackingTokenRevokeInputSchema,
+    output: trackingTokenSchema,
+  },
+  tracking_events_get: {
+    input: trackingEventIdInputSchema,
+    output: trackingEventSchema,
+  },
+  tracking_events_list: {
+    input: trackingEventListInputSchema,
+    output: trackingEventListSchema,
+  },
+  tracking_events_ingest: {
+    input: trackingEventInputSchema,
+    output: trackingEventSchema,
+  },
+  tracking_events_ingestBatch: {
+    input: trackingEventBatchInputSchema,
+    output: trackingEventListSchema,
+  },
+  tracking_aggregates_list: {
+    input: trackingAggregateListInputSchema,
+    output: trackingAggregateListSchema,
+  },
+  tracking_aggregates_rollup: {
+    input: trackingRollupInputSchema,
+    output: trackingRollupResultSchema,
+  },
+  tracking_aggregates_prune: {
+    input: trackingPruneInputSchema,
+    output: trackingPruneResultSchema,
   },
   companies_list: {
     input: companyListInputSchema,

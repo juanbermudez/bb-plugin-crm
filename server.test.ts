@@ -1161,4 +1161,188 @@ describe("CRM plugin foundation", () => {
 
     await harness.lifecycle.dispose();
   });
+
+  it("serves strict connection health and tracking lifecycles over SQLite", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    const connection = (await harness.behavior.callRpc("connections_upsert", {
+      id: "connection_phase7",
+      provider: "GOOGLE",
+      externalAccountId: "workspace-1",
+      displayName: "Google Workspace",
+      configuration: { accountEmail: "ops@example.com" },
+      scopes: ["calendar.readonly", "gmail.readonly"],
+    })) as { id: string; health: { status: string }; configuration: Record<string, unknown> };
+    expect(connection).toMatchObject({
+      id: "connection_phase7",
+      health: { status: "DISCONNECTED" },
+      configuration: { accountEmail: "ops@example.com" },
+    });
+    await expect(harness.behavior.callRpc("connections_health", { id: connection.id }))
+      .resolves.toMatchObject({ status: "DISCONNECTED" });
+
+    await expect(harness.behavior.callRpc("connections_syncSuccess", {
+      connectionId: connection.id,
+      stream: "mail",
+      cursor: "cursor-1",
+      at: "2026-08-25T12:00:00.000Z",
+    })).resolves.toMatchObject({ health: { status: "CONNECTED" } });
+    await expect(harness.behavior.callRpc("connections_syncFailure", {
+      connectionId: connection.id,
+      stream: "mail",
+      errorCode: "RATE_LIMIT",
+      errorMessage: "Bearer abc should not leak",
+      at: "2026-08-25T12:01:00.000Z",
+    })).resolves.toMatchObject({
+      health: {
+        status: "ERROR",
+        failureMessage: "Bearer [redacted] should not leak",
+        consecutiveFailures: 1,
+      },
+    });
+    await expect(harness.behavior.callRpc("connections_syncCursors", { id: connection.id }))
+      .resolves.toEqual([expect.objectContaining({ stream: "mail", cursor: "cursor-1" })]);
+    await expect(harness.behavior.callRpc("connections_diagnostics", { id: connection.id }))
+      .resolves.toMatchObject({
+        connection: { id: connection.id, health: { status: "ERROR" } },
+        syncCursors: [expect.objectContaining({ stream: "mail" })],
+      });
+    await expect(harness.behavior.callRpc("connections_disable", {
+      id: connection.id,
+      at: "2026-08-25T12:02:00.000Z",
+    })).resolves.toMatchObject({ enabled: false, health: { status: "DISABLED" } });
+    await expect(harness.behavior.callRpc("connections_syncResult", {
+      connectionId: connection.id,
+      result: "SUCCESS",
+      stream: "mail",
+      cursor: "cursor-2",
+    })).rejects.toThrow("disabled connection");
+
+    const site = (await harness.behavior.callRpc("tracking_sites_create", {
+      id: "site_phase7",
+      name: "Marketing site",
+      allowedDomains: ["example.com", "*.preview.example.com"],
+      eventRetentionDays: 1,
+      aggregateRetentionDays: 30,
+    })) as { id: string; siteKey: string; status: string };
+    expect(site).toMatchObject({ id: "site_phase7", status: "ACTIVE" });
+    const token = (await harness.behavior.callRpc("tracking_tokens_provision", {
+      siteId: site.id,
+      at: "2026-08-25T12:03:00.000Z",
+    })) as { id: string; token: string; secret: string; scope: string };
+    expect(token).toMatchObject({ scope: "TRACKING", token: expect.stringMatching(/^crm_trk_/), secret: token.token });
+    expect(token).not.toHaveProperty("tokenHash");
+
+    const eventInput = {
+      siteId: site.id,
+      token: token.token,
+      eventType: "PAGE_VIEW",
+      origin: "https://example.com",
+      path: "/pricing",
+      visitorId: "visitor-1",
+      source: "newsletter",
+      eventKey: "event-1",
+      occurredAt: "2026-08-20T12:00:00.000Z",
+      receivedAt: "2026-08-20T12:00:00.000Z",
+      properties: { plan: "pro" },
+    } as const;
+    const event = (await harness.behavior.callRpc("tracking_events_ingest", eventInput)) as {
+      id: string;
+      visitorHash: string | null;
+      properties: Record<string, unknown>;
+    };
+    expect(event).toMatchObject({ id: expect.any(String), properties: { plan: "pro" } });
+    expect(event.visitorHash).not.toBe("visitor-1");
+    expect(event).not.toHaveProperty("token");
+    await expect(harness.behavior.callRpc("tracking_events_ingestBatch", {
+      events: [
+        { ...eventInput, id: "event-2", eventKey: "event-2", path: "/home" },
+        { ...eventInput, id: "event-3", eventKey: "event-3", path: "/pricing", visitorId: "visitor-2" },
+      ],
+    })).resolves.toHaveLength(2);
+    await expect(harness.behavior.callRpc("tracking_events_list", { siteId: site.id }))
+      .resolves.toHaveLength(3);
+
+    await expect(harness.behavior.callRpc("tracking_sites_verify", {
+      id: site.id,
+      domain: "example.com",
+      verifiedAt: "2026-08-25T12:04:00.000Z",
+    })).resolves.toMatchObject({ verificationStatus: "VERIFIED" });
+    await expect(harness.behavior.callRpc("tracking_sites_pause", {
+      id: site.id,
+      at: "2026-08-25T12:05:00.000Z",
+    })).resolves.toMatchObject({ status: "PAUSED" });
+    await expect(harness.behavior.callRpc("tracking_sites_pause", {
+      id: site.id,
+      paused: false,
+      at: "2026-08-25T12:06:00.000Z",
+    })).resolves.toMatchObject({ status: "ACTIVE" });
+
+    const rotated = (await harness.behavior.callRpc("tracking_sites_rotate", {
+      id: site.id,
+      at: "2026-08-25T12:07:00.000Z",
+    })) as { siteKey: string; token: string; tokenId: string; site: { siteKey: string } };
+    expect(rotated.siteKey).not.toBe(site.siteKey);
+    expect(rotated.site.siteKey).toBe(rotated.siteKey);
+    expect(rotated).not.toHaveProperty("tokenHash");
+    await expect(harness.behavior.callRpc("tracking_events_ingest", {
+      ...eventInput,
+      token: token.token,
+      eventKey: "event-old-token",
+    })).rejects.toThrow("not authorized");
+    await expect(harness.behavior.callRpc("tracking_events_ingest", {
+      ...eventInput,
+      token: rotated.token,
+      siteKey: rotated.siteKey,
+      eventKey: "event-rotated",
+    })).resolves.toMatchObject({ tokenId: rotated.tokenId });
+
+    const intake = (await harness.behavior.callRpc("tracking_tokens_provision", {
+      scope: "INTAKE",
+      at: "2026-08-25T12:08:00.000Z",
+    })) as { id: string; scope: string; token: string };
+    expect(intake.scope).toBe("INTAKE");
+    await expect(harness.behavior.callRpc("tracking_tokens_list", { siteId: site.id }))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: rotated.tokenId, revokedAt: null }),
+      ]));
+    await expect(harness.behavior.callRpc("tracking_tokens_revoke", {
+      id: intake.id,
+      at: "2026-08-25T12:09:00.000Z",
+    })).resolves.toMatchObject({ id: intake.id, revokedAt: "2026-08-25T12:09:00.000Z" });
+
+    await expect(harness.behavior.callRpc("tracking_aggregates_rollup", {
+      siteId: site.id,
+      now: "2026-08-25T12:10:00.000Z",
+    })).resolves.toMatchObject({ aggregateCount: 2, eventCount: 4 });
+    await expect(harness.behavior.callRpc("tracking_aggregates_list", { siteId: site.id }))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ day: "2026-08-20", eventCount: 3, uniqueVisitors: 2 }),
+      ]));
+    await expect(harness.behavior.callRpc("tracking_aggregates_prune", {
+      siteId: site.id,
+      now: "2026-08-25T12:10:00.000Z",
+      batchSize: 2,
+    })).resolves.toMatchObject({ eventsDeleted: 4, aggregatesDeleted: 0, sitesProcessed: 1 });
+
+    const doctor = await harness.behavior.runCli(["doctor", "--json"]);
+    expect(doctor.exitCode).toBe(0);
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      integrations: {
+        connections: { total: 1, enabled: 0, errors: 0 },
+        tracking: { sites: 1, activeSites: 1, verifiedSites: 1, activeTokens: 1 },
+      },
+    });
+
+    expect(harness.realtimeSignals).toEqual(expect.arrayContaining([
+      { channel: "changed", payload: { entity: "connection", action: "created", id: connection.id } },
+      { channel: "changed", payload: { entity: "connection", action: "sync-succeeded", id: connection.id } },
+      { channel: "changed", payload: { entity: "tracking-site", action: "created", id: site.id } },
+      { channel: "changed", payload: { entity: "tracking-token", action: "provisioned", id: token.id } },
+      { channel: "changed", payload: { entity: "tracking-event", action: "ingested", id: event.id } },
+    ]));
+
+    await harness.lifecycle.dispose();
+  });
 });

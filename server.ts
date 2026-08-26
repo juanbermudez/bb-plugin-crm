@@ -61,6 +61,11 @@ import {
 import { createCustomFieldStore } from "./db/custom-fields.js";
 import { createEvidenceStore } from "./db/evidence.js";
 import { createAgentStore } from "./db/agents.js";
+import {
+  createConnectionStore,
+  createTrackingSiteStore,
+  createTrackingStore,
+} from "./db/connections.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
 
@@ -377,6 +382,9 @@ export default async function plugin(bb: BbPluginApi) {
   const customFields = createCustomFieldStore(db);
   const evidenceStore = createEvidenceStore(db);
   const agents = createAgentStore(db);
+  const connections = createConnectionStore(db);
+  const trackingSites = createTrackingSiteStore(db);
+  const tracking = createTrackingStore(db);
 
   function recordFieldValues(entity: FieldEntity, recordId: string): FieldValues {
     return Object.fromEntries(
@@ -562,7 +570,12 @@ export default async function plugin(bb: BbPluginApi) {
       | "agent-run"
       | "agent-action"
       | "agent-audit"
-      | "agent-thread",
+      | "agent-thread"
+      | "connection"
+      | "tracking-site"
+      | "tracking-token"
+      | "tracking-event"
+      | "tracking-aggregate",
     action: string,
     id: string,
   ): void {
@@ -981,6 +994,138 @@ export default async function plugin(bb: BbPluginApi) {
         workspaceName,
         reportingCurrency,
       };
+    },
+    connections_list(input) {
+      return connections.list(input);
+    },
+    connections_get({ id }) {
+      return connections.getRequired(id);
+    },
+    connections_health({ id }) {
+      return connections.getRequired(id).health;
+    },
+    connections_upsert(input) {
+      const existing = input.id
+        ? connections.get(input.id)
+        : connections.list({ provider: input.provider }).find((row) =>
+            row.externalAccountId === (input.externalAccountId ?? null));
+      const connection = connections.upsert(input);
+      changed("connection", existing ? "updated" : "created", connection.id);
+      return connection;
+    },
+    connections_disable({ id, at }) {
+      const connection = connections.disable(id, at);
+      changed("connection", "disabled", connection.id);
+      return connection;
+    },
+    connections_syncSuccess({ connectionId, ...input }) {
+      const connection = connections.recordSyncSuccess(connectionId, input);
+      changed("connection", "sync-succeeded", connection.id);
+      changed("connection", "health-updated", connection.id);
+      return connection;
+    },
+    connections_syncFailure({ connectionId, ...input }) {
+      const connection = connections.recordSyncFailure(connectionId, input);
+      changed("connection", "sync-failed", connection.id);
+      changed("connection", "health-updated", connection.id);
+      return connection;
+    },
+    connections_syncCursors({ id }) {
+      return connections.listSyncCursors(id);
+    },
+    connections_syncResult(input) {
+      const { connectionId, result, ...data } = input;
+      const connection = result === "SUCCESS"
+        ? connections.recordSyncSuccess(connectionId, data)
+        : connections.recordSyncFailure(connectionId, data);
+      changed("connection", result === "SUCCESS" ? "sync-succeeded" : "sync-failed", connection.id);
+      changed("connection", "health-updated", connection.id);
+      return connection;
+    },
+    connections_diagnostics({ id }) {
+      return {
+        connection: connections.getRequired(id),
+        syncCursors: connections.listSyncCursors(id),
+      };
+    },
+    tracking_sites_list(input) {
+      return trackingSites.list(input);
+    },
+    tracking_sites_get({ id }) {
+      return trackingSites.getRequired(id);
+    },
+    tracking_sites_create(input) {
+      const site = trackingSites.create(input);
+      changed("tracking-site", "created", site.id);
+      return site;
+    },
+    tracking_sites_verify({ id, ...input }) {
+      const site = trackingSites.verify(id, input);
+      changed("tracking-site", "verified", site.id);
+      return site;
+    },
+    tracking_sites_pause({ id, paused, at }) {
+      const site = trackingSites.pause(id, paused, at);
+      changed("tracking-site", paused ? "paused" : "resumed", site.id);
+      return site;
+    },
+    tracking_sites_rotate({ id, at }) {
+      const provisioned = trackingSites.rotate(id, at);
+      changed("tracking-site", "rotated", provisioned.id);
+      changed("tracking-token", "rotated", provisioned.tokenId);
+      return provisioned;
+    },
+    tracking_tokens_list(input) {
+      return trackingSites.listTokens(input.siteId, input.scope);
+    },
+    tracking_tokens_provision({ scope, siteId, at }) {
+      const token = scope === "INTAKE"
+        ? trackingSites.createIntakeToken(at)
+        : trackingSites.createTrackingToken(siteId!, at);
+      changed("tracking-token", "provisioned", token.id);
+      return token;
+    },
+    tracking_tokens_rotate({ siteId, at }) {
+      const token = trackingSites.rotateTrackingToken(siteId, at);
+      changed("tracking-token", "rotated", token.id);
+      return token;
+    },
+    tracking_tokens_revoke({ id, at }) {
+      const token = trackingSites.revokeToken(id, at);
+      changed("tracking-token", "revoked", token.id);
+      return token;
+    },
+    tracking_events_get({ id }) {
+      const event = tracking.get(id);
+      if (!event) throw new Error(`No tracking event with id ${id}.`);
+      return event;
+    },
+    tracking_events_list(input) {
+      return tracking.list(input);
+    },
+    tracking_events_ingest(input) {
+      const event = tracking.ingest(input);
+      changed("tracking-event", "ingested", event.id);
+      return event;
+    },
+    tracking_events_ingestBatch({ events }) {
+      const rows = tracking.ingestBatch(events);
+      for (const event of rows) changed("tracking-event", "ingested", event.id);
+      return rows;
+    },
+    tracking_aggregates_list(input) {
+      return tracking.listAggregates(input);
+    },
+    tracking_aggregates_rollup(input) {
+      const result = tracking.rollup(input);
+      changed("tracking-aggregate", "rolled-up", input.siteId ?? "*");
+      return result;
+    },
+    tracking_aggregates_prune(input) {
+      const result = tracking.prune(input);
+      changed("tracking-aggregate", "pruned", input.siteId ?? "*");
+      changed("tracking-event", "pruned", input.siteId ?? "*");
+      return result;
     },
     agents_list(input) {
       return agents.list(input);
@@ -2581,12 +2726,29 @@ export default async function plugin(bb: BbPluginApi) {
       deals: Number((db.prepare("SELECT COUNT(*) AS count FROM deals").get() as { count: number }).count),
       activities: Number((db.prepare("SELECT COUNT(*) AS count FROM activities").get() as { count: number }).count),
     };
+    const integrations = {
+      connections: {
+        total: Number((db.prepare("SELECT COUNT(*) AS count FROM connections").get() as { count: number }).count),
+        enabled: Number((db.prepare("SELECT COUNT(*) AS count FROM connections WHERE enabled = 1").get() as { count: number }).count),
+        connected: Number((db.prepare("SELECT COUNT(*) AS count FROM connection_health WHERE status = 'CONNECTED'").get() as { count: number }).count),
+        errors: Number((db.prepare("SELECT COUNT(*) AS count FROM connection_health WHERE status = 'ERROR'").get() as { count: number }).count),
+      },
+      tracking: {
+        sites: Number((db.prepare("SELECT COUNT(*) AS count FROM tracking_sites").get() as { count: number }).count),
+        activeSites: Number((db.prepare("SELECT COUNT(*) AS count FROM tracking_sites WHERE status = 'ACTIVE'").get() as { count: number }).count),
+        verifiedSites: Number((db.prepare("SELECT COUNT(*) AS count FROM tracking_sites WHERE verification_status = 'VERIFIED'").get() as { count: number }).count),
+        activeTokens: Number((db.prepare("SELECT COUNT(*) AS count FROM tracking_tokens WHERE revoked_at IS NULL").get() as { count: number }).count),
+        events: Number((db.prepare("SELECT COUNT(*) AS count FROM tracking_events").get() as { count: number }).count),
+        aggregates: Number((db.prepare("SELECT COUNT(*) AS count FROM tracking_daily_aggregates").get() as { count: number }).count),
+      },
+    };
     const report = {
       ok: actualSchema === CRM_SCHEMA_VERSION && integrity === "ok" && foreignKeys.length === 0,
       version: CRM_PLUGIN_VERSION,
       schemaVersion: { expected: CRM_SCHEMA_VERSION, actual: actualSchema },
       sqlite: { integrity, foreignKeyViolations: foreignKeys.length },
       records,
+      integrations,
     };
     if (args.flags.has("json")) {
       return { exitCode: report.ok ? 0 : 1, stdout: JSON.stringify(report) };
@@ -2599,6 +2761,7 @@ export default async function plugin(bb: BbPluginApi) {
         `SQLite integrity: ${report.sqlite.integrity}`,
         `Foreign keys: ${report.sqlite.foreignKeyViolations} violations`,
         `Records: companies=${records.companies} contacts=${records.contacts} deals=${records.deals} activities=${records.activities}`,
+        `Integrations: connections=${integrations.connections.total} enabled=${integrations.connections.enabled} trackingSites=${integrations.tracking.sites} events=${integrations.tracking.events}`,
       ].join("\n"),
     };
   }
