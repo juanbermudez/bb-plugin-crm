@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { cn } from "../../lib/utils.js";
 
@@ -33,10 +33,6 @@ export function PersonAvatar({
 }: PersonAvatarProps) {
   const url = src?.trim() || null;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    setFailedUrl(null);
-  }, [url]);
 
   const showImage = url !== null && failedUrl !== url;
   return (
