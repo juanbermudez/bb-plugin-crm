@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 2;
+export const CRM_SCHEMA_VERSION = 3;
 
 const MIGRATIONS: string[] = [
   `
@@ -272,6 +272,98 @@ const MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '2', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS contact_facts (
+      id TEXT PRIMARY KEY NOT NULL,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      field TEXT NOT NULL CHECK (length(trim(field)) > 0),
+      value TEXT NOT NULL CHECK (length(trim(value)) > 0),
+      score REAL NOT NULL CHECK (score >= 0 AND score <= 1),
+      band TEXT NOT NULL CHECK (band IN ('VERIFIED', 'PROBABLE', 'POSSIBLE')),
+      evidence TEXT NOT NULL,
+      method TEXT NOT NULL CHECK (length(trim(method)) > 0),
+      source_url TEXT,
+      session_id TEXT,
+      status TEXT NOT NULL DEFAULT 'PROPOSED'
+        CHECK (status IN ('APPLIED', 'PROPOSED', 'DISMISSED', 'SUPERSEDED')),
+      decided_by_id TEXT,
+      decided_at TEXT,
+      observed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      superseded_at TEXT,
+      supersedes_id TEXT REFERENCES contact_facts(id) ON DELETE SET NULL,
+      superseded_by_id TEXT REFERENCES contact_facts(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_briefs (
+      id TEXT PRIMARY KEY NOT NULL,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL CHECK (version > 0),
+      narrative TEXT NOT NULL CHECK (length(trim(narrative)) > 0),
+      sections TEXT NOT NULL,
+      score REAL NOT NULL CHECK (score >= 0 AND score <= 1),
+      source_url TEXT,
+      session_id TEXT,
+      refreshed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (contact_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_work_history (
+      id TEXT PRIMARY KEY NOT NULL,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      title TEXT,
+      organization_name TEXT,
+      organization_domain TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      location TEXT,
+      description TEXT,
+      is_current INTEGER NOT NULL DEFAULT 0 CHECK (is_current IN (0, 1)),
+      score REAL NOT NULL CHECK (score >= 0 AND score <= 1),
+      band TEXT NOT NULL CHECK (band IN ('VERIFIED', 'PROBABLE', 'POSSIBLE')),
+      evidence TEXT NOT NULL,
+      method TEXT NOT NULL CHECK (length(trim(method)) > 0),
+      source_url TEXT,
+      session_id TEXT,
+      status TEXT NOT NULL DEFAULT 'PROPOSED'
+        CHECK (status IN ('APPLIED', 'PROPOSED', 'DISMISSED', 'SUPERSEDED')),
+      decided_by_id TEXT,
+      decided_at TEXT,
+      observed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      superseded_at TEXT,
+      supersedes_id TEXT REFERENCES contact_work_history(id) ON DELETE SET NULL,
+      superseded_by_id TEXT REFERENCES contact_work_history(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS contact_facts_contact_field_status_idx
+      ON contact_facts(contact_id, field, status);
+    CREATE INDEX IF NOT EXISTS contact_facts_status_observed_idx
+      ON contact_facts(status, observed_at);
+    CREATE INDEX IF NOT EXISTS contact_facts_supersedes_idx
+      ON contact_facts(supersedes_id);
+    CREATE INDEX IF NOT EXISTS contact_facts_superseded_by_idx
+      ON contact_facts(superseded_by_id);
+    CREATE INDEX IF NOT EXISTS contact_briefs_contact_version_idx
+      ON contact_briefs(contact_id, version DESC);
+    CREATE INDEX IF NOT EXISTS contact_briefs_contact_refreshed_idx
+      ON contact_briefs(contact_id, refreshed_at DESC);
+    CREATE INDEX IF NOT EXISTS contact_work_history_contact_status_idx
+      ON contact_work_history(contact_id, status);
+    CREATE INDEX IF NOT EXISTS contact_work_history_contact_dates_idx
+      ON contact_work_history(contact_id, start_date DESC, end_date DESC);
+    CREATE INDEX IF NOT EXISTS contact_work_history_supersedes_idx
+      ON contact_work_history(supersedes_id);
+    CREATE INDEX IF NOT EXISTS contact_work_history_superseded_by_idx
+      ON contact_work_history(superseded_by_id);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '3', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;

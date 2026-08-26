@@ -51,6 +51,9 @@ describe("CRM SQLite foundation", () => {
         "_bb_migrations",
         "activities",
         "companies",
+        "contact_briefs",
+        "contact_facts",
+        "contact_work_history",
         "contacts",
         "crm_metadata",
         "deal_contacts",
@@ -64,13 +67,13 @@ describe("CRM SQLite foundation", () => {
       const migrationIds = db
         .prepare("SELECT id FROM _bb_migrations ORDER BY id")
         .all() as Array<{ id: number }>;
-      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1]);
+      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1, 2]);
       expect(
         db
           .prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'")
           .pluck()
           .get(),
-      ).toBe("2");
+      ).toBe("3");
 
       const indexNames = db
         .prepare(
@@ -94,7 +97,7 @@ describe("CRM SQLite foundation", () => {
       expect(
         (db.prepare("SELECT COUNT(*) AS count FROM _bb_migrations").get() as { count: number })
           .count,
-      ).toBe(2);
+      ).toBe(3);
     } finally {
       await lifecycle.dispose();
     }
