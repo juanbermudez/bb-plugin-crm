@@ -579,7 +579,7 @@ function RecentActivitySection({ data }: { data: DashboardSummaryOutput }) {
         id="dashboard-activity"
         title="Recent activity"
         description="The latest notes, meetings, messages, and tasks."
-        action={<span>{pluralize(data.recentActivity.length, "entry")}</span>}
+        action={<span>{pluralize(data.recentActivity.length, "entry", "entries")}</span>}
       />
       {data.recentActivity.length === 0 ? (
         <EmptyState
