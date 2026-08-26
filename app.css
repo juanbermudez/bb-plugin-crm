@@ -11,7 +11,7 @@ header:has([data-bb-plugin="crm"])
   [data-testid="app-page-header-content-row"]
   .crm-header-tabs {
   position: absolute;
-  left: 3.5rem;
+  left: 4rem;
   top: 50%;
   transform: translateY(-50%);
 }
