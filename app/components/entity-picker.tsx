@@ -111,7 +111,9 @@ export function EntityPicker({
             value={open ? query : selectedLabel}
             placeholder={value ? undefined : placeholder}
             onFocus={() => {
-              setQuery(selectedLabel);
+              // Opening a selected picker should expose every valid choice;
+              // typing immediately narrows the list again.
+              setQuery("");
               setOpen(true);
             }}
             onChange={(event) => {
@@ -245,12 +247,19 @@ export interface OwnerOptionSource {
   owner?: { id: string; name: string; email?: string | null } | null;
 }
 
-/** Build owner choices strictly from IDs/refs already returned by CRM data. */
+/** Stable owner used for work assigned to the person running this BB installation. */
+export const LOCAL_OWNER_ID = "local_user";
+
+/** Build owner choices from the installation owner and IDs already returned by CRM data. */
 export function ownerOptionsFromRecords(
   records: readonly OwnerOptionSource[],
 ): EntityOption[] {
-  const seen = new Set<string>();
-  const result: EntityOption[] = [];
+  const seen = new Set<string>([LOCAL_OWNER_ID]);
+  const result: EntityOption[] = [{
+    value: LOCAL_OWNER_ID,
+    label: "You",
+    description: "This BB installation",
+  }];
   for (const record of records) {
     const ownerId = record.owner?.id ?? record.ownerId ?? null;
     if (!ownerId || seen.has(ownerId)) continue;

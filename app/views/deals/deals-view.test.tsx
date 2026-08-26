@@ -405,6 +405,33 @@ describe("DealsView", () => {
     );
   });
 
+  it("assigns the installation owner when creating the first workspace deal", async () => {
+    const rpc = makeRpc(async (method) => {
+      if (method === "deals_list") return listResult([]);
+      if (method === "companies_list") return companyListResult();
+      if (method === "deals_create") return { ...deal, id: "deal_first", ownerId: "local_user" };
+      return deal;
+    });
+    render(<DealsView rpcClient={rpc} initialCreate />);
+
+    await screen.findByRole("dialog", { name: "New deal" });
+    expect((screen.getByRole("combobox", { name: "Owner" }) as HTMLInputElement).value).toBe("You");
+    fireEvent.change(screen.getByLabelText("Deal name"), {
+      target: { value: "First deal" },
+    });
+    fireEvent.focus(screen.getByRole("combobox", { name: "Company" }));
+    fireEvent.click(screen.getByRole("option", { name: /Acme Corporation/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create deal" }));
+
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_create", expect.objectContaining({
+        name: "First deal",
+        companyId: "cmp_acme",
+        ownerId: "local_user",
+      })),
+    );
+  });
+
   it("opens the create drawer for a routed header action", async () => {
     render(<DealsView rpcClient={makeRpc()} initialCreate />);
 

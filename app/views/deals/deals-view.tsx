@@ -41,6 +41,7 @@ import {
 import {
   ColumnPreferences,
   COMPANY_PICKER_INPUT,
+  LOCAL_OWNER_ID,
   companyOptionsFromRows,
   AlertDialog,
   EmptyState,
@@ -1389,7 +1390,7 @@ export function DealsView({
   const [createValue, setCreateValue] = useState<DealCreateFormValue>({
     name: "",
     companyId: "",
-    ownerId: "",
+    ownerId: LOCAL_OWNER_ID,
     stage: "DEMO_BOOKED",
     amountCents: "",
     currency: "USD",
@@ -1811,7 +1812,7 @@ export function DealsView({
         setCreateValue({
           name: "",
           companyId: "",
-          ownerId: "",
+          ownerId: LOCAL_OWNER_ID,
           stage: "DEMO_BOOKED",
           amountCents: "",
           currency: "USD",

@@ -17,6 +17,7 @@ export {
 export { SearchField, type SearchFieldProps } from "./search-field.js";
 export {
   COMPANY_PICKER_INPUT,
+  LOCAL_OWNER_ID,
   EntityPicker,
   companyOptionsFromRows,
   ownerOptionsFromRecords,

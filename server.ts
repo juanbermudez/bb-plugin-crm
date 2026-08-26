@@ -3705,7 +3705,7 @@ export default async function plugin(bb: BbPluginApi) {
   function localOwner(id: string) {
     return {
       id,
-      name: id,
+      name: id === LOCAL_OWNER_ID ? "You" : id,
       email: "crm-user@bb.invalid",
       image: null,
     };
