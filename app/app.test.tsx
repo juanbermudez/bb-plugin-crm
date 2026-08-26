@@ -117,7 +117,7 @@ describe("CRM nav panel", () => {
     fireEvent.click(within(checklistDialog).getByRole("button", { name: "Dismiss" }));
     const headerNavigation = headerSlot
       .getAllByRole("navigation", { name: "CRM sections" })
-      .find((element) => element.className.includes("lg:block"))!;
+      .find((element) => element.className.includes("xl:block"))!;
     expect(headerNavigation).toBeDefined();
     fireEvent.mouseDown(within(headerNavigation).getByRole("tab", { name: "Contacts" }), { button: 0 });
     expect(headerSlot.inspection.navigateCalls).toContainEqual({

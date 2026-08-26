@@ -35,8 +35,8 @@ Status meanings:
 | Workspace onboarding | Persisted first-open CRM checklist modal with title-bar progress ring | done | 8 |
 | Research onboarding | Explicit live/deployed BB research-agent selection; provider credentials stay with that agent's tools | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
-| Desktop icon rail | One first-class CRM sidebar row with a contact-record mark; BB-styled tabs sit beside the text-only host CRM title because nested groups are unavailable in SDK 0.4.x | adapted | 1 |
-| Mobile navigation | Horizontally scrollable CRM tabs fall back to the top of the panel below 1024px | adapted | 1 |
+| Desktop icon rail | One first-class CRM sidebar row with a contact-record mark; BB-styled tabs are centered in the text-only host title row because nested groups are unavailable in SDK 0.4.x | adapted | 1 |
+| Responsive navigation | Centered CRM tabs fall back to a horizontally scrollable row at the top of the panel below 1280px | adapted | 1 |
 | Global app header | BB host title bar | host-owned | 1 |
 | CRM header actions | BB nav-panel `headerContent`; expandable search, enrichment, checklist progress, and New use one compact ghost-icon style with top tooltips and precede the host right-panel toggle without overlap | done | 1 |
 | Global create menu | Keyboard-accessible routes for company, contact, deal, agent, note, and task creation; notes/tasks require an existing CRM record | done | 5 |

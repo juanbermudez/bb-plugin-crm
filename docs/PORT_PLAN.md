@@ -118,8 +118,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - One first-class `navPanel` registration exposes CRM in BB's main sidebar.
   BB SDK 0.4.x has no nested/grouped nav-panel contract, so Overview,
-  Companies, Contacts, Deals, and Agents are BB-styled tabs beside the shared
-  CRM title on desktop, with an in-panel fallback below 1024px. Both placements
+  Companies, Contacts, Deals, and Agents are BB-styled tabs centered in the
+  shared title row on wide desktop, with an in-panel fallback below 1280px. Both placements
   retain deep-link state through `subPath`.
 - One BB `settingsSection` owns workspace, currency, field, connection, and
   tracking configuration; settings is not advertised in CRM navigation.
@@ -164,7 +164,7 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - No plugin-owned navigation rail or duplicate CRM breadcrumb/header.
 - One CRM destination lives in BB's sidebar; Overview, Companies, Contacts,
-  Deals, and Agents are title-bar tabs on desktop and compact in-panel tabs on
+  Deals, and Agents are centered title-bar tabs on wide desktop and compact in-panel tabs on
   smaller layouts. Settings lives under BB Settings → Plugins → CRM.
 - Global search and quick switcher mount in BB's host-owned title bar as an
   icon button that expands to a bounded field without covering adjacent actions.

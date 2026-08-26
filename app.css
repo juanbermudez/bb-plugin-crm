@@ -6,12 +6,12 @@ header:has([data-bb-plugin="crm"])
   display: none;
 }
 
-/* Keep section navigation beside the CRM title instead of letting host actions push it right. */
+/* Center section navigation within the host title row, independent of side actions. */
 header:has([data-bb-plugin="crm"])
   [data-testid="app-page-header-content-row"]
   .crm-header-tabs {
   position: absolute;
-  left: 4rem;
+  left: 50%;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
 }

@@ -81,8 +81,8 @@ function CrmSectionTabs({
   return (
     <nav
       className={inHeader
-        ? "crm-header-tabs hidden shrink-0 lg:block"
-        : "shrink-0 border-b border-border px-4 lg:hidden sm:px-5"}
+        ? "crm-header-tabs hidden shrink-0 xl:block"
+        : "shrink-0 border-b border-border px-4 xl:hidden sm:px-5"}
       aria-label="CRM sections"
     >
       <Tabs
@@ -209,7 +209,7 @@ function CrmHeaderSearch({
             setExpanded(false);
             onOpen(result);
           }}
-          className="w-56 animate-in fade-in-0 zoom-in-95 duration-150"
+          className="w-40 animate-in fade-in-0 zoom-in-95 duration-150"
         />
       ) : (
         <TooltipIconButton
