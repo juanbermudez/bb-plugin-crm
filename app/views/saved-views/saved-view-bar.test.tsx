@@ -172,7 +172,7 @@ describe("SavedViewBar", () => {
     expect(screen.getByText("Default")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    expect(applied).toHaveBeenLastCalledWith(defaultFilters, null);
+    expect(applied).toHaveBeenLastCalledWith(currentFilters, defaulted);
 
     fireEvent.change(chooser, { target: { value: pipelineView.id } });
     fireEvent.click(screen.getByRole("button", { name: "Delete view" }));
@@ -182,5 +182,29 @@ describe("SavedViewBar", () => {
       }),
     );
     expect(confirm).toHaveBeenCalledWith("Delete the saved view “Pipeline”?");
+  });
+
+  it("applies the persisted default view when the workspace loads", async () => {
+    const defaulted: SavedView = { ...pipelineView, isDefault: true };
+    const applied = vi.fn();
+    const rpc = makeRpc(async () => [defaulted]);
+
+    render(
+      <SavedViewBar
+        entity="DEAL"
+        currentFilters={defaultFilters}
+        rpcClient={rpc}
+        onApplyFilters={applied}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(applied).toHaveBeenCalledWith(currentFilters, defaulted),
+    );
+    expect(
+      (screen.getByRole("combobox", { name: "Saved views" }) as HTMLSelectElement)
+        .value,
+    ).toBe(defaulted.id);
+    expect(screen.getByText("Showing default view Pipeline.")).toBeDefined();
   });
 });

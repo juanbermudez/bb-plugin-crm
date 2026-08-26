@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -116,6 +117,11 @@ export function SavedViewBar({
   const [saveName, setSaveName] = useState("");
   const [saveShared, setSaveShared] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const onApplyFiltersRef = useRef(onApplyFilters);
+
+  useEffect(() => {
+    onApplyFiltersRef.current = onApplyFilters;
+  }, [onApplyFilters]);
 
   useEffect(() => {
     let active = true;
@@ -126,8 +132,14 @@ export function SavedViewBar({
       .call("savedViews_list", { entity })
       .then((next) => {
         if (!active) return;
+        const defaultView = next.find((view) => view.isDefault) ?? null;
         setViews(next);
-        setDefaultViewId(next.find((view) => view.isDefault)?.id ?? null);
+        setDefaultViewId(defaultView?.id ?? null);
+        setSelectedViewId(defaultView?.id ?? null);
+        if (defaultView) {
+          setStatusMessage(`Showing default view ${defaultView.name}.`);
+          onApplyFiltersRef.current?.(cloneFilters(defaultView.filters), defaultView);
+        }
       })
       .catch((cause: unknown) => {
         if (active) setError(errorMessage(cause));
@@ -149,10 +161,17 @@ export function SavedViewBar({
   );
 
   const resetFilters = useCallback(() => {
+    const defaultView = views.find((view) => view.id === defaultViewId) ?? null;
+    if (defaultView) {
+      setSelectedViewId(defaultView.id);
+      setStatusMessage(`Showing default view ${defaultView.name}.`);
+      onApplyFilters?.(cloneFilters(defaultView.filters), defaultView);
+      return;
+    }
     setSelectedViewId(null);
-    setStatusMessage("Showing the default filters.");
+    setStatusMessage("Showing the base filters.");
     onApplyFilters?.(cloneFilters(DEFAULT_FILTERS), null);
-  }, [onApplyFilters]);
+  }, [defaultViewId, onApplyFilters, views]);
 
   const chooseView = (viewId: string) => {
     if (!viewId) {
@@ -310,7 +329,7 @@ export function SavedViewBar({
               aria-label="Saved views"
               onChange={(event) => chooseView(event.target.value)}
             >
-              <option value="">Default · reset filters</option>
+              <option value="">Base filters</option>
               {views.map((view) => {
                 const isDefault = view.id === defaultViewId || view.isDefault;
                 return (
@@ -438,7 +457,7 @@ export function SavedViewBar({
         </div>
       ) : (
         <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
-          Default filters are active.
+          Base filters are active.
         </p>
       )}
 
