@@ -753,6 +753,7 @@ const companyUpdateDataShape = {
   pricingUrl: optionalNullableText,
   careersUrl: optionalNullableText,
   ownerId: idSchema.nullable().optional(),
+  primaryContactId: idSchema.nullable().optional(),
   fields: fieldValuesSchema.optional(),
 };
 

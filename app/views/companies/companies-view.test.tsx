@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   Company,
+  Contact,
   CompanyListOutput,
   SavedView,
 } from "../../../contracts/core.js";
@@ -305,5 +306,74 @@ describe("CompaniesView", () => {
     expect((screen.getByLabelText("Sort direction") as HTMLSelectElement).value).toBe(
       "desc",
     );
+  });
+
+  it("assigns a primary contact and opens linked records in a nested stack", async () => {
+    const contact: Contact = {
+      id: "con_ada",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+      companyId: company.id,
+      fields: {},
+      deals: [],
+    };
+    let current: Company = {
+      ...company,
+      primaryContactId: null,
+      contacts: [
+        {
+          id: contact.id,
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          email: contact.email ?? null,
+          title: null,
+          imageUrl: null,
+        },
+      ],
+    };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "companies_list") return listResult([current]);
+      if (method === "companies_get") return current;
+      if (method === "companies_update") {
+        expect(input).toEqual({
+          id: company.id,
+          data: { primaryContactId: contact.id },
+        });
+        current = { ...current, primaryContactId: contact.id };
+        return current;
+      }
+      if (method === "contacts_get") return contact;
+      return current;
+    });
+
+    render(<CompaniesView rpcClient={rpc} />);
+    await screen.findByText("Acme Corporation");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Corporation/ }));
+    await screen.findByRole("dialog", { name: "Acme Corporation" });
+    fireEvent.click(screen.getByRole("tab", { name: "Contacts" }));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Make Ada Lovelace primary contact/ }),
+    );
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("companies_update", {
+        id: company.id,
+        data: { primaryContactId: contact.id },
+      }),
+    );
+    expect(screen.getByRole("button", { name: /Clear primary contact: Ada Lovelace/ })).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ada Lovelace" }));
+    await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("contacts_get", { id: contact.id }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Ada Lovelace" })).toBeNull(),
+    );
+    expect(screen.getByRole("dialog", { name: "Acme Corporation" })).toBeDefined();
   });
 });

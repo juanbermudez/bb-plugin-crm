@@ -101,6 +101,7 @@ export interface AgentsRpcClient {
   call(method: "agents_runs_success", input: { id: string }): Promise<AgentRunDetail>;
   call(method: "agents_runs_fail", input: { id: string }): Promise<AgentRunDetail>;
   call(method: "agents_runs_cancel", input: { id: string }): Promise<AgentRunDetail & { cancelled: boolean }>;
+  call(method: "agents_runs_retry", input: { id: string }): Promise<AgentRunDetail>;
   call(
     method: "agents_audit_list",
     input: { agentId: string; limit: number; offset: number },

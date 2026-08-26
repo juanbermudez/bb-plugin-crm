@@ -1452,6 +1452,85 @@ describe("CRM plugin foundation", () => {
     }
   });
 
+  it("creates an idempotent visible BB thread linked to a CRM company", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-company-record" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-record", kind: "standard" }] },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_record_server", "version_record_server");
+    createCompanyStore(bb.storage.database()).create({ id: "company_record", name: "Record Co" });
+
+    const first = await harness.behavior.callRpc("agents_threads_createRecord", {
+      agentId: "agent_record_server",
+      recordType: "COMPANY",
+      recordId: "company_record",
+    }) as { id: string; threadId: string; kind: string; recordType: string; recordId: string };
+    const second = await harness.behavior.callRpc("agents_threads_createRecord", {
+      agentId: "agent_record_server",
+      recordType: "COMPANY",
+      recordId: "company_record",
+    });
+
+    expect(first).toMatchObject({
+      threadId: "bb-thread-company-record",
+      kind: "RECORD",
+      recordType: "COMPANY",
+      recordId: "company_record",
+    });
+    expect(second).toEqual(expect.objectContaining({ id: first.id }));
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0]).toMatchObject({
+      projectId: "project-record",
+      visibility: "visible",
+    });
+    expect(String((harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0] as { input?: Array<{ text?: string }> }).input?.[0]?.text))
+      .toContain('"recordType":"COMPANY"');
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("cancels a linked BB worker and returns the persisted cancellation result", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-cancel-server" }));
+    const archive = vi.fn(async () => ({ ok: true }));
+    const stop = vi.fn(async () => ({ ok: true }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-cancel", kind: "standard" }] },
+        threads: { spawn, archive, stop },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_cancel_server", "version_cancel_server");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_cancel_server",
+      id: "run_cancel_server",
+      idempotencyKey: "run-cancel-server-key",
+    });
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      await vi.waitFor(() => expect(createAgentStore(bb.storage.database()).getRunRequired("run_cancel_server").status).toBe("RUNNING"));
+      const cancelled = await harness.behavior.callRpc("agents_runs_cancel", {
+        id: "run_cancel_server",
+        reason: "No longer needed.",
+        actorId: "user_cancel",
+      }) as { status: string; cancelled: boolean; cancelRequestedAt: string | null };
+      expect(cancelled).toMatchObject({ status: "CANCELLED", cancelled: true });
+      expect(cancelled.cancelRequestedAt).toEqual(expect.any(String));
+      expect(archive).toHaveBeenCalledWith({ threadId: "bb-thread-cancel-server" });
+      expect(stop).toHaveBeenCalledWith({ threadId: "bb-thread-cancel-server" });
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
   it("keeps queued runs durable when no non-deleted BB project exists", async () => {
     const spawn = vi.fn(async () => ({ id: "bb-thread-never-created" }));
     const { bb, harness } = createFakePluginHost({
@@ -1618,7 +1697,7 @@ describe("CRM plugin foundation", () => {
         "thread.failed": 1,
         "thread.deleted": 1,
       });
-      expect(reloaded.harness.inspection.registrations.services).toHaveLength(1);
+      expect(reloaded.harness.inspection.registrations.services).toHaveLength(2);
     } finally {
       replacementService.controller.abort();
       await replacementService.done;

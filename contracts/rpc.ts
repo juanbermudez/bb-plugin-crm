@@ -22,11 +22,13 @@ import {
   agentRunGetInputSchema,
   agentRunListInputSchema,
   agentRunQueueInputSchema,
+  agentRunRetryInputSchema,
   agentRunSuccessInputSchema,
   agentRunSchema,
   agentThreadGetInputSchema,
   agentThreadListInputSchema,
   agentThreadLinkSchema,
+  agentThreadRecordCreateInputSchema,
   agentTriggerCreateInputSchema,
   agentTriggerDeleteInputSchema,
   agentTriggerEnableInputSchema,
@@ -188,6 +190,12 @@ import {
   trackingTokenRotateInputSchema,
   trackingTokenSchema,
 } from "./connections.js";
+import {
+  archiveRetentionGetInputSchema,
+  archiveRetentionPruneInputSchema,
+  archiveRetentionPruneResultSchema,
+  archiveRetentionSettingsSchema,
+} from "./maintenance.js";
 
 export const rpcContract = defineRpcContract({
   status: {
@@ -308,6 +316,14 @@ export const rpcContract = defineRpcContract({
   tracking_aggregates_prune: {
     input: trackingPruneInputSchema,
     output: trackingPruneResultSchema,
+  },
+  archive_retention_get: {
+    input: archiveRetentionGetInputSchema,
+    output: archiveRetentionSettingsSchema,
+  },
+  archive_retention_prune: {
+    input: archiveRetentionPruneInputSchema,
+    output: archiveRetentionPruneResultSchema,
   },
   companies_list: {
     input: companyListInputSchema,
@@ -783,6 +799,10 @@ export const rpcContract = defineRpcContract({
     input: agentRunCancelInputSchema,
     output: agentCancelledRunSchema,
   },
+  agents_runs_retry: {
+    input: agentRunRetryInputSchema,
+    output: agentRunDetailSchema,
+  },
   agents_actions_list: {
     input: agentActionListInputSchema,
     output: z.array(agentActionSchema),
@@ -801,6 +821,10 @@ export const rpcContract = defineRpcContract({
   },
   agents_threads_get: {
     input: agentThreadGetInputSchema,
+    output: agentThreadLinkSchema,
+  },
+  agents_threads_createRecord: {
+    input: agentThreadRecordCreateInputSchema,
     output: agentThreadLinkSchema,
   },
 });

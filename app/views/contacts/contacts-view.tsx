@@ -10,11 +10,14 @@ import { Button } from "../../../components/ui/button.js";
 import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
+  ColumnPreferences,
   EmptyState,
   PageHeader,
   RecordDrawer,
   SearchField,
   TableShell,
+  usePersistentColumnPreferences,
+  type TableColumnPreference,
 } from "../../components/index.js";
 import type {
   Contact,
@@ -29,6 +32,8 @@ import { useContactsRpc, type ContactsRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
+import { ContactEvidence, type ContactEvidenceRpcClient } from "../../components/contact-evidence.js";
+import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
 import {
   customFieldFacets,
   facetOptionsFromCounts,
@@ -75,7 +80,7 @@ const CONTACT_TABS: ReadonlyArray<{ id: ContactTab; label: string }> = [
 ];
 
 const CONTACT_COLUMNS = [
-  { id: "contact", label: "Contact", className: "min-w-48" },
+  { id: "contact", label: "Contact", className: "min-w-48", required: true },
   { id: "company", label: "Company", className: "min-w-40" },
   { id: "title", label: "Title", className: "min-w-36" },
   { id: "owner", label: "Owner", className: "min-w-32" },
@@ -105,11 +110,56 @@ function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
 }
 
+function customFieldDisplay(
+  definition: FieldDefinition,
+  value: unknown,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (definition.type === "CHECKBOX") return value === true ? "Yes" : "No";
+  if (definition.type === "SELECT") {
+    const option = definition.options.find((candidate) => candidate.id === value);
+    return option?.label ?? String(value);
+  }
+  return String(value);
+}
+
 function contactName(contact: Pick<Contact, "firstName" | "lastName">): string {
   return [contact.firstName, contact.lastName]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))
     .join(" ") || "Contact";
+}
+
+function contactColumnValue(
+  contact: Contact,
+  columnId: string,
+  definitions: readonly FieldDefinition[],
+): string {
+  switch (columnId) {
+    case "contact":
+      return contactName(contact);
+    case "company":
+      return contact.company?.name ?? displayValue(contact.companyId);
+    case "title":
+      return displayValue(contact.title);
+    case "owner":
+      return contact.owner?.name ?? displayValue(contact.ownerId);
+    case "email":
+      return displayValue(contact.email);
+    case "deals":
+      return contact.deals === undefined ? "—" : String(contact.deals.length);
+    case "last-activity":
+      return formatDate(contact.lastActivityAt);
+    default: {
+      const fieldId = columnId.startsWith("field:")
+        ? columnId.slice("field:".length)
+        : "";
+      const definition = definitions.find((candidate) => candidate.id === fieldId);
+      return definition
+        ? customFieldDisplay(definition, contact.fields?.[definition.key])
+        : "—";
+    }
+  }
 }
 
 function isContact(value: unknown): value is Contact {
@@ -324,6 +374,8 @@ function ContactForm({
 
 interface ContactOverviewProps {
   contact: Contact;
+  rpc: ContactsRpcClient;
+  onEvidenceChanged: () => void;
   mutationBusy: boolean;
   mutationError: string | null;
   onArchive: () => void;
@@ -333,6 +385,8 @@ interface ContactOverviewProps {
 
 function ContactOverview({
   contact,
+  rpc,
+  onEvidenceChanged,
   mutationBusy,
   mutationError,
   onArchive,
@@ -396,6 +450,11 @@ function ContactOverview({
         </div>
       </dl>
       <RecordFieldsEditor entity="CONTACT" recordId={contact.id} />
+      <ContactEvidence
+        contact={contact}
+        rpc={rpc as unknown as ContactEvidenceRpcClient}
+        onChanged={onEvidenceChanged}
+      />
       <section className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
         {contact.archivedAt ? (
           <Button
@@ -506,6 +565,7 @@ export function ContactsView({
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
+  const [tableDefinitions, setTableDefinitions] = useState<readonly FieldDefinition[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkOwnerId, setBulkOwnerId] = useState("");
   const [bulkCompanyId, setBulkCompanyId] = useState("");
@@ -533,6 +593,29 @@ export function ContactsView({
   });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
+
+  const columnDefinitions = useMemo<readonly TableColumnPreference[]>(
+    () => [
+      ...CONTACT_COLUMNS,
+      ...tableDefinitions
+        .filter(
+          (definition) =>
+            definition.showOnTable &&
+            definition.archived !== true &&
+            definition.archivedAt == null,
+        )
+        .map((definition) => ({
+          id: `field:${definition.id}`,
+          label: definition.label,
+          className: "min-w-36",
+        })),
+    ],
+    [tableDefinitions],
+  );
+  const columnPreferences = usePersistentColumnPreferences(
+    "crm:table-columns:contact",
+    columnDefinitions,
+  );
 
   const listInput = useMemo(
     () => createListInput(query, page, showArchived, sort, dir, filters),
@@ -583,6 +666,23 @@ export function ContactsView({
       })
       .catch(() => {
         // Custom-field facets are optional; the standard facets remain usable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("fields_list", { entity: "CONTACT", includeArchived: false })
+      .then((next) => {
+        if (active && Array.isArray(next)) {
+          setTableDefinitions(next as FieldDefinition[]);
+        }
+      })
+      .catch(() => {
+        // Table field definitions are optional; standard columns remain usable.
       });
     return () => {
       active = false;
@@ -905,7 +1005,7 @@ export function ContactsView({
             dir,
             archived: showArchived,
             filters,
-            columns: [],
+            columns: columnPreferences.visibleColumns.map((column) => column.id),
           }}
           onApplyFilters={(filters: SavedViewFilters) => {
             setQuery(filters.q);
@@ -917,24 +1017,30 @@ export function ContactsView({
             setDir(filters.dir);
             setFilters(cleanFilters(filters.filters));
             setShowArchived(filters.archived);
+            if (filters.columns.length > 0) {
+              columnPreferences.apply(filters.columns);
+            }
             setPage(1);
           }}
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SearchField
-            label="Search contacts"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(1);
-            }}
-            onClear={() => {
-              setQuery("");
-              setPage(1);
-            }}
-            placeholder="Search contacts…"
-            containerClassName="w-full sm:w-80"
-          />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <SearchField
+              label="Search contacts"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              onClear={() => {
+                setQuery("");
+                setPage(1);
+              }}
+              placeholder="Search contacts…"
+              containerClassName="w-full sm:w-80"
+            />
+            <ColumnPreferences preference={columnPreferences} />
+          </div>
           <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
             {list.total} {list.total === 1 ? "contact" : "contacts"}
             {showArchived ? " · archived" : ""}
@@ -1140,7 +1246,7 @@ export function ContactsView({
               ),
               className: "w-10 px-3",
             },
-            ...CONTACT_COLUMNS,
+            ...columnPreferences.visibleColumns,
           ]}
           loading={listLoading}
           empty={
@@ -1211,31 +1317,28 @@ export function ContactsView({
                     }}
                   />
                 </td>
-                <td className="px-3 py-3 font-medium">{name}</td>
-                <td className="px-3 py-3 text-muted-foreground">
-                  {contact.company?.name ?? displayValue(contact.companyId)}
-                </td>
-                <td className="px-3 py-3 text-muted-foreground">
-                  {displayValue(contact.title)}
-                </td>
-                <td className="px-3 py-3 text-muted-foreground">
-                  {contact.owner?.name ?? displayValue(contact.ownerId)}
-                </td>
-                <td className="break-words px-3 py-3 text-muted-foreground">
-                  {displayValue(contact.email)}
-                </td>
-                <td className="px-3 py-3 text-right tabular-nums">
-                  {contact.deals === undefined ? "—" : contact.deals.length}
-                </td>
-                <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
-                  {contact.lastActivityAt ? (
-                    <time dateTime={contact.lastActivityAt}>
-                      {formatDate(contact.lastActivityAt)}
-                    </time>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+                {columnPreferences.visibleColumns.map((column) => (
+                  <td
+                    key={column.id}
+                    className={
+                      column.id === "contact"
+                        ? "px-3 py-3 font-medium"
+                        : column.id === "deals"
+                          ? "px-3 py-3 text-right tabular-nums"
+                          : column.id === "last-activity" || column.id.startsWith("field:")
+                            ? "whitespace-nowrap px-3 py-3 text-muted-foreground"
+                            : "px-3 py-3 text-muted-foreground"
+                    }
+                  >
+                    {column.id === "last-activity" && contact.lastActivityAt ? (
+                      <time dateTime={contact.lastActivityAt}>
+                        {contactColumnValue(contact, column.id, tableDefinitions)}
+                      </time>
+                    ) : (
+                      contactColumnValue(contact, column.id, tableDefinitions)
+                    )}
+                  </td>
+                ))}
               </tr>
             );
           })}
@@ -1322,6 +1425,8 @@ export function ContactsView({
             {recordTab === "overview" ? (
               <ContactOverview
                 contact={record}
+                rpc={rpc}
+                onEvidenceChanged={() => setRecordRefreshKey((value) => value + 1)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
                 onArchive={() => void runArchiveMutation("contacts_archive")}
@@ -1336,9 +1441,14 @@ export function ContactsView({
                 title="Contact activity"
                 description="Notes, touchpoints, and follow-up work for this contact."
               />
-            ) : (
-              <StagedContactTab tab={recordTab} />
-            )}
+            ) : recordTab === "agent" ? (
+              <RecordAgentTab
+                rpc={rpc as unknown as RecordAgentRpcClient}
+                recordType="CONTACT"
+                recordId={record.id}
+                recordLabel={contactName(record)}
+              />
+            ) : null}
           </div>
         )}
       </RecordDrawer>

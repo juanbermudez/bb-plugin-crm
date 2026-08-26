@@ -32,6 +32,8 @@ describe("CRM RPC contract", () => {
       "tracking_aggregates_list",
       "tracking_aggregates_rollup",
       "tracking_aggregates_prune",
+      "archive_retention_get",
+      "archive_retention_prune",
       "companies_list",
       "companies_get",
       "companies_create",
@@ -150,11 +152,13 @@ describe("CRM RPC contract", () => {
       "agents_runs_success",
       "agents_runs_fail",
       "agents_runs_cancel",
+      "agents_runs_retry",
       "agents_actions_list",
       "agents_actions_get",
       "agents_audit_list",
       "agents_threads_list",
       "agents_threads_get",
+      "agents_threads_createRecord",
     ]);
   });
 
@@ -205,6 +209,17 @@ describe("CRM RPC contract", () => {
         unknown: 1,
       }).success,
     ).toBe(false);
+    expect(
+      rpcContract.agents_threads_createRecord.input.safeParse({
+        agentId: "agent-1",
+        recordType: "CONTACT",
+        recordId: "contact-1",
+        unknown: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_runs_retry.input.safeParse({ id: "run-1" }).success,
+    ).toBe(true);
   });
 
   it("keeps company RPC inputs and outputs strict", () => {

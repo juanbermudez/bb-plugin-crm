@@ -45,6 +45,7 @@ export type AgentThreadVisibility = NonNullable<
 export type AgentThreadEnvironment = AgentThreadSpawnArgs["environment"];
 
 type AgentThreadModel = AgentThreadSpawnArgs["model"];
+type AgentThreadProviderId = AgentThreadSpawnArgs["providerId"];
 type AgentThreadReasoningLevel = AgentThreadSpawnArgs["reasoningLevel"];
 type AgentThreadPermissionMode = AgentThreadSpawnArgs["permissionMode"];
 type AgentThreadServiceTier = AgentThreadSpawnArgs["serviceTier"];
@@ -239,6 +240,7 @@ export interface AgentDispatcherOptions {
   /** Hidden workers stay out of the sidebar; visible is useful for debugging. */
   visibility?: AgentThreadVisibility;
   /** Optional execution overrides. The deployed version remains the source of truth for instructions. */
+  providerId?: AgentThreadProviderId;
   model?: AgentThreadModel;
   reasoningLevel?: AgentThreadReasoningLevel;
   permissionMode?: AgentThreadPermissionMode;
@@ -498,20 +500,25 @@ export class AgentDispatcher {
     let spawnedThreadId: string | null = null;
     let prompt = "";
     try {
+      const version = this.store.getVersionRequired(claimed.versionId);
       prompt = buildAgentRunPrompt({
         agent: this.store.getRequired(claimed.agentId),
-        version: this.store.getVersionRequired(claimed.versionId),
+        version,
         run: claimed,
         safetyRules: this.safetyRules,
       });
       const projectId = await this.resolveProjectId();
+      const selectedModel = this.options.model ??
+        (claimed.modelId && claimed.modelId !== "default" ? claimed.modelId : undefined) ??
+        (version.modelId !== "default" ? version.modelId : undefined);
       const spawned = await this.options.bb.sdk.threads.spawn({
         projectId,
         environment: this.environment,
         input: inputForPrompt(prompt) as AgentThreadInput,
         title: this.threadTitle(claimed),
         visibility: this.visibility,
-        ...(this.options.model === undefined ? {} : { model: this.options.model }),
+        ...(this.options.providerId === undefined ? {} : { providerId: this.options.providerId }),
+        ...(selectedModel === undefined ? {} : { model: selectedModel }),
         ...(this.options.reasoningLevel === undefined
           ? {}
           : { reasoningLevel: this.options.reasoningLevel }),
@@ -667,17 +674,22 @@ export class AgentDispatcher {
 
     let prompt = "";
     try {
+      const version = this.store.getVersionRequired(run.versionId);
       prompt = buildAgentRunPrompt({
         agent: this.store.getRequired(run.agentId),
-        version: this.store.getVersionRequired(run.versionId),
+        version,
         run,
         safetyRules: this.safetyRules,
       });
+      const selectedModel = this.options.model ??
+        (run.modelId && run.modelId !== "default" ? run.modelId : undefined) ??
+        (version.modelId !== "default" ? version.modelId : undefined);
       await this.options.bb.sdk.threads.send({
         threadId: link.threadId,
         mode: "auto",
         input: inputForPrompt(prompt) as AgentThreadSendInput,
-        ...(this.options.model === undefined ? {} : { model: this.options.model }),
+        ...(this.options.providerId === undefined ? {} : { providerId: this.options.providerId }),
+        ...(selectedModel === undefined ? {} : { model: selectedModel }),
         ...(this.options.reasoningLevel === undefined
           ? {}
           : { reasoningLevel: this.options.reasoningLevel }),
@@ -887,11 +899,15 @@ export class AgentDispatcher {
   }
 
   /** Cancel the CRM run and, when linked, request BB to stop its worker. */
-  async cancelRun(runId: string, reason = "Cancelled by user."): Promise<AgentRunDetail> {
+  async cancelRun(
+    runId: string,
+    reason = "Cancelled by user.",
+    actorId = this.actorId,
+  ): Promise<AgentRunDetail> {
     const id = requiredText(runId, "Agent run id");
     const current = this.store.getRunRequired(id);
     if (isTerminal(current.status)) return current;
-    const cancelled = this.store.cancelRun(id, requiredText(reason, "Cancellation reason"), this.actorId);
+    const cancelled = this.store.cancelRun(id, requiredText(reason, "Cancellation reason"), requiredText(actorId, "Cancellation actor id"));
     const link = this.linkForRun(id);
     if (cancelled.cancelled && link) {
       await this.cleanupThread(link.threadId, this.visibility);

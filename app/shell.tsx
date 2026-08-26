@@ -1,10 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   useBbNavigate,
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 import { Button } from "../components/ui/button.js";
 import { Icon, type IconName } from "../components/ui/icon.js";
+import {
+  GlobalSearch,
+  WorkspaceChecklist,
+  readWorkspaceChecklistState,
+  type GlobalSearchResult,
+} from "./components/index.js";
 import {
   crmRouteToSubPath,
   parseCrmRoute,
@@ -45,6 +51,10 @@ function PendingView({ kind }: { kind: Exclude<CrmRouteKind, "dashboard"> }) {
 export function CrmAppShell({ subPath }: PluginNavPanelProps) {
   const route = parseCrmRoute(subPath);
   const navigate = useBbNavigate();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [checklistOpen, setChecklistOpen] = useState(
+    () => !readWorkspaceChecklistState().dismissed,
+  );
   const go = useMemo(
     () => (kind: CrmRouteKind) => {
       navigate.toPluginPanel("crm", {
@@ -53,6 +63,26 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
     },
     [navigate],
   );
+
+  const openSearchResult = (result: GlobalSearchResult) => {
+    navigate.toPluginPanel("crm", {
+      subPath: crmRouteToSubPath({
+        kind:
+          result.kind === "company"
+            ? "companies"
+            : result.kind === "contact"
+              ? "contacts"
+              : "deals",
+        recordId: result.id,
+      }),
+    });
+  };
+
+  const dismissChecklist = () => {
+    setChecklistOpen(false);
+  };
+
+  const routeLabel = NAV_ITEMS.find((item) => item.kind === route.kind)?.label ?? "CRM";
 
   const navigation = NAV_ITEMS.map((item) => (
     <Button
@@ -72,7 +102,73 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       <nav className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5 @md:w-14 @md:flex-col @md:border-r @md:border-b-0 @md:px-0 @md:py-3">
         {navigation}
       </nav>
-      <main className="min-h-0 min-w-0 flex-1 overflow-auto">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto">
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              CRM
+            </span>
+            <span className="text-border" aria-hidden="true">/</span>
+            <span className="truncate text-sm font-medium">{routeLabel}</span>
+          </div>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:flex-none">
+            <GlobalSearch onOpen={openSearchResult} className="order-3 w-full sm:order-none sm:w-72" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-expanded={checklistOpen}
+              onClick={() => setChecklistOpen((open) => !open)}
+            >
+              <Icon name="Check" aria-hidden="true" />
+              Checklist
+            </Button>
+            <div className="relative">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-expanded={createOpen}
+                aria-haspopup="menu"
+                onClick={() => setCreateOpen((open) => !open)}
+              >
+                <Icon name="Plus" aria-hidden="true" />
+                New
+              </Button>
+              {createOpen ? (
+                <div
+                  className="absolute right-0 z-40 mt-2 w-44 rounded-lg border border-border bg-background p-1 shadow-lg"
+                  role="menu"
+                  aria-label="Create CRM record"
+                >
+                  {(["companies", "contacts", "deals"] as const).map((kind) => {
+                    const label = kind === "companies" ? "New company" : kind === "contacts" ? "New contact" : "New deal";
+                    return (
+                      <Button
+                        key={kind}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start"
+                        role="menuitem"
+                        onClick={() => {
+                          setCreateOpen(false);
+                          go(kind);
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </header>
+        {checklistOpen ? (
+          <WorkspaceChecklist onNavigate={go} onDismiss={dismissChecklist} />
+        ) : null}
+        <div className="min-h-0 min-w-0 flex-1">
         {route.kind === "dashboard" ? (
           <DashboardView />
         ) : route.kind === "companies" ? (
@@ -131,6 +227,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : (
           <PendingView kind={route.kind} />
         )}
+        </div>
       </main>
     </div>
   );

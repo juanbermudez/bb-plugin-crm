@@ -27,16 +27,20 @@ import {
   type SortDirection,
 } from "../../../contracts/core.js";
 import {
+  ColumnPreferences,
   EmptyState,
   PageHeader,
   RecordDrawer,
   SearchField,
   TableShell,
+  usePersistentColumnPreferences,
+  type TableColumnPreference,
 } from "../../components/index.js";
 import { useDealsRpc, type DealsRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
+import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
 import {
   customFieldFacets,
   facetOptionsFromCounts,
@@ -95,7 +99,7 @@ const CLOSING_LABELS: Record<(typeof CLOSING_WINDOWS)[number], string> = {
 };
 
 const DEAL_COLUMNS = [
-  { id: "deal", label: "Deal", className: "min-w-52" },
+  { id: "deal", label: "Deal", className: "min-w-52", required: true },
   { id: "company", label: "Company", className: "min-w-40" },
   { id: "stage", label: "Stage", className: "min-w-44" },
   { id: "owner", label: "Owner", className: "min-w-32" },
@@ -138,6 +142,19 @@ function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
 }
 
+function customFieldDisplay(
+  definition: FieldDefinition,
+  value: unknown,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (definition.type === "CHECKBOX") return value === true ? "Yes" : "No";
+  if (definition.type === "SELECT") {
+    const option = definition.options.find((candidate) => candidate.id === value);
+    return option?.label ?? String(value);
+  }
+  return String(value);
+}
+
 function formatMinorAmount(
   amountCents: number | null | undefined,
   currency: string | null | undefined,
@@ -157,6 +174,38 @@ function formatMinorAmount(
 
 function stageLabel(stage: DealStage): string {
   return STAGE_LABELS[stage];
+}
+
+function dealColumnValue(
+  deal: Deal,
+  columnId: string,
+  definitions: readonly FieldDefinition[],
+): string {
+  switch (columnId) {
+    case "deal":
+      return deal.name;
+    case "company":
+      return deal.company?.name ?? displayValue(deal.companyId);
+    case "stage":
+      return stageLabel(deal.stage);
+    case "owner":
+      return deal.owner?.name ?? displayValue(deal.ownerId);
+    case "amount":
+      return formatMinorAmount(deal.amountCents, deal.currency);
+    case "close-date":
+      return formatDate(deal.expectedCloseDate);
+    case "last-activity":
+      return formatDate(deal.lastActivityAt);
+    default: {
+      const fieldId = columnId.startsWith("field:")
+        ? columnId.slice("field:".length)
+        : "";
+      const definition = definitions.find((candidate) => candidate.id === fieldId);
+      return definition
+        ? customFieldDisplay(definition, deal.fields?.[definition.key])
+        : "—";
+    }
+  }
 }
 
 function isClosedStage(stage: DealStage): boolean {
@@ -695,6 +744,7 @@ export function DealsView({
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
+  const [tableDefinitions, setTableDefinitions] = useState<readonly FieldDefinition[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkOwnerId, setBulkOwnerId] = useState("");
   const [bulkStage, setBulkStage] = useState<DealStage>("DEMO_BOOKED");
@@ -723,6 +773,29 @@ export function DealsView({
   });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
+
+  const columnDefinitions = useMemo<readonly TableColumnPreference[]>(
+    () => [
+      ...DEAL_COLUMNS,
+      ...tableDefinitions
+        .filter(
+          (definition) =>
+            definition.showOnTable &&
+            definition.archived !== true &&
+            definition.archivedAt == null,
+        )
+        .map((definition) => ({
+          id: `field:${definition.id}`,
+          label: definition.label,
+          className: "min-w-36",
+        })),
+    ],
+    [tableDefinitions],
+  );
+  const columnPreferences = usePersistentColumnPreferences(
+    "crm:table-columns:deal",
+    columnDefinitions,
+  );
 
   const listInput = useMemo(
     () => createListInput(query, page, status, showArchived, sort, dir, filters),
@@ -773,6 +846,23 @@ export function DealsView({
       })
       .catch(() => {
         // Custom-field facets are optional; the standard facets remain usable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("fields_list", { entity: "DEAL", includeArchived: false })
+      .then((next) => {
+        if (active && Array.isArray(next)) {
+          setTableDefinitions(next as FieldDefinition[]);
+        }
+      })
+      .catch(() => {
+        // Table field definitions are optional; standard columns remain usable.
       });
     return () => {
       active = false;
@@ -1100,7 +1190,7 @@ export function DealsView({
             dir,
             archived: showArchived,
             filters: { ...filters, status: [status] },
-            columns: [],
+            columns: columnPreferences.visibleColumns.map((column) => column.id),
           }}
           onApplyFilters={(filters: SavedViewFilters) => {
             const savedStatus = filters.filters.status?.[0];
@@ -1122,24 +1212,30 @@ export function DealsView({
             if (savedStatus === "open" || savedStatus === "closed" || savedStatus === "all") {
               setStatus(savedStatus);
             }
+            if (filters.columns.length > 0) {
+              columnPreferences.apply(filters.columns);
+            }
             setPage(1);
           }}
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SearchField
-            label="Search deals"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(1);
-            }}
-            onClear={() => {
-              setQuery("");
-              setPage(1);
-            }}
-            placeholder="Search deals…"
-            containerClassName="w-full sm:w-80"
-          />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <SearchField
+              label="Search deals"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              onClear={() => {
+                setQuery("");
+                setPage(1);
+              }}
+              placeholder="Search deals…"
+              containerClassName="w-full sm:w-80"
+            />
+            <ColumnPreferences preference={columnPreferences} />
+          </div>
           <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span role="status" aria-live="polite">
               {list.total} {list.total === 1 ? "deal" : "deals"}
@@ -1408,7 +1504,7 @@ export function DealsView({
               ),
               className: "w-10 px-3",
             },
-            ...DEAL_COLUMNS,
+            ...columnPreferences.visibleColumns,
           ]}
           loading={listLoading}
           empty={
@@ -1477,23 +1573,34 @@ export function DealsView({
                     }}
                   />
                 </td>
-                <td className="px-3 py-3 font-medium">{deal.name}</td>
-              <td className="px-3 py-3 text-muted-foreground">
-                {deal.company?.name ?? displayValue(deal.companyId)}
-              </td>
-              <td className="px-3 py-3 text-muted-foreground">{stageLabel(deal.stage)}</td>
-              <td className="px-3 py-3 text-muted-foreground">
-                {deal.owner?.name ?? displayValue(deal.ownerId)}
-              </td>
-              <td className="px-3 py-3 text-right tabular-nums">
-                {formatMinorAmount(deal.amountCents, deal.currency)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
-                {formatDate(deal.expectedCloseDate)}
-              </td>
-              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
-                {formatDate(deal.lastActivityAt)}
-              </td>
+                {columnPreferences.visibleColumns.map((column) => (
+                  <td
+                    key={column.id}
+                    className={
+                      column.id === "deal"
+                        ? "px-3 py-3 font-medium"
+                        : column.id === "amount"
+                          ? "px-3 py-3 text-right tabular-nums"
+                          : column.id === "close-date" ||
+                              column.id === "last-activity" ||
+                              column.id.startsWith("field:")
+                            ? "whitespace-nowrap px-3 py-3 text-muted-foreground"
+                            : "px-3 py-3 text-muted-foreground"
+                    }
+                  >
+                    {column.id === "last-activity" && deal.lastActivityAt ? (
+                      <time dateTime={deal.lastActivityAt}>
+                        {dealColumnValue(deal, column.id, tableDefinitions)}
+                      </time>
+                    ) : column.id === "close-date" && deal.expectedCloseDate ? (
+                      <time dateTime={deal.expectedCloseDate}>
+                        {dealColumnValue(deal, column.id, tableDefinitions)}
+                      </time>
+                    ) : (
+                      dealColumnValue(deal, column.id, tableDefinitions)
+                    )}
+                  </td>
+                ))}
             </tr>
           ))}
         </TableShell>
@@ -1598,9 +1705,14 @@ export function DealsView({
                 title="Deal activity"
                 description="Notes, touchpoints, and follow-up work for this deal."
               />
-            ) : (
-              <StagedDealTab tab={recordTab} />
-            )}
+            ) : recordTab === "agent" ? (
+              <RecordAgentTab
+                rpc={rpc as unknown as RecordAgentRpcClient}
+                recordType="DEAL"
+                recordId={record.id}
+                recordLabel={record.name}
+              />
+            ) : null}
           </div>
         )}
       </RecordDrawer>

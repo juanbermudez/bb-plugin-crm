@@ -268,4 +268,41 @@ describe("AgentsView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Close record drawer" }));
     await waitFor(() => expect(onRecordIdChange).toHaveBeenCalledWith(null));
   });
+
+  it("resolves an approval request and retries a cancelled run", async () => {
+    let currentRun: AgentRunDetail = {
+      ...run,
+      status: "WAITING_FOR_APPROVAL",
+      approvalReason: "Write a follow-up note.",
+      approvalRequestedAt: "2026-08-25T09:20:00.000Z",
+    };
+    const retriedRun: AgentRunDetail = { ...run, id: "run_retry", status: "QUEUED" };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "agents_list") return [listItem];
+      if (method === "agents_get") return agent;
+      if (method === "agents_runs_list") return [currentRun];
+      if (method === "agents_runs_get") return currentRun;
+      if (method === "agents_runs_cancel") {
+        currentRun = { ...currentRun, status: "CANCELLED" };
+        return { ...currentRun, cancelled: true };
+      }
+      if (method === "agents_runs_retry") {
+        expect(input).toEqual({ id: run.id });
+        return retriedRun;
+      }
+      return [];
+    });
+    render(<AgentsView rpcClient={rpc} initialRecordId={agent.id} />);
+    const drawer = await screen.findByRole("dialog", { name: agent.name });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Run history" }));
+    await within(drawer).findByText("run_queued");
+    fireEvent.click(within(drawer).getByRole("button", { name: "View run" }));
+    fireEvent.click(await within(drawer).findByRole("button", { name: "Deny approval" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_runs_cancel", {
+      id: run.id,
+      reason: "Approval denied by user.",
+    }));
+    fireEvent.click(await within(drawer).findByRole("button", { name: "Retry run" }));
+    await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_runs_retry", { id: run.id }));
+  });
 });

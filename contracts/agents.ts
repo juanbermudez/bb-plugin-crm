@@ -503,3 +503,21 @@ export const agentThreadListInputSchema = z
   })
   .strict();
 export const agentThreadGetInputSchema = z.object({ id: idSchema }).strict();
+
+/** Create a visible BB thread scoped to one CRM record. */
+export const agentThreadRecordCreateInputSchema = z
+  .object({
+    agentId: idSchema,
+    recordType: agentRecordTypeSchema,
+    recordId: idSchema,
+  })
+  .strict();
+export type AgentThreadRecordCreateInput = z.infer<
+  typeof agentThreadRecordCreateInputSchema
+>;
+
+/** Retry a terminal run with the same deployed agent version and input. */
+export const agentRunRetryInputSchema = z
+  .object({ id: idSchema, actorId: idSchema.optional() })
+  .strict();
+export type AgentRunRetryInput = z.infer<typeof agentRunRetryInputSchema>;

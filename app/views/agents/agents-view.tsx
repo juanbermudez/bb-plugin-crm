@@ -1102,12 +1102,14 @@ function RunDetailPanel({
       | "agents_runs_approve"
       | "agents_runs_success"
       | "agents_runs_fail"
-      | "agents_runs_cancel",
+      | "agents_runs_cancel"
+      | "agents_runs_retry",
+    input: unknown = { id: run.id },
   ) => {
     setBusy(method);
     setError(null);
     try {
-      const next = await rawRpc(rpc).call(method, { id: run.id });
+      const next = await rawRpc(rpc).call(method, input);
       if (isRecord(next) && typeof next.id === "string") onChanged(next as unknown as AgentRunDetail);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -1138,9 +1140,14 @@ function RunDetailPanel({
           </Button>
         ) : null}
         {run.status === "WAITING_FOR_APPROVAL" ? (
-          <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={() => void transition("agents_runs_approve")}>
-            {busy === "agents_runs_approve" ? "Approving…" : "Approve test run"}
-          </Button>
+          <>
+            <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={() => void transition("agents_runs_approve")}>
+              {busy === "agents_runs_approve" ? "Approving…" : "Approve run"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={busy !== null} onClick={() => void transition("agents_runs_cancel", { id: run.id, reason: "Approval denied by user." })}>
+              {busy === "agents_runs_cancel" ? "Denying…" : "Deny approval"}
+            </Button>
+          </>
         ) : null}
         {run.status === "RUNNING" ? (
           <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={() => void transition("agents_runs_success")}>
@@ -1157,14 +1164,22 @@ function RunDetailPanel({
             </Button>
           </>
         ) : null}
+        {run.status === "FAILED" || run.status === "CANCELLED" ? (
+          <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={() => void transition("agents_runs_retry")}>
+            {busy === "agents_runs_retry" ? "Retrying…" : "Retry run"}
+          </Button>
+        ) : null}
       </div>
-      <p className="text-xs text-muted-foreground">These controls update persisted run state for testing and QA. They do not dispatch a BB worker.</p>
+      <p className="text-xs text-muted-foreground">Run state and approval decisions are persisted by the CRM. Cancellation also requests cleanup of a linked BB worker when one exists.</p>
       <InlineError message={error} />
       <dl className="grid gap-3 text-xs sm:grid-cols-2">
         <div><dt className="text-muted-foreground">Version</dt><dd className="mt-1 break-all font-mono">{run.versionId}</dd></div>
         <div><dt className="text-muted-foreground">Correlation ID</dt><dd className="mt-1 break-all font-mono">{run.correlationId}</dd></div>
         <div><dt className="text-muted-foreground">Started</dt><dd className="mt-1">{formatDate(run.startedAt)}</dd></div>
         <div><dt className="text-muted-foreground">Finished</dt><dd className="mt-1">{formatDate(run.finishedAt)}</dd></div>
+        {run.approvalReason ? <div className="sm:col-span-2"><dt className="text-muted-foreground">Approval request</dt><dd className="mt-1 whitespace-pre-wrap">{run.approvalReason}</dd></div> : null}
+        {run.cancelRequestedAt ? <div><dt className="text-muted-foreground">Cancellation requested</dt><dd className="mt-1">{formatDate(run.cancelRequestedAt)}</dd></div> : null}
+        {run.cancelDeliveredAt ? <div><dt className="text-muted-foreground">Cancellation delivered</dt><dd className="mt-1">{formatDate(run.cancelDeliveredAt)}</dd></div> : null}
         {run.errorMessage ? <div className="sm:col-span-2"><dt className="text-muted-foreground">Error</dt><dd className="mt-1 text-destructive">{run.errorCode ? `${run.errorCode}: ` : ""}{run.errorMessage}</dd></div> : null}
         {run.summary ? <div className="sm:col-span-2"><dt className="text-muted-foreground">Summary</dt><dd className="mt-1 whitespace-pre-wrap">{run.summary}</dd></div> : null}
       </dl>

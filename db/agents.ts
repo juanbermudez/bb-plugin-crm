@@ -2050,6 +2050,31 @@ export class AgentStore {
     })();
   }
 
+  /**
+   * Queue a fresh manual run from a terminal run. The original run remains
+   * immutable in history; its deployed version and JSON input are carried
+   * forward so a retry is auditable and cannot silently pick up new input.
+   */
+  retryRun(id: string, actorId?: string): AgentRunDetail {
+    const run = this.getRunRequired(id);
+    if (run.status !== "FAILED" && run.status !== "CANCELLED") {
+      throw statusError("agent run", run.id, run.status, "RETRY");
+    }
+    return this.queueRun(
+      run.agentId,
+      {
+        versionId: run.versionId,
+        triggerType: "MANUAL",
+        initiatedById: actorId ?? run.initiatedById,
+        principalId: run.principalId,
+        sessionId: run.sessionId,
+        input: run.input,
+        modelId: run.modelId,
+      },
+      actorId,
+    );
+  }
+
   getRun(id: string): AgentRunDetail | null {
     const runId = identifier(id, "Agent run id");
     const row = this.db.prepare(`${RUN_SELECT} WHERE id = ?`).get(runId);
@@ -2740,6 +2765,10 @@ export function enableAgentTrigger(db: Db, id: string, enabled = true, actorId?:
 
 export function queueAgentRun(db: Db, agentIdOrInput: string | AgentRunQueueInput, inputOrActor?: AgentRunQueueInput | string, actorId?: string): AgentRunDetail {
   return new AgentStore(db).queueRun(agentIdOrInput, inputOrActor, actorId);
+}
+
+export function retryAgentRun(db: Db, id: string, actorId?: string): AgentRunDetail {
+  return new AgentStore(db).retryRun(id, actorId);
 }
 
 export function getAgentRun(db: Db, id: string): AgentRunDetail | null {

@@ -209,6 +209,40 @@ describe("CRM agent workspace persistence", () => {
     }
   });
 
+  it("queues an auditable retry from a failed or cancelled terminal run", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const store = new AgentStore(db);
+      const agent = store.create({ id: "agent_retry", name: "Retry test" });
+      const version = store.createVersion(agent.id, { instructions: "run" });
+      store.validateVersion(version.id);
+      store.deploy(agent.id, version.id);
+
+      const failed = store.queueRun(agent.id, {
+        id: "run_failed_for_retry",
+        input: { recordId: "contact_1" },
+        idempotencyKey: "retry-source-1",
+      });
+      store.startRun(failed.id);
+      store.failRun(failed.id, { errorMessage: "temporary provider failure" });
+      const retried = store.retryRun(failed.id, "user_retry");
+
+      expect(retried).toMatchObject({
+        status: "QUEUED",
+        agentId: agent.id,
+        versionId: version.id,
+        input: { recordId: "contact_1" },
+        triggerType: "MANUAL",
+        initiatedById: "user_retry",
+      });
+      expect(retried.id).not.toBe(failed.id);
+      expect(store.getRunRequired(failed.id).status).toBe("FAILED");
+      expect(() => store.retryRun(retried.id)).toThrow("from QUEUED to RETRY");
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
   it("cascades child persistence when an agent is explicitly purged", async () => {
     const { db, lifecycle } = withDatabase();
     try {

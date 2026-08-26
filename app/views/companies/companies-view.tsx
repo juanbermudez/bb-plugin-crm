@@ -5,16 +5,21 @@ import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
   EmptyState,
+  ColumnPreferences,
   PageHeader,
   RecordDrawer,
   SearchField,
   TableShell,
+  usePersistentColumnPreferences,
+  type TableColumnPreference,
 } from "../../components/index.js";
 import type {
   Company,
   CompanyCreateInput,
   CompanyListInput,
   CompanyListOutput,
+  Contact,
+  Deal,
   FieldDefinition,
   SavedViewFilters,
   SortDirection,
@@ -23,6 +28,7 @@ import { useCompaniesRpc, type CompaniesRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar, type SavedViewsRpcClient } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
+import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
 import {
   customFieldFacets,
   facetOptionsFromCounts,
@@ -67,7 +73,7 @@ const COMPANY_TABS: ReadonlyArray<{ id: CompanyTab; label: string }> = [
 ];
 
 const COMPANY_COLUMNS = [
-  { id: "company", label: "Company", className: "min-w-52" },
+  { id: "company", label: "Company", className: "min-w-52", required: true },
   { id: "domain", label: "Domain", className: "min-w-40" },
   { id: "industry", label: "Industry", className: "min-w-36" },
   { id: "owner", label: "Owner", className: "min-w-32" },
@@ -97,6 +103,51 @@ function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
 }
 
+function customFieldDisplay(
+  definition: FieldDefinition,
+  value: unknown,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (definition.type === "CHECKBOX") return value === true ? "Yes" : "No";
+  if (definition.type === "SELECT") {
+    const option = definition.options.find((candidate) => candidate.id === value);
+    return option?.label ?? String(value);
+  }
+  return String(value);
+}
+
+function companyColumnValue(
+  company: Company,
+  columnId: string,
+  definitions: readonly FieldDefinition[],
+): string {
+  switch (columnId) {
+    case "company":
+      return company.name;
+    case "domain":
+      return displayValue(company.domain);
+    case "industry":
+      return displayValue(company.industry);
+    case "owner":
+      return company.owner?.name ?? displayValue(company.ownerId);
+    case "contacts":
+      return String(company.contactCount ?? 0);
+    case "open-deals":
+      return String(company.openDealCount ?? 0);
+    case "last-activity":
+      return formatDate(company.lastActivityAt);
+    default: {
+      const fieldId = columnId.startsWith("field:")
+        ? columnId.slice("field:".length)
+        : "";
+      const definition = definitions.find((candidate) => candidate.id === fieldId);
+      return definition
+        ? customFieldDisplay(definition, company.fields?.[definition.key])
+        : "—";
+    }
+  }
+}
+
 function facetValueLabel(value: string): string {
   if (value === "unassigned") return "Unassigned";
   if (!value.includes("_") && !value.includes("-") && value !== value.toUpperCase()) {
@@ -115,6 +166,39 @@ function isCompany(value: unknown): value is Company {
     value !== null &&
     "id" in value &&
     "name" in value
+  );
+}
+
+type NestedCompanyRecord =
+  | { kind: "contact"; id: string; value: Contact | null }
+  | { kind: "deal"; id: string; value: Deal | null };
+
+function contactName(contact: Pick<Contact, "firstName" | "lastName">): string {
+  return [contact.firstName, contact.lastName]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .join(" ") || "Contact";
+}
+
+function isContact(value: unknown): value is Contact {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "firstName" in value &&
+    typeof value.firstName === "string"
+  );
+}
+
+function isDeal(value: unknown): value is Deal {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "name" in value &&
+    typeof value.name === "string"
   );
 }
 
@@ -262,6 +346,9 @@ function CompanyOverview({
   onRestore,
   onPurge,
 }: CompanyOverviewProps) {
+  const primaryContact = company.contacts?.find(
+    (contact) => contact.id === company.primaryContactId,
+  );
   return (
     <div className="space-y-6">
       <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
@@ -277,6 +364,16 @@ function CompanyOverview({
           <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
           <dd className="mt-1 text-sm">
             {company.owner?.name ?? displayValue(company.ownerId)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Primary contact</dt>
+          <dd className="mt-1 text-sm">
+            {company.primaryContactId ? (
+              primaryContact ? contactName(primaryContact) : company.primaryContactId
+            ) : (
+              "Not set"
+            )}
           </dd>
         </div>
         <div>
@@ -359,7 +456,19 @@ function CompanyOverview({
   );
 }
 
-function CompanyContacts({ company }: { company: Company }) {
+interface CompanyContactsProps {
+  company: Company;
+  busy?: boolean;
+  onOpenContact?: (id: string) => void;
+  onSetPrimary?: (id: string | null) => void;
+}
+
+function CompanyContacts({
+  company,
+  busy = false,
+  onOpenContact,
+  onSetPrimary,
+}: CompanyContactsProps) {
   const contacts = company.contacts ?? [];
   if (contacts.length === 0) {
     return (
@@ -373,24 +482,56 @@ function CompanyContacts({ company }: { company: Company }) {
   }
   return (
     <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company contacts">
-      {contacts.map((contact) => (
-        <li key={contact.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div>
-            <p className="text-sm font-medium">
-              {[contact.firstName, contact.lastName].filter(Boolean).join(" ")}
-            </p>
-            <p className="text-xs text-muted-foreground">{displayValue(contact.title)}</p>
-          </div>
-          <p className="text-sm text-muted-foreground sm:text-right">
-            {displayValue(contact.email)}
-          </p>
+      {contacts.map((contact) => {
+        const name = contactName(contact);
+        const isPrimary = contact.id === company.primaryContactId;
+        return (
+          <li
+            key={contact.id}
+            className="flex min-w-0 items-center gap-2 px-3 py-2.5"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label={
+                isPrimary
+                  ? `Clear primary contact: ${name}`
+                  : `Make ${name} primary contact`
+              }
+              aria-pressed={isPrimary}
+              disabled={busy || onSetPrimary === undefined}
+              onClick={() => onSetPrimary?.(isPrimary ? null : contact.id)}
+            >
+              <Icon name="Star" aria-hidden="true" className={isPrimary ? "fill-current" : undefined} />
+            </Button>
+            <button
+              type="button"
+              className="min-w-0 flex-1 rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
+              onClick={() => onOpenContact?.(contact.id)}
+              disabled={onOpenContact === undefined}
+              aria-label={`Open ${name}`}
+            >
+              <span className="block truncate text-sm font-medium">{name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {displayValue(contact.title)} · {displayValue(contact.email)}
+              </span>
+            </button>
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }
 
-function CompanyDeals({ company }: { company: Company }) {
+function CompanyDeals({
+  company,
+  onOpenDeal,
+}: {
+  company: Company;
+  onOpenDeal?: (id: string) => void;
+}) {
   const deals = company.deals ?? [];
   if (deals.length === 0) {
     return (
@@ -405,9 +546,17 @@ function CompanyDeals({ company }: { company: Company }) {
   return (
     <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company deals">
       {deals.map((deal) => (
-        <li key={deal.id} className="px-4 py-3">
-          <p className="text-sm font-medium">{deal.name}</p>
-          <p className="text-xs text-muted-foreground">{deal.id}</p>
+        <li key={deal.id} className="px-3 py-2.5">
+          <button
+            type="button"
+            className="w-full rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
+            onClick={() => onOpenDeal?.(deal.id)}
+            disabled={onOpenDeal === undefined}
+            aria-label={`Open ${deal.name}`}
+          >
+            <span className="block truncate text-sm font-medium">{deal.name}</span>
+            <span className="block truncate text-xs text-muted-foreground">{deal.id}</span>
+          </button>
         </li>
       ))}
     </ul>
@@ -423,6 +572,103 @@ function StagedCompanyTab({ tab }: { tab: "agent" }) {
       description={`The ${label.toLowerCase()} workspace keeps its source layout and will be connected in the next CRM parity slice.`}
       className="min-h-56 border-0 bg-transparent"
     />
+  );
+}
+
+function NestedCompanyRecordContent({
+  item,
+  onOpenDeal,
+}: {
+  item: NestedCompanyRecord;
+  onOpenDeal: (id: string) => void;
+}) {
+  if (item.value === null) return null;
+  if (item.kind === "contact") {
+    const contact = item.value;
+    return (
+      <div className="space-y-5">
+        <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground">Email</dt>
+            <dd className="mt-1 break-words text-sm">{displayValue(contact.email)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground">Phone</dt>
+            <dd className="mt-1 text-sm">{displayValue(contact.phone)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground">Title</dt>
+            <dd className="mt-1 text-sm">{displayValue(contact.title)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground">Company</dt>
+            <dd className="mt-1 text-sm">{contact.company?.name ?? displayValue(contact.companyId)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
+            <dd className="mt-1 text-sm">{contact.owner?.name ?? displayValue(contact.ownerId)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground">Status</dt>
+            <dd className="mt-1 text-sm">{contact.archivedAt ? "Archived" : "Active"}</dd>
+          </div>
+        </dl>
+        {contact.companyId ? (
+          <p className="border-t border-border pt-4 text-sm text-muted-foreground">
+            This contact is shown in the company record stack. Use Back to return to the company.
+          </p>
+        ) : null}
+        {contact.deals && contact.deals.length > 0 ? (
+          <section className="space-y-2 border-t border-border pt-4">
+            <h3 className="text-sm font-medium">Deals</h3>
+            <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Nested contact deals">
+              {contact.deals.map((deal) => (
+                <li key={deal.id} className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    className="w-full rounded px-1 py-1 text-left text-sm font-medium outline-none hover:bg-state-hover focus-visible:bg-state-hover"
+                    onClick={() => onOpenDeal(deal.id)}
+                  >
+                    {deal.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </div>
+    );
+  }
+  const deal = item.value;
+  return (
+    <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+      <div>
+        <dt className="text-xs font-medium text-muted-foreground">Company</dt>
+        <dd className="mt-1 text-sm">{deal.company?.name ?? displayValue(deal.companyId)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-medium text-muted-foreground">Stage</dt>
+        <dd className="mt-1 text-sm">{displayValue(deal.stage)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
+        <dd className="mt-1 text-sm">{deal.owner?.name ?? displayValue(deal.ownerId)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-medium text-muted-foreground">Close date</dt>
+        <dd className="mt-1 text-sm">{formatDate(deal.expectedCloseDate)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs font-medium text-muted-foreground">Amount</dt>
+        <dd className="mt-1 text-sm">
+          {deal.amountCents == null ? "—" : `${deal.amountCents.toLocaleString()} ${deal.currency}`}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-xs font-medium text-muted-foreground">Status</dt>
+        <dd className="mt-1 text-sm">{deal.archivedAt ? "Archived" : "Active"}</dd>
+      </div>
+    </dl>
   );
 }
 
@@ -455,6 +701,7 @@ export function CompaniesView({
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
+  const [tableDefinitions, setTableDefinitions] = useState<readonly FieldDefinition[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkOwnerId, setBulkOwnerId] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -469,6 +716,9 @@ export function CompaniesView({
   const [recordTab, setRecordTab] = useState<CompanyTab>("overview");
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [nestedStack, setNestedStack] = useState<NestedCompanyRecord[]>([]);
+  const [nestedLoading, setNestedLoading] = useState(false);
+  const [nestedError, setNestedError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createValue, setCreateValue] = useState<CompanyCreateInput>({
     name: "",
@@ -477,6 +727,29 @@ export function CompaniesView({
   });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
+
+  const columnDefinitions = useMemo<readonly TableColumnPreference[]>(
+    () => [
+      ...COMPANY_COLUMNS,
+      ...tableDefinitions
+        .filter(
+          (definition) =>
+            definition.showOnTable &&
+            definition.archived !== true &&
+            definition.archivedAt == null,
+        )
+        .map((definition) => ({
+          id: `field:${definition.id}`,
+          label: definition.label,
+          className: "min-w-36",
+        })),
+    ],
+    [tableDefinitions],
+  );
+  const columnPreferences = usePersistentColumnPreferences(
+    "crm:table-columns:company",
+    columnDefinitions,
+  );
 
   const listInput = useMemo(
     () => createListInput(query, page, showArchived, sort, dir, filters),
@@ -534,6 +807,23 @@ export function CompaniesView({
   }, [rpc]);
 
   useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("fields_list", { entity: "COMPANY", includeArchived: false })
+      .then((next) => {
+        if (active && Array.isArray(next)) {
+          setTableDefinitions(next as FieldDefinition[]);
+        }
+      })
+      .catch(() => {
+        // Table field definitions are optional; standard columns remain usable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc]);
+
+  useEffect(() => {
     setSelectedIds([]);
   }, [listInput]);
 
@@ -564,10 +854,62 @@ export function CompaniesView({
     };
   }, [recordId, recordRefreshKey, rpc]);
 
+  const nestedTop = nestedStack[nestedStack.length - 1] ?? null;
+  const nestedKind = nestedTop?.kind ?? null;
+  const nestedId = nestedTop?.id ?? null;
+
+  useEffect(() => {
+    if (nestedKind === null || nestedId === null) {
+      setNestedLoading(false);
+      setNestedError(null);
+      return;
+    }
+    let active = true;
+    setNestedLoading(true);
+    setNestedError(null);
+    const method = nestedKind === "contact" ? "contacts_get" : "deals_get";
+    void listRpc(rpc)
+      .call(method, { id: nestedId })
+      .then((next) => {
+        if (!active) return;
+        const value =
+          nestedKind === "contact"
+            ? isContact(next)
+              ? next
+              : null
+            : isDeal(next)
+              ? next
+              : null;
+        if (value === null) {
+          setNestedError(`Could not load ${nestedKind}.`);
+          return;
+        }
+        setNestedStack((current) => {
+          const index = current.findIndex(
+            (item) => item.kind === nestedKind && item.id === nestedId,
+          );
+          if (index < 0) return current;
+          const nextStack = [...current];
+          nextStack[index] = { ...nextStack[index]!, value } as NestedCompanyRecord;
+          return nextStack;
+        });
+      })
+      .catch((cause: unknown) => {
+        if (active) setNestedError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (active) setNestedLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [nestedId, nestedKind, rpc]);
+
   const closeRecord = useCallback(() => {
     setRecordId(null);
     onRecordIdChange?.(null);
     setRecord(null);
+    setNestedStack([]);
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
@@ -658,8 +1000,48 @@ export function CompaniesView({
   const openRecord = useCallback((id: string) => {
     setRecord(id === recordId ? record : null);
     setRecordId(id);
+    setNestedStack([]);
     onRecordIdChange?.(id);
   }, [onRecordIdChange, record, recordId]);
+
+  const openNestedRecord = useCallback(
+    (kind: NestedCompanyRecord["kind"], id: string) => {
+      setNestedError(null);
+      setNestedStack((current) => [
+        ...current,
+        { kind, id, value: null } as NestedCompanyRecord,
+      ]);
+    },
+    [],
+  );
+
+  const popNestedRecord = useCallback(() => {
+    setNestedStack((current) => current.slice(0, -1));
+    setNestedError(null);
+  }, []);
+
+  const setPrimaryContact = useCallback(
+    async (contactId: string | null) => {
+      if (record === null) return;
+      setMutationBusy(true);
+      setMutationError(null);
+      try {
+        const result = await rpc.call("companies_update", {
+          id: record.id,
+          data: { primaryContactId: contactId },
+        });
+        setRecord(
+          isCompany(result) ? result : { ...record, primaryContactId: contactId },
+        );
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setMutationError(errorMessage(cause));
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [record, rpc],
+  );
 
   const runBulk = useCallback(
     async (method: string, input: unknown, successMessage: string) => {
@@ -799,7 +1181,7 @@ export function CompaniesView({
             dir,
             archived: showArchived,
             filters,
-            columns: [],
+            columns: columnPreferences.visibleColumns.map((column) => column.id),
           }}
           onApplyFilters={(filters: SavedViewFilters) => {
             setQuery(filters.q);
@@ -811,24 +1193,30 @@ export function CompaniesView({
             setDir(filters.dir);
             setFilters(cleanFilters(filters.filters));
             setShowArchived(filters.archived);
+            if (filters.columns.length > 0) {
+              columnPreferences.apply(filters.columns);
+            }
             setPage(1);
           }}
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SearchField
-            label="Search companies"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(1);
-            }}
-            onClear={() => {
-              setQuery("");
-              setPage(1);
-            }}
-            placeholder="Search companies…"
-            containerClassName="w-full sm:w-80"
-          />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <SearchField
+              label="Search companies"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              onClear={() => {
+                setQuery("");
+                setPage(1);
+              }}
+              placeholder="Search companies…"
+              containerClassName="w-full sm:w-80"
+            />
+            <ColumnPreferences preference={columnPreferences} />
+          </div>
           <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
             {list.total} {list.total === 1 ? "company" : "companies"}
             {showArchived ? " · archived" : ""}
@@ -1011,7 +1399,7 @@ export function CompaniesView({
               ),
               className: "w-10 px-3",
             },
-            ...COMPANY_COLUMNS,
+            ...columnPreferences.visibleColumns,
           ]}
           loading={listLoading}
           empty={
@@ -1080,31 +1468,28 @@ export function CompaniesView({
                   }}
                 />
               </td>
-              <td className="px-3 py-3 font-medium">{company.name}</td>
-              <td className="px-3 py-3 text-muted-foreground">
-                {displayValue(company.domain)}
-              </td>
-              <td className="px-3 py-3 text-muted-foreground">
-                {displayValue(company.industry)}
-              </td>
-              <td className="px-3 py-3 text-muted-foreground">
-                {company.owner?.name ?? displayValue(company.ownerId)}
-              </td>
-              <td className="px-3 py-3 text-right tabular-nums">
-                {company.contactCount ?? 0}
-              </td>
-              <td className="px-3 py-3 text-right tabular-nums">
-                {company.openDealCount ?? 0}
-              </td>
-              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
-                {company.lastActivityAt ? (
-                  <time dateTime={company.lastActivityAt}>
-                    {formatDate(company.lastActivityAt)}
-                  </time>
-                ) : (
-                  "—"
-                )}
-              </td>
+              {columnPreferences.visibleColumns.map((column) => (
+                <td
+                  key={column.id}
+                  className={
+                    column.id === "company"
+                      ? "px-3 py-3 font-medium"
+                      : column.id === "contacts" || column.id === "open-deals"
+                        ? "px-3 py-3 text-right tabular-nums"
+                        : column.id === "last-activity" || column.id.startsWith("field:")
+                          ? "whitespace-nowrap px-3 py-3 text-muted-foreground"
+                          : "px-3 py-3 text-muted-foreground"
+                  }
+                >
+                  {column.id === "last-activity" && company.lastActivityAt ? (
+                    <time dateTime={company.lastActivityAt}>
+                      {companyColumnValue(company, column.id, tableDefinitions)}
+                    </time>
+                  ) : (
+                    companyColumnValue(company, column.id, tableDefinitions)
+                  )}
+                </td>
+              ))}
             </tr>
           ))}
         </TableShell>
@@ -1197,20 +1582,85 @@ export function CompaniesView({
                 onPurge={() => void purgeRecord()}
               />
             ) : recordTab === "contacts" ? (
-              <CompanyContacts company={record} />
+              <CompanyContacts
+                company={record}
+                busy={mutationBusy}
+                onOpenContact={(id) => openNestedRecord("contact", id)}
+                onSetPrimary={(id) => void setPrimaryContact(id)}
+              />
             ) : recordTab === "deals" ? (
-              <CompanyDeals company={record} />
+              <CompanyDeals
+                company={record}
+                onOpenDeal={(id) => openNestedRecord("deal", id)}
+              />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
                 anchor={{ companyId: record.id }}
                 title="Company activity"
                 description="Notes, touchpoints, and follow-up work for this company."
               />
-            ) : (
-              <StagedCompanyTab tab={recordTab} />
-            )}
+            ) : recordTab === "agent" ? (
+              <RecordAgentTab
+                rpc={rpc as unknown as RecordAgentRpcClient}
+                recordType="COMPANY"
+                recordId={record.id}
+                recordLabel={record.name}
+              />
+            ) : null}
           </div>
         )}
+      </RecordDrawer>
+
+      <RecordDrawer
+        open={nestedTop !== null}
+        onOpenChange={(open) => {
+          if (!open) popNestedRecord();
+        }}
+        title={
+          nestedTop?.value === null || nestedTop === null
+            ? nestedTop?.kind === "contact"
+              ? "Contact"
+              : "Deal"
+            : nestedTop.kind === "contact"
+              ? contactName(nestedTop.value)
+              : nestedTop.value.name
+        }
+        description={
+          nestedTop?.kind === "contact"
+            ? nestedTop.value && isContact(nestedTop.value)
+              ? nestedTop.value.email ?? "Contact record"
+              : "Contact record"
+            : nestedTop?.value && isDeal(nestedTop.value)
+              ? `${nestedTop.value.stage} · Deal record`
+              : "Deal record"
+        }
+        actions={
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={nestedStack.length === 0}
+            onClick={popNestedRecord}
+          >
+            <Icon name="ChevronLeft" aria-hidden="true" />
+            Back
+          </Button>
+        }
+      >
+        {nestedLoading ? (
+          <div className="flex min-h-56 items-center justify-center" role="status">
+            Loading {nestedTop?.kind ?? "record"}…
+          </div>
+        ) : nestedError !== null ? (
+          <EmptyState title="Could not load record" description={nestedError} />
+        ) : nestedTop?.value === null ? (
+          <EmptyState title="Record not found" />
+        ) : nestedTop ? (
+          <NestedCompanyRecordContent
+            item={nestedTop}
+            onOpenDeal={(id) => openNestedRecord("deal", id)}
+          />
+        ) : null}
       </RecordDrawer>
 
       <RecordDrawer
