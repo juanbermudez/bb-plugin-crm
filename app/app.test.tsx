@@ -71,4 +71,52 @@ describe("CRM nav panel", () => {
 
     slot.lifecycle.unmount();
   });
+
+  it("renders the Agents workspace from the BB route", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const panel = app.navPanels[0]!;
+    const slot = renderSlot(
+      panel,
+      { subPath: "agents" },
+      {
+        rpc: {
+          agents_list: () => [
+            {
+              id: "agent_research",
+              name: "Renewal researcher",
+              description: "Find renewal risk.",
+              status: "LIVE",
+              createdById: "bb-user-local",
+              currentVersionId: "version_1",
+              archivedAt: null,
+              deletedAt: null,
+              createdAt: "2026-08-25T08:00:00.000Z",
+              updatedAt: "2026-08-25T09:00:00.000Z",
+              runCount: 2,
+              currentVersion: {
+                id: "version_1",
+                number: 1,
+                status: "DEPLOYED",
+                deployedAt: "2026-08-25T09:00:00.000Z",
+              },
+            },
+          ],
+        },
+      },
+    );
+
+    await slot.findByText("Renewal researcher");
+    expect(slot.getByRole("heading", { name: "Agents" })).toBeDefined();
+    expect(slot.inspection.rpcCalls).toContainEqual({
+      method: "agents_list",
+      input: {
+        search: "",
+        includeArchived: false,
+        archivedOnly: false,
+        limit: 100,
+        offset: 0,
+      },
+    });
+    slot.lifecycle.unmount();
+  });
 });

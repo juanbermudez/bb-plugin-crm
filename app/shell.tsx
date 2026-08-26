@@ -15,6 +15,7 @@ import { ContactsView } from "./views/contacts/index.js";
 import { DealsView } from "./views/deals/index.js";
 import { DashboardView } from "./views/dashboard/index.js";
 import { SettingsView, type SettingsSection } from "./views/settings/index.js";
+import { AgentsView } from "./views/agents/index.js";
 
 const NAV_ITEMS: ReadonlyArray<{
   kind: CrmRouteKind;
@@ -107,6 +108,15 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
             onSectionChange={(section: SettingsSection) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "settings", recordId: section }),
+              });
+            }}
+          />
+        ) : route.kind === "agents" ? (
+          <AgentsView
+            initialRecordId={route.recordId}
+            onRecordIdChange={(recordId) => {
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({ kind: "agents", recordId }),
               });
             }}
           />
