@@ -126,7 +126,6 @@ export function WorkspaceSettingsView({ rpcClient }: WorkspaceSettingsViewProps)
                 placeholder="Optional: what the company does, how it makes money, and who it serves."
                 maxLength={320}
                 disabled={loading || saving}
-                required
               />
               <span className="block text-xs font-normal text-muted-foreground">
                 Optional. If supplied, use two or three factual sentences (at least 40 characters).

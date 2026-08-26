@@ -68,4 +68,41 @@ describe("WorkspaceSettingsView", () => {
     });
     expect(await screen.findByText("Workspace profile saved.")).toBeDefined();
   });
+
+  it("allows the source workspace form to save a website without a profile", async () => {
+    const call = vi.fn(async (method: string, input?: unknown) => {
+      if (method === "workspace_identity_get") {
+        return { workspaceName: "Acme CRM", website: null, profile: null };
+      }
+      if (method === "workspace_identity_update") {
+        return {
+          workspaceName: "Acme CRM",
+          website: "https://acme.example",
+          profile: null,
+          ...(input as object),
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+    render(
+      <WorkspaceSettingsView
+        rpcClient={{ call } as unknown as WorkspaceRpcClient}
+      />,
+    );
+
+    const website = await screen.findByPlaceholderText("acme.com");
+    const profile = screen.getByPlaceholderText(
+      "Optional: what the company does, how it makes money, and who it serves.",
+    );
+    expect(profile.hasAttribute("required")).toBe(false);
+    fireEvent.change(website, { target: { value: "acme.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save workspace" }));
+
+    await waitFor(() => {
+      expect(call).toHaveBeenCalledWith("workspace_identity_update", expect.objectContaining({
+        website: "acme.example",
+        narrative: "",
+      }));
+    });
+  });
 });
