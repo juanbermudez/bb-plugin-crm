@@ -420,7 +420,9 @@ export class ExchangeRateStore {
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
     params.push(listLimit(options.limit, "Exchange-rate audit list limit"));
     return this.db
-      .prepare(`${AUDIT_SELECT}${where} ORDER BY recorded_at DESC, id DESC LIMIT ?`)
+      // Several writes can share the same millisecond. SQLite rowid preserves
+      // insertion order, while the random audit id does not.
+      .prepare(`${AUDIT_SELECT}${where} ORDER BY recorded_at DESC, rowid DESC LIMIT ?`)
       .all(...params)
       .map(parseAudit);
   }
