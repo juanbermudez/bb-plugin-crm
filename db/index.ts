@@ -6,6 +6,7 @@ export * from "./deals.js";
 export * from "./evidence.js";
 export * from "./activities.js";
 export * from "./saved-views.js";
+export * from "./custom-fields.js";
 export {
   CURRENCIES,
   CURRENCY_CODES,
