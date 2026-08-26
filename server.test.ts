@@ -41,6 +41,63 @@ describe("CRM plugin foundation", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("registers native CRM agent tools for search, records, fields, and activity", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    expect(harness.registrations.agentTools.map((tool) => tool.name)).toEqual([
+      "crm_search",
+      "crm_get_record",
+      "crm_create_record",
+      "crm_update_record",
+      "crm_add_activity",
+      "crm_list_tasks",
+      "crm_set_field",
+    ]);
+
+    const created = JSON.parse(String(await harness.callAgentTool(
+      "crm_create_record",
+      { entity: "company", data: { name: "Agent Tool Co", domain: "agent.example" } },
+    ))) as { id: string };
+    const search = JSON.parse(String(await harness.callAgentTool(
+      "crm_search",
+      { query: "agent.example" },
+    ))) as { companies: Array<{ id: string }> };
+    expect(search.companies).toEqual([expect.objectContaining({ id: created.id })]);
+    await expect(harness.callAgentTool("crm_update_record", {
+      entity: "company",
+      id: created.id,
+      data: { industry: "Software" },
+    })).resolves.toContain("Software");
+
+    const field = (await harness.behavior.callRpc("fields_create", {
+      entity: "COMPANY",
+      label: "Account note",
+      type: "TEXT",
+    })) as { key: string };
+    await expect(harness.callAgentTool("crm_set_field", {
+      entity: "COMPANY",
+      recordId: created.id,
+      key: field.key,
+      value: "Agent maintained",
+    })).resolves.toContain("Agent maintained");
+    await expect(harness.callAgentTool("crm_get_record", {
+      entity: "company",
+      id: created.id,
+    })).resolves.toContain("Agent maintained");
+
+    await harness.callAgentTool("crm_add_activity", {
+      type: "TASK",
+      companyId: created.id,
+      subject: "Agent follow-up",
+      dueAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    await expect(harness.callAgentTool("crm_list_tasks", {
+      window: "all",
+    })).resolves.toContain("Agent follow-up");
+
+    await harness.lifecycle.dispose();
+  });
+
   it("persists the typed company RPC lifecycle and publishes changes", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
     await plugin(bb);

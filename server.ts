@@ -1,6 +1,17 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import {
+  activityCreateInputSchema,
+  companyCreateInputSchema,
+  companyUpdateDataSchema,
+  contactCreateInputSchema,
+  contactUpdateDataSchema,
   currencyCodeSchema,
+  dealCreateInputSchema,
+  dealUpdateDataSchema,
+  fieldEntitySchema,
+  fieldValueSchema,
+  idSchema,
   type ActivityEntry as ActivityOutput,
   type DashboardSummaryOutput,
   type CurrencyCode,
@@ -1139,6 +1150,244 @@ export default async function plugin(bb: BbPluginApi) {
       return result;
     },
   });
+
+  const agentToolNames = [
+    "crm_search",
+    "crm_get_record",
+    "crm_create_record",
+    "crm_update_record",
+    "crm_add_activity",
+    "crm_list_tasks",
+    "crm_set_field",
+  ] as const;
+  const toolRecordEntity = z.enum(["company", "contact", "deal"]);
+  const {
+    createdById: _activityCreatedById,
+    meta: _activityMeta,
+    ...activityToolShape
+  } = activityCreateInputSchema.shape;
+  const activityToolInputSchema = z
+    .object(activityToolShape)
+    .strict()
+    .refine(
+      (value) => value.companyId || value.contactId || value.dealId,
+      "An activity has to be about a company, a contact, or a deal.",
+    )
+    .refine(
+      (value) => value.type !== "TASK" || Boolean(value.subject),
+      "A task needs a subject.",
+    );
+
+  bb.agents.registerTool({
+    name: "crm_search",
+    description:
+      "Search CRM companies, contacts, and deals before creating or changing a record.",
+    instructions:
+      "Search first. Use the returned record IDs for focused reads and writes; do not infer identity from a similar name.",
+    parameters: z.object({
+      query: z.string().trim().min(1),
+      entity: z.enum(["all", "company", "contact", "deal"]).default("all"),
+      limit: z.number().int().min(1).max(25).default(10),
+    }),
+    execute({ query, entity, limit }) {
+      const result: Record<string, unknown[]> = {};
+      if (entity === "all" || entity === "company") {
+        result.companies = companies.list({ search: query, limit }).map((row) => ({
+          id: row.id,
+          name: row.name,
+          domain: row.domain,
+          ownerId: row.ownerId,
+          archivedAt: row.archivedAt,
+        }));
+      }
+      if (entity === "all" || entity === "contact") {
+        result.contacts = contacts.list({ search: query, limit }).map((row) => ({
+          id: row.id,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          companyId: row.companyId,
+          ownerId: row.ownerId,
+          archivedAt: row.archivedAt,
+        }));
+      }
+      if (entity === "all" || entity === "deal") {
+        result.deals = deals.list({ search: query, limit }).map((row) => ({
+          id: row.id,
+          name: row.name,
+          companyId: row.companyId,
+          ownerId: row.ownerId,
+          stage: row.stage,
+          amountCents: row.amountCents,
+          currency: row.currency,
+          archivedAt: row.archivedAt,
+        }));
+      }
+      return JSON.stringify(result);
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_get_record",
+    description:
+      "Read one CRM company, contact, or deal with its fields and related records.",
+    parameters: z.object({ entity: toolRecordEntity, id: idSchema }),
+    execute({ entity, id }) {
+      const record = entity === "company"
+        ? companyOutput(companies.getRequired(id), true)
+        : entity === "contact"
+          ? contactOutput(contacts.getRequired(id))
+          : dealOutput(deals.getRequired(id));
+      return JSON.stringify(record);
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_create_record",
+    description:
+      "Create a CRM company, contact, or deal after a search confirms it is not a duplicate.",
+    instructions:
+      "Call crm_search first. Never invent an owner, employer, company link, deal amount, or currency.",
+    parameters: z.discriminatedUnion("entity", [
+      z.object({ entity: z.literal("company"), data: companyCreateInputSchema }),
+      z.object({ entity: z.literal("contact"), data: contactCreateInputSchema }),
+      z.object({ entity: z.literal("deal"), data: dealCreateInputSchema }),
+    ]),
+    async execute(input) {
+      if (input.entity === "company") {
+        const record = companies.create(input.data);
+        changed("company", "created", record.id);
+        return JSON.stringify(companyOutput(record, true));
+      }
+      if (input.entity === "contact") {
+        const record = contacts.create(input.data);
+        changed("contact", "created", record.id);
+        return JSON.stringify(contactOutput(record));
+      }
+      const configured = currencyCodeSchema.parse((await settings.get()).reportingCurrency);
+      const sourceCurrency = input.data.currency ?? configured;
+      const conversion = input.data.amountCents == null
+        ? null
+        : currency.convert(input.data.amountCents, sourceCurrency, configured);
+      const record = deals.create({
+        ...input.data,
+        currency: sourceCurrency,
+        baseAmountCents: conversion?.baseAmountCents ?? null,
+        baseCurrency: conversion?.baseCurrency ?? null,
+        fxRate: conversion?.fxRate ?? null,
+        fxRateAt: conversion?.fxRateAt ?? null,
+      });
+      changed("deal", "created", record.id);
+      return JSON.stringify(dealOutput(record));
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_update_record",
+    description:
+      "Apply a validated partial update to one CRM company, contact, or deal.",
+    instructions:
+      "Read the record first and change only requested fields. Add an activity when context should be preserved.",
+    parameters: z.discriminatedUnion("entity", [
+      z.object({ entity: z.literal("company"), id: idSchema, data: companyUpdateDataSchema }),
+      z.object({ entity: z.literal("contact"), id: idSchema, data: contactUpdateDataSchema }),
+      z.object({ entity: z.literal("deal"), id: idSchema, data: dealUpdateDataSchema }),
+    ]),
+    execute(input) {
+      if (input.entity === "company") {
+        const { fields, ...data } = input.data;
+        const record = db.transaction(() => {
+          const updated = companies.update(input.id, data);
+          if (fields) writeRecordFieldValues("COMPANY", input.id, fields);
+          return updated;
+        })();
+        changed("company", "updated", record.id);
+        return JSON.stringify(companyOutput(record, true));
+      }
+      if (input.entity === "contact") {
+        const { fields, ...data } = input.data;
+        const record = db.transaction(() => {
+          const updated = contacts.update(input.id, data);
+          if (fields) writeRecordFieldValues("CONTACT", input.id, fields);
+          return updated;
+        })();
+        changed("contact", "updated", record.id);
+        return JSON.stringify(contactOutput(record));
+      }
+      const { fields, ...data } = input.data;
+      const record = db.transaction(() => {
+        const updated = deals.update(input.id, data);
+        if (fields) writeRecordFieldValues("DEAL", input.id, fields);
+        return updated;
+      })();
+      changed("deal", "updated", record.id);
+      return JSON.stringify(dealOutput(record));
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_add_activity",
+    description:
+      "Add a note, call, email, meeting, or follow-up task to a CRM record timeline.",
+    parameters: activityToolInputSchema,
+    execute(input) {
+      const activity = activities.create(
+        { ...input, createdById: LOCAL_OWNER_ID },
+        LOCAL_OWNER_ID,
+      );
+      stampActivity(activity);
+      changed("activity", "created", activity.id);
+      return JSON.stringify(activityOutput(activity));
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_list_tasks",
+    description: "List incomplete CRM tasks assigned to the installation user.",
+    parameters: z.object({
+      window: z.enum(["overdue", "upcoming", "all"]).default("all"),
+      limit: z.number().int().min(1).max(100).default(25),
+    }),
+    execute(input) {
+      return JSON.stringify(
+        activities.myTasks({
+          actorId: LOCAL_OWNER_ID,
+          window: input.window,
+          limit: input.limit,
+        }).map(activityOutput),
+      );
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_set_field",
+    description:
+      "Set or clear one typed CRM custom field by its stable key on a company, contact, or deal.",
+    parameters: z.object({
+      entity: fieldEntitySchema,
+      recordId: idSchema,
+      key: z.string().trim().min(1),
+      value: fieldValueSchema,
+    }),
+    execute({ entity, recordId, key, value }) {
+      const definition = customFields.byKey(entity, key);
+      const output = customFields.upsertValue({
+        entity,
+        recordId,
+        fieldId: definition.id,
+        value,
+      });
+      changed("custom-field", "value-updated", definition.id);
+      return JSON.stringify({ ...output, key: definition.key });
+    },
+  });
+
+  bb.agents.configure(() => ({
+    tools: [...agentToolNames],
+    skills: ["crm"],
+    instructions:
+      "CRM tools are available. Search before creating, preserve source money, and record evidence or timeline context for consequential updates.",
+  }));
 
   bb.cli.register({
     name: "crm",
