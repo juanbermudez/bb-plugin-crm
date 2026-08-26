@@ -22,10 +22,15 @@ tag, or marketplace submission.
   marketplace validation remain release-gated.
 - A final managed-install rehearsal exposed that the published BB `0.39.0`
   builder does not provide the newer `class-variance-authority`, `clsx`, and
-  `tailwind-merge` host shims. The manifest now keeps exact runtime pins for
-  compatibility with the declared minimum. The corrected public
+  `tailwind-merge` host shims. A local compatibility package now supplies
+  exact pins to the older managed builder, while current BB keeps the imports
+  type-only and externalizes them to its host runtime. The corrected public
   release-candidate commit then completed the managed Git-install and browser
   smoke below.
+- BB `0.40.0` main's type-sync surface was audited at commit `7dc6756e`; its
+  advertised SDK `0.4.22` was not yet available from npm, so this release
+  remains pinned to the latest published `0.4.8` declarations while carrying
+  the 0.40 host-shim declarations as dev-only forward compatibility.
 
 The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite

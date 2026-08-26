@@ -150,10 +150,15 @@ bb plugin types
 
 Vendored UI source lives in `components/ui`. Add version-matched components
 from BB's registry. `@radix-ui/react-dialog` is host-shimmed and type-only.
-The exact `class-variance-authority`, `clsx`, and `tailwind-merge` pins remain
-runtime dependencies for managed Git installs on the declared BB `0.39`
-minimum; that published builder predates their host-runtime shims. Newer BB
-builders may externalize those same imports without changing plugin source.
+BB-shimmed packages remain type-only `devDependencies`, as required by
+`bb plugin types`. The SDK stays pinned to the latest published BB 0.39 SDK
+(`0.4.8`); BB 0.40 main currently advertises an unpublished `0.4.22` pin, so
+that forward sync cannot be committed until the package exists. The local
+`@bb-crm/bb-039-ui-runtime` compatibility package
+supplies exact `class-variance-authority`, `clsx`, and `tailwind-merge` pins to
+managed Git builds on the declared BB `0.39` minimum, whose published builder
+predates those shims. Current BB externalizes the same imports, so the
+compatibility package does not duplicate them in the extension bundle.
 
 ## Architecture
 

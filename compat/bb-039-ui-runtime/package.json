@@ -1,0 +1,11 @@
+{
+  "name": "@bb-crm/bb-039-ui-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build-only UI dependency bridge for managed BB 0.39 Git installs.",
+  "dependencies": {
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.4.0"
+  }
+}
