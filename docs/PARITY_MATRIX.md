@@ -78,24 +78,24 @@ Status meanings:
 
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
-| Contact list | Paginated CRM table | planned | 3 |
-| Search identity fields | Typed list query | planned | 3 |
+| Contact list | Paginated CRM table | done | 3 |
+| Search identity fields | Typed list query | done | 3 |
 | Company/owner/title facets | Filter bar | planned | 3 |
 | Seniority/persona/activity facets | Filter bar | planned | 3 |
 | Dynamic-field facets | Filter bar | planned | 5 |
-| Bulk owner/company/enrich | Bulk RPC and CLI | planned | 3 |
-| Bulk archive/restore/purge | Bulk RPC and CLI | planned | 3 |
-| Create contact | Wide responsive drawer | planned | 3 |
-| Contact overview | Record tab | planned | 3 |
+| Bulk owner/company/enrich | Bulk RPC and CLI | building | 3 |
+| Bulk archive/restore/purge | Bulk RPC and CLI | building | 3 |
+| Create contact | Wide responsive drawer | done | 3 |
+| Contact overview | Record tab | done | 3 |
 | Attached deals and roles | Record tab | planned | 3/4 |
 | Contact activity | Record tab | planned | 5 |
 | Contact Agent tab | Linked BB thread | planned | 6 |
-| Applied facts | Evidence ledger | planned | 3 |
-| Proposed fact decision | Review action | planned | 3 |
-| Dismiss/supersede | Evidence state transition | planned | 3 |
-| Background brief | Versioned brief | planned | 3 |
+| Applied facts | Evidence ledger | building | 3 |
+| Proposed fact decision | Review action | building | 3 |
+| Dismiss/supersede | Evidence state transition | building | 3 |
+| Background brief | Versioned brief | building | 3 |
 | Email/meeting relationship summary | Timeline aggregate | planned | 7 |
-| Social lookup and work history | Optional research tools | planned | 3/6 |
+| Social lookup and work history | Optional research tools | building | 3/6 |
 | Contact portrait | Bounded plugin asset storage | gap | 3 |
 
 Fallback for portraits: store bounded downloaded images in the plugin database

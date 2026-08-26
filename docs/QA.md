@@ -27,7 +27,7 @@ Environment:
 Observed:
 
 - CRM plugin status was `running` with compatible app artifacts.
-- Dashboard reported schema version `2` after the append-only core migration.
+- Dashboard reported schema version `3` after the append-only evidence migration.
 - Companies navigation opened the seven-column source-shaped table.
 - The empty state opened the create drawer.
 - Creating `Live QA Labs` with `liveqa.example` persisted and refreshed the table.
@@ -37,6 +37,10 @@ Observed:
 - Archive moved the record into the archived list and exposed Restore.
 - Restore returned the record to active state.
 - Browser history returned the drawer to the company list sub-path on close.
+- Contacts navigation opened its seven-column table and accessible empty state.
+- Creating `Ada Lovelace` with a normalized email and title persisted and refreshed the table.
+- Opening the contact produced `/plugins/crm/crm/contacts/<contact-id>` and rendered
+  the source Overview, Deals, Activity, and Agent tabs.
 
 Still required before release:
 
