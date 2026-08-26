@@ -249,7 +249,7 @@ describe("AgentsView", () => {
     fireEvent.click(within(drawer).getByRole("tab", { name: "Run history" }));
     await within(drawer).findByText("run_queued");
 
-    fireEvent.click(within(drawer).getByRole("button", { name: "Run now (queue only)" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Run now" }));
     await waitFor(() => expect(rpc.call).toHaveBeenCalledWith("agents_runs_queue", { agentId: agent.id }));
     fireEvent.click(within(drawer).getByRole("button", { name: "View run" }));
     await within(drawer).findByText("Persisted test transitions");
@@ -269,4 +269,3 @@ describe("AgentsView", () => {
     await waitFor(() => expect(onRecordIdChange).toHaveBeenCalledWith(null));
   });
 });
-

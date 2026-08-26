@@ -3,7 +3,12 @@ import type {
   PluginCliContext,
   PluginCliResult,
 } from "@get-bb/plugin-sdk";
+import { CronExpressionParser } from "cron-parser";
 import { z } from "zod";
+import {
+  createAgentDispatcher,
+  type AgentDispatchResult,
+} from "./agent-dispatch.js";
 import {
   activityCreateInputSchema,
   companyCreateInputSchema,
@@ -60,7 +65,11 @@ import {
 } from "./db/saved-views.js";
 import { createCustomFieldStore } from "./db/custom-fields.js";
 import { createEvidenceStore } from "./db/evidence.js";
-import { createAgentStore } from "./db/agents.js";
+import {
+  createAgentStore,
+  type AgentJsonValue,
+  type AgentTrigger,
+} from "./db/agents.js";
 import {
   createConnectionStore,
   createTrackingSiteStore,
@@ -68,6 +77,44 @@ import {
 } from "./db/connections.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
+
+/**
+ * The dispatcher is deliberately a short, bounded service loop. Tests can
+ * lower this through CRM_AGENT_DISPATCH_INTERVAL_MS without waiting on a
+ * production-sized interval, while a real host still gets a pause between
+ * sweeps when there is no work.
+ */
+export const CRM_AGENT_DISPATCH_INTERVAL_MS = 5_000;
+export const CRM_AGENT_DISPATCH_MAX_BATCH = 100;
+export const CRM_AGENT_DISPATCH_SERVICE_NAME = "crm-agent-dispatcher";
+
+const safeProjectIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value));
+const publicProjectSchema = z
+  .object({ id: safeProjectIdSchema })
+  .passthrough();
+const NO_PROJECT_DIAGNOSTIC =
+  "CRM agent dispatcher is waiting for a non-deleted BB project; queued agent runs remain QUEUED.";
+
+function manifestProjectId(manifest: unknown): string | null {
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
+    return null;
+  }
+  const value = (manifest as Record<string, unknown>).projectId;
+  const parsed = safeProjectIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function isDeletedProject(value: Record<string, unknown>): boolean {
+  if (value.deleted === true) return true;
+  const deletedAt = value.deletedAt;
+  return (typeof deletedAt === "string" && deletedAt.trim().length > 0) ||
+    (typeof deletedAt === "number" && Number.isFinite(deletedAt));
+}
 
 type CrmRecordEntity = "company" | "contact" | "deal";
 type CrmOutputFormat = "json" | "csv";
@@ -593,6 +640,473 @@ export default async function plugin(bb: BbPluginApi) {
     // invalidation as well so a mounted record drawer refreshes immediately.
     changed("contact", "evidence-updated", contactId);
   }
+
+  type AvailableProject = { id: string; deletedAt?: unknown; deleted?: unknown };
+  type PreparedProject = { projectId: string | null };
+
+  let preparedProject: PreparedProject | null = null;
+  let preferredManifestProjectId: string | null = null;
+
+  async function readAvailableProjects(): Promise<AvailableProject[]> {
+    const listed = await bb.sdk.projects.list({ includePersonal: true });
+    if (!Array.isArray(listed)) {
+      throw new Error("BB projects.list returned a non-array response.");
+    }
+    const projects: AvailableProject[] = [];
+    for (const raw of listed) {
+      const parsed = publicProjectSchema.safeParse(raw);
+      if (!parsed.success) {
+        bb.log.warn("CRM agent dispatcher ignored a malformed BB project response.");
+        continue;
+      }
+      const project = parsed.data as AvailableProject;
+      if (!isDeletedProject(project)) projects.push(project);
+    }
+    return projects;
+  }
+
+  function chooseProject(
+    projects: readonly AvailableProject[],
+    preferredId: string | null,
+  ): string | null {
+    if (preferredId !== null) {
+      const preferred = projects.find((project) => project.id === preferredId);
+      if (preferred) return preferred.id;
+    }
+    return projects[0]?.id ?? null;
+  }
+
+  /**
+   * Project selection is intentionally lazy. The SDK is only consulted when a
+   * run is about to spawn a thread, and the service can pre-seed one validated
+   * choice for a sweep so a no-project condition leaves rows queued.
+   */
+  const lazyProjectResolver = async (): Promise<string> => {
+    const prepared = preparedProject;
+    if (prepared !== null) {
+      preparedProject = null;
+      if (prepared.projectId === null) throw new Error(NO_PROJECT_DIAGNOSTIC);
+      return prepared.projectId;
+    }
+    const projects = await readAvailableProjects();
+    const projectId = chooseProject(projects, preferredManifestProjectId);
+    if (projectId === null) throw new Error(NO_PROJECT_DIAGNOSTIC);
+    return projectId;
+  };
+
+  const dispatcher = createAgentDispatcher({
+    bb,
+    db,
+    projectId: lazyProjectResolver,
+    cleanupHiddenThreads: true,
+  });
+
+  type DispatcherLifecycleEvent = "thread.idle" | "thread.failed" | "thread.deleted";
+  type DispatcherLifecycleHandler = (payload: unknown) => void | Promise<void>;
+  const dispatcherLifecycleHandlers = new Map<DispatcherLifecycleEvent, DispatcherLifecycleHandler>();
+  dispatcher.registerLifecycleHooks({
+    on(event, handler) {
+      dispatcherLifecycleHandlers.set(
+        event as DispatcherLifecycleEvent,
+        handler as unknown as DispatcherLifecycleHandler,
+      );
+    },
+  });
+
+  function publishLinkedRunLifecycle(threadId: string): void {
+    const link = db.prepare(`
+      SELECT id AS linkId, run_id AS runId
+      FROM agent_thread_links
+      WHERE thread_id = ? AND kind = 'RUN'
+      LIMIT 1
+    `).get(threadId) as { linkId?: unknown; runId?: unknown } | undefined;
+    if (typeof link?.linkId !== "string" || typeof link.runId !== "string") return;
+    const run = agents.getRun(link.runId);
+    if (!run) return;
+    const action = run.status === "SUCCEEDED"
+      ? "succeeded"
+      : run.status === "FAILED"
+        ? "failed"
+        : run.status === "CANCELLED"
+          ? "cancelled"
+          : "updated";
+    changed("agent-thread", "lifecycle", link.linkId);
+    changed("agent-run", action, run.id);
+    changed("agent", "run-updated", run.agentId);
+  }
+
+  const idleLifecycleHandler = dispatcherLifecycleHandlers.get("thread.idle");
+  const failedLifecycleHandler = dispatcherLifecycleHandlers.get("thread.failed");
+  const deletedLifecycleHandler = dispatcherLifecycleHandlers.get("thread.deleted");
+  if (!idleLifecycleHandler || !failedLifecycleHandler || !deletedLifecycleHandler) {
+    throw new Error("CRM agent dispatcher did not register all lifecycle hooks.");
+  }
+  // Wrap the dispatcher's hooks so terminal transitions also invalidate the
+  // mounted agent run/thread views. The wrapper keeps exactly one BB listener
+  // for each event, which makes reloads and duplicate host signals idempotent.
+  bb.events.on("thread.idle", async (payload) => {
+    await idleLifecycleHandler(payload);
+    publishLinkedRunLifecycle(payload.thread.id);
+  });
+  bb.events.on("thread.failed", async (payload) => {
+    await failedLifecycleHandler(payload);
+    publishLinkedRunLifecycle(payload.thread.id);
+  });
+  bb.events.on("thread.deleted", async (payload) => {
+    await deletedLifecycleHandler(payload);
+    publishLinkedRunLifecycle(payload.thread.id);
+  });
+
+  function scheduleConfig(trigger: AgentTrigger): {
+    cron: string | null;
+    timezone: string | undefined;
+    input: AgentJsonValue | null;
+  } {
+    const config = trigger.config as Record<string, unknown>;
+    const cron = typeof config.cron === "string" && config.cron.trim().length > 0
+      ? config.cron.trim()
+      : null;
+    const timezone = typeof config.timezone === "string" && config.timezone.trim().length > 0
+      ? config.timezone.trim()
+      : undefined;
+    return {
+      cron,
+      timezone,
+      input: config.input === undefined ? null : config.input as AgentJsonValue,
+    };
+  }
+
+  function nextScheduleAt(cron: string, currentDate: Date, timezone?: string): string {
+    const expression = CronExpressionParser.parse(cron, {
+      currentDate,
+      ...(timezone === undefined ? {} : { tz: timezone }),
+    });
+    return expression.next().toDate().toISOString();
+  }
+
+  function scheduleFailure(trigger: AgentTrigger, reason: string): void {
+    bb.log.error(`CRM agent schedule ${trigger.id} is invalid: ${reason}`);
+    try {
+      const updated = agents.updateTrigger(
+        trigger.id,
+        { nextRunAt: null },
+        "crm-dispatcher",
+      );
+      changed("agent-trigger", "updated", updated.id);
+      changed("agent", "trigger-updated", updated.agentId);
+    } catch (error) {
+      bb.log.warn(
+        `CRM agent schedule ${trigger.id} could not be paused: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  function publishTriggerUpdate(trigger: AgentTrigger, action: string): void {
+    changed("agent-trigger", action, trigger.id);
+    changed("agent", "trigger-updated", trigger.agentId);
+  }
+
+  async function enqueueDueScheduleRuns(signal: AbortSignal): Promise<void> {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const rows = db.prepare(`
+      SELECT id
+      FROM agent_triggers
+      WHERE type = 'SCHEDULE' AND enabled = 1
+        AND (next_run_at IS NULL OR next_run_at <= ?)
+      ORDER BY COALESCE(next_run_at, ''), id
+      LIMIT ?
+    `).all(nowIso, CRM_AGENT_DISPATCH_MAX_BATCH) as Array<{ id?: unknown }>;
+
+    for (const row of rows) {
+      if (signal.aborted) return;
+      if (typeof row.id !== "string") continue;
+      let trigger: AgentTrigger | null;
+      try {
+        trigger = agents.getTrigger(row.id);
+      } catch (error) {
+        bb.log.error(
+          `CRM agent schedule row ${row.id} could not be read: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        continue;
+      }
+      if (!trigger || !trigger.enabled || trigger.type !== "SCHEDULE") continue;
+
+      const config = scheduleConfig(trigger);
+      if (config.cron === null) {
+        scheduleFailure(trigger, "config.cron is required");
+        continue;
+      }
+
+      if (trigger.nextRunAt === null) {
+        try {
+          const nextRunAt = nextScheduleAt(config.cron, now, config.timezone);
+          const updated = agents.updateTrigger(
+            trigger.id,
+            { nextRunAt },
+            "crm-dispatcher",
+          );
+          publishTriggerUpdate(updated, "scheduled");
+        } catch (error) {
+          scheduleFailure(
+            trigger,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        continue;
+      }
+
+      const dueDate = new Date(trigger.nextRunAt);
+      if (Number.isNaN(dueDate.getTime())) {
+        scheduleFailure(trigger, "nextRunAt is not a valid timestamp");
+        continue;
+      }
+
+      let nextRunAt: string;
+      try {
+        // Compute from now so one delayed sweep does not replay an unbounded
+        // backlog of missed occurrences.
+        nextRunAt = nextScheduleAt(config.cron, now, config.timezone);
+      } catch (error) {
+        scheduleFailure(
+          trigger,
+          error instanceof Error ? error.message : String(error),
+        );
+        continue;
+      }
+
+      const dueAt = dueDate.toISOString();
+      const idempotencyKey = `crm-schedule:${trigger.id}:${dueAt}`;
+      try {
+        const run = agents.queueRun(
+          trigger.agentId,
+          {
+            versionId: trigger.versionId,
+            triggerId: trigger.id,
+            triggerType: "SCHEDULE",
+            input: config.input,
+            idempotencyKey,
+            correlationId: idempotencyKey,
+          },
+          "crm-dispatcher",
+        );
+        changed("agent-run", "queued", run.id);
+        changed("agent", "run-queued", run.agentId);
+        const updated = agents.updateTrigger(
+          trigger.id,
+          { lastRunAt: dueAt, nextRunAt },
+          "crm-dispatcher",
+        );
+        publishTriggerUpdate(updated, "scheduled");
+      } catch (error) {
+        bb.log.error(
+          `CRM agent schedule ${trigger.id} could not queue its due run: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  }
+
+  function publishDispatchResult(result: AgentDispatchResult): void {
+    if (result.kind === "dispatched") {
+      changed("agent-run", "started", result.run.id);
+      changed("agent", "run-updated", result.run.agentId);
+      changed("agent-thread", "linked", result.thread.id);
+    } else if (result.kind === "failed") {
+      changed("agent-run", "failed", result.run.id);
+      changed("agent", "run-updated", result.run.agentId);
+    }
+  }
+
+  async function reconcileRunningLinkedRuns(signal: AbortSignal): Promise<void> {
+    const rows = db.prepare(`
+      SELECT l.thread_id AS threadId
+      FROM agent_thread_links AS l
+      INNER JOIN agent_runs AS r ON r.id = l.run_id
+      WHERE l.kind = 'RUN' AND r.status = 'RUNNING'
+      ORDER BY l.created_at ASC, l.id ASC
+      LIMIT ?
+    `).all(CRM_AGENT_DISPATCH_MAX_BATCH) as Array<{ threadId?: unknown }>;
+
+    for (const row of rows) {
+      if (signal.aborted) return;
+      if (typeof row.threadId !== "string") continue;
+      try {
+        const result = await dispatcher.reconcileThread(row.threadId);
+        if (result.kind === "succeeded" || result.kind === "failed" || result.kind === "cancelled") {
+          publishLinkedRunLifecycle(row.threadId);
+        }
+      } catch (error) {
+        bb.log.error(
+          `CRM agent run linked to BB thread ${row.threadId} could not be reconciled: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  }
+
+  async function performDispatcherSweep(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    await reconcileRunningLinkedRuns(signal);
+    if (signal.aborted) return;
+    await enqueueDueScheduleRuns(signal);
+    if (signal.aborted) return;
+
+    const queued = agents.listRuns({
+      status: "QUEUED",
+      limit: CRM_AGENT_DISPATCH_MAX_BATCH,
+      includeEvents: true,
+      includeActions: true,
+    });
+    if (queued.length === 0) return;
+
+    let projects: AvailableProject[];
+    try {
+      projects = await readAvailableProjects();
+    } catch (error) {
+      bb.log.error(
+        `CRM agent dispatcher could not list BB projects; queued runs remain QUEUED: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    if (projects.length === 0) {
+      bb.log.warn(`${NO_PROJECT_DIAGNOSTIC} (${queued.length} queued run${queued.length === 1 ? "" : "s"}).`);
+      return;
+    }
+
+    for (const run of queued) {
+      if (signal.aborted) return;
+      let preferredId: string | null = null;
+      try {
+        preferredId = manifestProjectId(agents.getVersionRequired(run.versionId).manifest);
+      } catch (error) {
+        bb.log.error(
+          `CRM agent run ${run.id} could not read its deployed version: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        continue;
+      }
+      const projectId = chooseProject(projects, preferredId);
+      if (projectId === null) {
+        bb.log.warn(`${NO_PROJECT_DIAGNOSTIC} Run ${run.id} remains QUEUED.`);
+        continue;
+      }
+      preferredManifestProjectId = preferredId;
+      preparedProject = { projectId };
+      try {
+        const result = await dispatcher.dispatchQueuedRun(run.id);
+        publishDispatchResult(result);
+      } catch (error) {
+        bb.log.error(
+          `CRM agent run ${run.id} dispatch sweep failed; its persisted state was preserved: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        preparedProject = null;
+        preferredManifestProjectId = null;
+      }
+    }
+  }
+
+  let sweepInFlight: Promise<void> | null = null;
+  async function runDispatcherSweep(signal: AbortSignal): Promise<void> {
+    if (sweepInFlight !== null) {
+      await sweepInFlight;
+      return;
+    }
+    const current = (async () => {
+      try {
+        await performDispatcherSweep(signal);
+      } catch (error) {
+        bb.log.error(
+          `CRM agent dispatcher sweep failed; persisted runs remain available for retry: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    })();
+    sweepInFlight = current;
+    try {
+      await current;
+    } finally {
+      if (sweepInFlight === current) sweepInFlight = null;
+    }
+  }
+
+  function configuredDispatcherInterval(): number {
+    const raw = process.env.CRM_AGENT_DISPATCH_INTERVAL_MS;
+    if (raw === undefined) return CRM_AGENT_DISPATCH_INTERVAL_MS;
+    const parsed = Number(raw);
+    return Number.isSafeInteger(parsed) && parsed >= 10 && parsed <= 3_600_000
+      ? parsed
+      : CRM_AGENT_DISPATCH_INTERVAL_MS;
+  }
+
+  function waitForDispatcherInterval(signal: AbortSignal, delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(done, delayMs);
+      const abort = () => {
+        clearTimeout(timer);
+        done();
+      };
+      function done(): void {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      }
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  function waitForDispatcherStop(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      const abort = () => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      };
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  let dispatcherServiceRunning = false;
+  bb.background.service(CRM_AGENT_DISPATCH_SERVICE_NAME, {
+    async start(signal) {
+      // The host starts one instance, but this guard keeps deterministic test
+      // drivers and accidental duplicate starts from creating extra workers.
+      if (dispatcherServiceRunning) {
+        await waitForDispatcherStop(signal);
+        return;
+      }
+      dispatcherServiceRunning = true;
+      try {
+        const intervalMs = configuredDispatcherInterval();
+        while (!signal.aborted) {
+          await runDispatcherSweep(signal);
+          if (signal.aborted) break;
+          await waitForDispatcherInterval(signal, intervalMs);
+        }
+      } finally {
+        dispatcherServiceRunning = false;
+      }
+    },
+  });
 
   function bulk(
     entity: "company" | "contact" | "deal",
@@ -1234,7 +1748,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
     agents_runs_queue(input) {
       const { agentId, ...queueInput } = input;
-      // Manual queueing persists a QUEUED run. BB thread dispatch is separate.
+      // Queue durably first; the bounded background service claims it and
+      // starts the linked BB thread when an eligible project is available.
       const run = agents.queueRun(
         agentId,
         {

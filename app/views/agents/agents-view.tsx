@@ -1262,7 +1262,7 @@ function RunHistory({
     try {
       const result = await rawRpc(rpc).call("agents_runs_queue", { agentId: agent.id });
       if (isRecord(result) && typeof result.id === "string") setSelectedRun(result as unknown as AgentRunDetail);
-      setNotice("Run queued. BB worker dispatch is not connected in this workspace.");
+      setNotice("Run queued for the BB thread dispatcher.");
       await reloadRuns();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -1296,13 +1296,13 @@ function RunHistory({
           </Button>
           <Button type="button" size="sm" onClick={() => void queueRun()} disabled={queueing || !agent.currentVersionId}>
             <Icon name="Play" aria-hidden="true" />
-            {queueing ? "Queueing…" : "Run now (queue only)"}
+            {queueing ? "Queueing…" : "Run now"}
           </Button>
         </>
       }
     >
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-        Run now only persists a <strong className="font-semibold">QUEUED</strong> run. It does not start a BB worker or execute the agent.
+        Run now persists a <strong className="font-semibold">QUEUED</strong> run first. The background dispatcher starts a hidden BB thread when an eligible project is available.
       </div>
       <InlineError message={error} />
       {notice ? <p className="text-sm text-emerald-700 dark:text-emerald-300" role="status">{notice}</p> : null}

@@ -1,9 +1,39 @@
-import { describe, expect, it } from "vitest";
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { describe, expect, it, vi } from "vitest";
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.js";
+import { CRM_AGENT_DISPATCH_SERVICE_NAME } from "./server.js";
 import { createAgentStore } from "./db/agents.js";
 import { createCurrencyStore } from "./db/currency.js";
 import { CRM_SCHEMA_VERSION } from "./db/schema.js";
+
+type ServerHarness = ReturnType<typeof createFakePluginHost>["harness"];
+
+async function seedLiveServerAgent(
+  harness: ServerHarness,
+  agentId: string,
+  versionId: string,
+  manifest: Record<string, unknown> = {},
+): Promise<void> {
+  await harness.behavior.callRpc("agents_create", {
+    id: agentId,
+    name: `Dispatcher ${agentId}`,
+    description: "A dispatcher test agent.",
+  });
+  await harness.behavior.callRpc("agents_versions_create", {
+    agentId,
+    data: {
+      id: versionId,
+      instructions: "Read the exact CRM records and summarize verified facts.",
+      manifest,
+    },
+  });
+  await harness.behavior.callRpc("agents_versions_validate", { id: versionId });
+  await harness.behavior.callRpc("agents_deploy", {
+    agentId,
+    versionId,
+    requestId: `deployment-${agentId}`,
+  });
+}
 
 describe("CRM plugin foundation", () => {
   it("registers status RPC and CLI over migrated storage", async () => {
@@ -1344,5 +1374,194 @@ describe("CRM plugin foundation", () => {
     ]));
 
     await harness.lifecycle.dispose();
+  });
+
+  it("dispatches a durable manual queue through the bounded background service", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-manual" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: {
+          list: async () => [
+            { id: "fallback-project", kind: "standard", deletedAt: null },
+            { id: "preferred-project", kind: "standard", deletedAt: null },
+          ],
+        },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_dispatch_server", "version_dispatch_server", {
+      projectId: "preferred-project",
+    });
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_dispatch_server",
+      id: "run_dispatch_server",
+      input: { companyId: "company_server" },
+      idempotencyKey: "run-dispatch-server-key",
+    });
+
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    const store = createAgentStore(bb.storage.database());
+    try {
+      await vi.waitFor(() => {
+        expect(store.getRunRequired("run_dispatch_server").status).toBe("RUNNING");
+      });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(harness.inspection.sdk.callsTo("projects.list")).toEqual([
+        [{ includePersonal: true }],
+      ]);
+      expect(harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0]).toMatchObject({
+        projectId: "preferred-project",
+        visibility: "hidden",
+      });
+      expect(store.listThreads("agent_dispatch_server", { runId: "run_dispatch_server" }))
+        .toEqual([expect.objectContaining({ threadId: "bb-thread-manual" })]);
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("keeps queued runs durable when no non-deleted BB project exists", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-never-created" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: {
+          list: async () => [
+            { id: "deleted-project", kind: "standard", deletedAt: "2026-08-25T00:00:00.000Z" },
+          ],
+        },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_no_project", "version_no_project");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_no_project",
+      id: "run_no_project",
+      idempotencyKey: "run-no-project-key",
+    });
+
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    const store = createAgentStore(bb.storage.database());
+    try {
+      await vi.waitFor(() => {
+        expect(harness.inspection.logEntries).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            level: "warn",
+            message: expect.stringContaining("queued agent runs remain QUEUED"),
+          }),
+        ]));
+      });
+      expect(store.getRunRequired("run_no_project").status).toBe("QUEUED");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("reconciles linked running runs after reload without spawning a duplicate worker", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-reload" }));
+    const get = vi.fn(async () => ({
+      id: "bb-thread-reload",
+      status: "active",
+      visibility: "hidden",
+    }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-reload", kind: "standard" }] },
+        threads: { spawn, get },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_reload", "version_reload");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_reload",
+      id: "run_reload",
+      idempotencyKey: "run-reload-key",
+    });
+    const firstService = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    const store = createAgentStore(bb.storage.database());
+    await vi.waitFor(() => {
+      expect(store.getRunRequired("run_reload").status).toBe("RUNNING");
+    });
+
+    const reloaded = await harness.lifecycle.reload(async (replacementBb) => {
+      await plugin(replacementBb);
+    });
+    await firstService.done;
+    const replacementService = reloaded.harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    try {
+      await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(reloaded.harness.inspection.registrations.threadEventHandlers).toMatchObject({
+        "thread.idle": 1,
+        "thread.failed": 1,
+        "thread.deleted": 1,
+      });
+      expect(reloaded.harness.inspection.registrations.services).toHaveLength(1);
+    } finally {
+      replacementService.controller.abort();
+      await replacementService.done;
+      await reloaded.harness.lifecycle.dispose();
+    }
+  });
+
+  it("settles linked runs from lifecycle events and publishes run invalidations", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-lifecycle" }));
+    const archive = vi.fn(async () => ({ ok: true }));
+    const stop = vi.fn(async () => ({ ok: true }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      sdk: {
+        projects: { list: async () => [{ id: "project-lifecycle", kind: "standard" }] },
+        threads: { spawn, archive, stop },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_lifecycle_server", "version_lifecycle_server");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_lifecycle_server",
+      id: "run_lifecycle_server",
+      idempotencyKey: "run-lifecycle-server-key",
+    });
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    const store = createAgentStore(bb.storage.database());
+    try {
+      await vi.waitFor(() => {
+        expect(store.getRunRequired("run_lifecycle_server").status).toBe("RUNNING");
+      });
+      const emitted = await harness.behavior.emitThreadEvent("thread.idle", {
+        thread: makeThreadResponse({
+          id: "bb-thread-lifecycle",
+          visibility: "hidden",
+          status: "idle",
+        }),
+        lastAssistantText: "Verified lifecycle settlement.",
+      });
+      expect(emitted.errors).toEqual([]);
+      expect(store.getRunRequired("run_lifecycle_server")).toMatchObject({
+        status: "SUCCEEDED",
+        summary: "Verified lifecycle settlement.",
+        result: null,
+      });
+      expect(archive).toHaveBeenCalledWith({ threadId: "bb-thread-lifecycle" });
+      expect(stop).toHaveBeenCalledWith({ threadId: "bb-thread-lifecycle" });
+      expect(harness.inspection.realtimeSignals).toEqual(expect.arrayContaining([
+        { channel: "changed", payload: { entity: "agent-run", action: "started", id: "run_lifecycle_server" } },
+        { channel: "changed", payload: { entity: "agent-run", action: "succeeded", id: "run_lifecycle_server" } },
+        { channel: "changed", payload: { entity: "agent-thread", action: "lifecycle", id: expect.any(String) } },
+      ]));
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
   });
 });
