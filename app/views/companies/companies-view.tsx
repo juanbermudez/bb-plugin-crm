@@ -11,6 +11,7 @@ import {
   EntityPicker,
   InlineField,
   InlineTextArea,
+  ListToolbar,
   PageHeader,
   RecordDrawer,
   SearchField,
@@ -1880,107 +1881,106 @@ export function CompaniesView({
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
       <PageHeader
         title="Companies"
-        description="Search and manage the organizations in your CRM workspace."
+        className="border-b-0 pb-2 sm:pb-2"
         actions={
-          <>
-            <Button
-              type="button"
-              variant={showArchived ? "secondary" : "outline"}
-              size="sm"
-              aria-pressed={showArchived}
-              onClick={() => {
-                setShowArchived((value) => !value);
-                setPage(1);
-              }}
-            >
-              <Icon name="Archive" aria-hidden="true" />
-              Archived
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                setCreateError(null);
-                setCreateOpen(true);
-              }}
-            >
-              <Icon name="Plus" aria-hidden="true" />
-              New company
-            </Button>
-          </>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
+          >
+            <Icon name="Plus" aria-hidden="true" />
+            New company
+          </Button>
         }
       />
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
-        <SavedViewBar
-          entity="COMPANY"
-          rpcClient={savedViewsRpcClient}
-          currentFilters={{
-            q: query,
-            sort,
-            dir,
-            archived: showArchived,
-            filters,
-            columns: columnPreferences.visibleColumns.map((column) => column.id),
-          }}
-          onApplyFilters={(filters: SavedViewFilters) => {
-            setQuery(filters.q);
-            setSort(
-              COMPANY_SORT_OPTIONS.some((option) => option.value === filters.sort)
-                ? filters.sort
-                : "name",
-            );
-            setDir(filters.dir);
-            setFilters(cleanFilters(filters.filters));
-            setShowArchived(filters.archived);
-            if (filters.columns.length > 0) {
-              columnPreferences.apply(filters.columns);
-            }
-            setPage(1);
-          }}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <SearchField
-              label="Search companies"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setPage(1);
-              }}
-              onClear={() => {
-                setQuery("");
-                setPage(1);
-              }}
-              placeholder="Search companies…"
-              containerClassName="w-full sm:w-80"
-            />
-            <ColumnPreferences preference={columnPreferences} />
-          </div>
-          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+      <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
+        <ListToolbar
+          aria-label="Company table controls"
+          summary={<span role="status" aria-live="polite">
             {list.total} {list.total === 1 ? "company" : "companies"}
             {showArchived ? " · archived" : ""}
-          </p>
-        </div>
-        <ListControls
-          entityLabel="companies"
-          sort={sort}
-          dir={dir}
-          sortOptions={COMPANY_SORT_OPTIONS}
-          filters={filters}
-          facets={facets}
-          onSortChange={(next) => {
-            setSort(next);
-            setPage(1);
-          }}
-          onDirChange={(next) => {
-            setDir(next);
-            setPage(1);
-          }}
-          onFiltersChange={(next) => {
-            setFilters(cleanFilters(next));
-            setPage(1);
-          }}
-        />
+          </span>}
+        >
+          <SearchField
+            label="Search companies"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+            onClear={() => {
+              setQuery("");
+              setPage(1);
+            }}
+            placeholder="Search companies…"
+            containerClassName="w-full sm:w-64"
+          />
+          <SavedViewBar
+            compact
+            entity="COMPANY"
+            rpcClient={savedViewsRpcClient}
+            currentFilters={{
+              q: query,
+              sort,
+              dir,
+              archived: showArchived,
+              filters,
+              columns: columnPreferences.visibleColumns.map((column) => column.id),
+            }}
+            onApplyFilters={(filters: SavedViewFilters) => {
+              setQuery(filters.q);
+              setSort(
+                COMPANY_SORT_OPTIONS.some((option) => option.value === filters.sort)
+                  ? filters.sort
+                  : "name",
+              );
+              setDir(filters.dir);
+              setFilters(cleanFilters(filters.filters));
+              setShowArchived(filters.archived);
+              if (filters.columns.length > 0) columnPreferences.apply(filters.columns);
+              setPage(1);
+            }}
+          />
+          <ListControls
+            compact
+            entityLabel="companies"
+            sort={sort}
+            dir={dir}
+            sortOptions={COMPANY_SORT_OPTIONS}
+            filters={filters}
+            facets={facets}
+            onSortChange={(next) => {
+              setSort(next);
+              setPage(1);
+            }}
+            onDirChange={(next) => {
+              setDir(next);
+              setPage(1);
+            }}
+            onFiltersChange={(next) => {
+              setFilters(cleanFilters(next));
+              setPage(1);
+            }}
+          />
+          <ColumnPreferences preference={columnPreferences} iconOnly />
+          <Button
+            type="button"
+            variant={showArchived ? "secondary" : "outline"}
+            size="icon"
+            className="size-9"
+            aria-label="Archived"
+            aria-pressed={showArchived}
+            onClick={() => {
+              setShowArchived((value) => !value);
+              setPage(1);
+            }}
+          >
+            <Icon name="Archive" aria-hidden="true" />
+          </Button>
+        </ListToolbar>
         {listError === null ? null : (
           <div
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"

@@ -85,6 +85,8 @@ export interface ListControlsProps {
   onDirChange: (dir: SortDirection) => void;
   onFiltersChange: (filters: ListFilters) => void;
   className?: string;
+  /** Use one label-free command cluster for table toolbars. */
+  compact?: boolean;
 }
 
 /**
@@ -103,6 +105,7 @@ export function ListControls({
   onDirChange,
   onFiltersChange,
   className,
+  compact = false,
 }: ListControlsProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersId = useId();
@@ -122,6 +125,121 @@ export function ListControls({
   ) => {
     onFiltersChange(toggleValue(filters, facetId, value, event.target.checked));
   };
+
+  if (compact) {
+    return (
+      <div className={cn("relative flex shrink-0 items-center gap-1", className)}>
+        {availableFacets.length > 0 ? (
+          <Button
+            type="button"
+            variant={activeFilters.length > 0 ? "secondary" : "outline"}
+            size="sm"
+            aria-expanded={filtersOpen}
+            aria-controls={filtersId}
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            <Icon name="SlidersHorizontal" aria-hidden="true" />
+            Filters
+            {activeFilters.length > 0 ? (
+              <span className="tabular-nums text-muted-foreground">
+                {activeFilters.length}
+              </span>
+            ) : null}
+          </Button>
+        ) : null}
+        <label className="sr-only" htmlFor={`${filtersId}-sort`}>
+          Sort {entityLabel}
+        </label>
+        <select
+          id={`${filtersId}-sort`}
+          className={cn(SELECT_CLASS, "w-40")}
+          aria-label={`Sort ${entityLabel}`}
+          value={sort}
+          onChange={(event) => onSortChange(event.target.value)}
+        >
+          {sortOptions.map((option) => (
+            <option key={option.value || "default"} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9"
+          aria-label={dir === "desc" ? "Sort descending" : "Sort ascending"}
+          onClick={() => onDirChange(dir === "desc" ? "asc" : "desc")}
+        >
+          <Icon name={dir === "desc" ? "ArrowDown" : "ArrowUp"} aria-hidden="true" />
+        </Button>
+
+        {filtersOpen && availableFacets.length > 0 ? (
+          <div
+            id={filtersId}
+            className="absolute left-0 top-full z-30 mt-2 grid w-[min(44rem,calc(100vw-2rem))] gap-3 rounded-lg border border-border bg-background p-3 shadow-lg sm:grid-cols-2 lg:grid-cols-3"
+            role="group"
+            aria-label={`${entityLabel} filters`}
+          >
+            {availableFacets.map((facet) => {
+              const selected = filters[facet.id] ?? [];
+              const options: ListFacetOption[] = [
+                ...facet.options,
+                ...selected
+                  .filter(
+                    (value) => !facet.options.some((option) => option.value === value),
+                  )
+                  .map((value) => ({ value, label: value })),
+              ];
+              return (
+                <fieldset key={facet.id} className="min-w-0 space-y-1">
+                  <legend className="text-xs font-medium text-muted-foreground">
+                    {facet.label}
+                  </legend>
+                  <div className="max-h-36 space-y-1 overflow-y-auto">
+                    {options.map((option) => (
+                      <label
+                        key={option.value}
+                        className="flex min-w-0 items-center gap-2 rounded px-1 py-1 text-sm hover:bg-state-hover"
+                      >
+                        <input
+                          type="checkbox"
+                          className={CHECKBOX_CLASS}
+                          aria-label={option.label}
+                          checked={selected.includes(option.value)}
+                          onChange={(event) =>
+                            handleFacetChange(event, facet.id, option.value)
+                          }
+                        />
+                        <span className="min-w-0 truncate">{option.label}</span>
+                        {option.count === undefined ? null : (
+                          <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                            {option.count}
+                          </span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              );
+            })}
+            {activeFilters.length > 0 ? (
+              <div className="col-span-full flex justify-end border-t border-border pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onFiltersChange({})}
+                >
+                  Clear all filters
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className={cn("min-w-0 space-y-2", className)}>

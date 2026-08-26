@@ -147,14 +147,18 @@ describe("DealsView", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Closed" }));
+    fireEvent.change(screen.getByLabelText("Deal status filter"), {
+      target: { value: "closed" },
+    });
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "deals_list",
         expect.objectContaining({ status: "closed", archived: false }),
       ),
     );
-    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    fireEvent.change(screen.getByLabelText("Deal status filter"), {
+      target: { value: "all" },
+    });
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "deals_list",

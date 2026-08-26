@@ -85,6 +85,8 @@ export interface SavedViewBarProps {
   /** BB app identity is not currently exposed to plugin UI code. */
   ownerId?: Id;
   className?: string;
+  /** Render as a compact command cluster for record-table toolbars. */
+  compact?: boolean;
 }
 
 export function SavedViewBar({
@@ -94,6 +96,7 @@ export function SavedViewBar({
   rpcClient,
   ownerId,
   className,
+  compact = false,
 }: SavedViewBarProps) {
   const contextRpc = useSavedViewsRpc();
   const rpc = rpcClient ?? contextRpc;
@@ -118,6 +121,7 @@ export function SavedViewBar({
   const [saveShared, setSaveShared] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const onApplyFiltersRef = useRef(onApplyFilters);
 
   useEffect(() => {
@@ -298,6 +302,214 @@ export function SavedViewBar({
       setBusyAction(null);
     }
   };
+
+  if (compact) {
+    return (
+      <div
+        className={cn("relative flex shrink-0 items-center gap-1", className)}
+        data-component="saved-view-bar"
+      >
+        <div className="relative w-44 min-w-36">
+          <Icon
+            name="ListView"
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <select
+            id={`${barId}-chooser`}
+            className={cn(SELECT_CLASS, "pl-9")}
+            value={selectedViewId ?? ""}
+            disabled={loading}
+            aria-label="Saved views"
+            onChange={(event) => chooseView(event.target.value)}
+          >
+            <option value="">Base filters</option>
+            {views.map((view) => {
+              const isDefault = view.id === defaultViewId || view.isDefault;
+              return (
+                <option key={view.id} value={view.id}>
+                  {view.name}{isDefault ? " · Default" : ""}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-9"
+          disabled={loading || selectedViewId === null}
+          aria-label="Reset saved view"
+          onClick={resetFilters}
+        >
+          <Icon name="RotateCcw" aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-9"
+          disabled={selectedView === null}
+          aria-label="Manage saved view"
+          aria-expanded={manageOpen}
+          onClick={() => setManageOpen((open) => !open)}
+        >
+          <Icon name="MoreHorizontal" aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-9"
+          disabled={loading}
+          aria-label="Save current view"
+          onClick={openSaveDrawer}
+        >
+          <Icon name="Plus" aria-hidden="true" />
+        </Button>
+
+        {manageOpen && selectedView ? (
+          <div
+            role="dialog"
+            aria-label="Manage saved view"
+            className="absolute left-0 top-full z-30 mt-2 w-72 rounded-lg border border-border bg-background p-3 shadow-lg"
+          >
+            <div className="border-b border-border pb-2">
+              <p className="truncate text-sm font-medium">{selectedView.name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {sharingLabel(selectedView, effectiveOwnerId)}
+                {selectedView.id === defaultViewId || selectedView.isDefault
+                  ? " · Default"
+                  : ""}
+              </p>
+            </div>
+            <div className="mt-2 grid gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="justify-start"
+                disabled={busyAction !== null || !isOwnedBy(selectedView, effectiveOwnerId)}
+                onClick={() => void updateCurrentView()}
+              >
+                <Icon name="Edit" aria-hidden="true" />
+                {busyAction === "update" ? "Updating…" : "Update view"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="justify-start"
+                disabled={
+                  busyAction !== null ||
+                  selectedView.id === defaultViewId ||
+                  !isOwnedBy(selectedView, effectiveOwnerId)
+                }
+                onClick={() => void setSelectedAsDefault()}
+              >
+                <Icon name="Star" aria-hidden="true" />
+                {busyAction === "default" ? "Saving…" : "Set as default"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="justify-start text-destructive hover:text-destructive"
+                disabled={busyAction !== null || !isOwnedBy(selectedView, effectiveOwnerId)}
+                onClick={() => {
+                  setManageOpen(false);
+                  setDeleteOpen(true);
+                }}
+              >
+                <Icon name="Trash2" aria-hidden="true" />
+                Delete view
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {error ? (
+          <p className="absolute left-0 top-full z-20 mt-1 text-xs text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <span className="sr-only" role="status" aria-live="polite">
+          {loading ? "Loading saved views…" : statusMessage ?? ""}
+        </span>
+
+        <AlertDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          title={`Delete the saved view “${selectedView?.name ?? "this view"}”?`}
+          description="This removes the saved filters for everyone who can access this view."
+          confirmLabel="Delete view"
+          destructive
+          disabled={selectedView === null || busyAction !== null}
+          onConfirm={deleteSelectedView}
+        />
+
+        <RecordDrawer
+          open={saveOpen}
+          onOpenChange={setSaveOpen}
+          title="Save current view"
+          description={`Save the current ${entityLabel} table state for reuse.`}
+          footer={
+            <>
+              <Button type="button" variant="ghost" onClick={() => setSaveOpen(false)} disabled={saving}>
+                Cancel
+              </Button>
+              <Button type="submit" form={`${barId}-save-form`} disabled={saving}>
+                {saving ? "Saving…" : "Save view"}
+              </Button>
+            </>
+          }
+        >
+          <form
+            id={`${barId}-save-form`}
+            className="space-y-5"
+            onSubmit={(event) => void saveCurrentView(event)}
+          >
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor={`${barId}-name`}>
+                View name
+              </label>
+              <Input
+                id={`${barId}-name`}
+                autoFocus
+                required
+                maxLength={120}
+                value={saveName}
+                disabled={saving}
+                onChange={(event) => {
+                  setSaveName(event.target.value);
+                  setSaveError(null);
+                }}
+                placeholder="Enterprise accounts"
+              />
+            </div>
+            <label className="flex items-start gap-3 rounded-md border border-border px-3 py-3" htmlFor={`${barId}-shared`}>
+              <input
+                id={`${barId}-shared`}
+                type="checkbox"
+                className={CHECKBOX_CLASS}
+                checked={saveShared}
+                disabled={saving}
+                onChange={(event) => setSaveShared(event.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-medium">Share with the workspace</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Shared views are visible to other CRM users.
+                </span>
+              </span>
+            </label>
+            {saveError ? <p className="text-sm text-destructive" role="alert">{saveError}</p> : null}
+          </form>
+        </RecordDrawer>
+      </div>
+    );
+  }
 
   return (
     <div

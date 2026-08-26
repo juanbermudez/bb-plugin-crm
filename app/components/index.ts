@@ -15,6 +15,7 @@ export {
   type InlineTextAreaProps,
 } from "./inline-field.js";
 export { SearchField, type SearchFieldProps } from "./search-field.js";
+export { ListToolbar, type ListToolbarProps } from "./list-toolbar.js";
 export {
   COMPANY_PICKER_INPUT,
   LOCAL_OWNER_ID,

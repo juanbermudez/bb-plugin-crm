@@ -402,9 +402,7 @@ describe("CompaniesView", () => {
     fireEvent.change(screen.getByLabelText("Sort companies"), {
       target: { value: "industry" },
     });
-    fireEvent.change(screen.getByLabelText("Sort direction"), {
-      target: { value: "desc" },
-    });
+    expect(screen.getByRole("button", { name: "Sort descending" })).toBeDefined();
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "companies_list",
@@ -526,9 +524,7 @@ describe("CompaniesView", () => {
     expect((screen.getByLabelText("Sort companies") as HTMLSelectElement).value).toBe(
       "domain",
     );
-    expect((screen.getByLabelText("Sort direction") as HTMLSelectElement).value).toBe(
-      "desc",
-    );
+    expect(screen.getByRole("button", { name: "Sort descending" })).toBeDefined();
   });
 
   it("assigns a primary contact and opens linked records in a nested stack", async () => {

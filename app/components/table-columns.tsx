@@ -312,6 +312,8 @@ export interface ColumnPreferencesProps {
   className?: string;
   /** Label for the trigger, kept explicit for small/compact host surfaces. */
   label?: string;
+  /** Render only the icon while retaining the label for accessibility. */
+  iconOnly?: boolean;
 }
 
 /** Compact visibility/order editor shared by all three CRM record tables. */
@@ -319,6 +321,7 @@ export function ColumnPreferences({
   preference,
   className,
   label = "Columns",
+  iconOnly = false,
 }: ColumnPreferencesProps) {
   const [open, setOpen] = React.useState(false);
   const panelId = React.useId();
@@ -328,13 +331,15 @@ export function ColumnPreferences({
       <Button
         type="button"
         variant="outline"
-        size="sm"
+        size={iconOnly ? "icon" : "sm"}
+        className={iconOnly ? "size-9" : undefined}
+        aria-label={iconOnly ? label : undefined}
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((current) => !current)}
       >
         <Icon name="Columns2" aria-hidden="true" />
-        {label}
+        {iconOnly ? null : label}
       </Button>
       {open ? (
         <div

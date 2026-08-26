@@ -50,6 +50,7 @@ import {
   InlineField,
   InlineSelectField,
   InlineTextArea,
+  ListToolbar,
   PageHeader,
   RecordDrawer,
   SearchField,
@@ -1941,146 +1942,128 @@ export function DealsView({
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
       <PageHeader
         title="Deals"
-        description="Track pipeline stages, source-currency amounts, and expected close dates."
+        className="border-b-0 pb-2 sm:pb-2"
         actions={
-          <>
-            <Button
-              type="button"
-              variant={showArchived ? "secondary" : "outline"}
-              size="sm"
-              aria-pressed={showArchived}
-              onClick={() => {
-                setShowArchived((value) => !value);
-                setPage(1);
-              }}
-            >
-              <Icon name="Archive" aria-hidden="true" />
-              Archived
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                setCreateError(null);
-                setCreateOpen(true);
-              }}
-            >
-              <Icon name="Plus" aria-hidden="true" />
-              New deal
-            </Button>
-          </>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
+          >
+            <Icon name="Plus" aria-hidden="true" />
+            New deal
+          </Button>
         }
       />
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
-        <SavedViewBar
-          entity="DEAL"
-          currentFilters={{
-            q: query,
-            sort,
-            dir,
-            archived: showArchived,
-            filters: { ...filters, status: [status] },
-            columns: columnPreferences.visibleColumns.map((column) => column.id),
-          }}
-          onApplyFilters={(filters: SavedViewFilters) => {
-            const savedStatus = filters.filters.status?.[0];
-            setQuery(filters.q);
-            setSort(
-              DEAL_SORT_OPTIONS.some((option) => option.value === filters.sort)
-                ? filters.sort
-                : "createdAt",
-            );
-            setDir(filters.dir);
-            setFilters(
-              cleanFilters(
-                Object.fromEntries(
-                  Object.entries(filters.filters).filter(([key]) => key !== "status"),
-                ),
-              ),
-            );
-            setShowArchived(filters.archived);
-            if (savedStatus === "open" || savedStatus === "closed" || savedStatus === "all") {
-              setStatus(savedStatus);
-            }
-            if (filters.columns.length > 0) {
-              columnPreferences.apply(filters.columns);
-            }
-            setPage(1);
-          }}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <SearchField
-              label="Search deals"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setPage(1);
-              }}
-              onClear={() => {
-                setQuery("");
-                setPage(1);
-              }}
-              placeholder="Search deals by name or company…"
-              containerClassName="w-full sm:w-80"
-            />
-            <ColumnPreferences preference={columnPreferences} />
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 pt-2 sm:p-5 sm:pt-2">
+        <ListToolbar
+          aria-label="Deal table controls"
+          summary={
+            <>
             <span role="status" aria-live="polite">
               {list.total} {list.total === 1 ? "deal" : "deals"}
             </span>
             <span>
               Open pipeline ({list.reportingCurrency}): {formatMinorAmount(list.openValueCents, list.reportingCurrency)}
             </span>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            className="flex flex-wrap items-center gap-1 rounded-md border border-border p-1"
-            role="group"
+            </>
+          }
+        >
+          <SearchField
+            label="Search deals"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+            onClear={() => {
+              setQuery("");
+              setPage(1);
+            }}
+            placeholder="Search deals by name or company…"
+            containerClassName="w-full sm:w-64"
+          />
+          <label className="sr-only" htmlFor="deal-status-filter">Deal status</label>
+          <select
+            id="deal-status-filter"
+            className={`${SELECT_CLASS} w-28`}
             aria-label="Deal status filter"
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value as DealListStatus);
+              setPage(1);
+            }}
           >
             {DEAL_STATUS_OPTIONS.map((option) => (
-              <Button
-                key={option.id}
-                type="button"
-                variant={status === option.id ? "secondary" : "ghost"}
-                size="sm"
-                aria-pressed={status === option.id}
-                onClick={() => {
-                  setStatus(option.id);
-                  setPage(1);
-                }}
-              >
-                {option.label}
-              </Button>
+              <option key={option.id} value={option.id}>{option.label}</option>
             ))}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Source amounts stay in their original currency; compatible pipeline totals use frozen base money.
-          </p>
-        </div>
-        <ListControls
-          entityLabel="deals"
-          sort={sort}
-          dir={dir}
-          sortOptions={DEAL_SORT_OPTIONS}
-          filters={filters}
-          facets={facets}
-          onSortChange={(next) => {
-            setSort(next);
-            setPage(1);
-          }}
-          onDirChange={(next) => {
-            setDir(next);
-            setPage(1);
-          }}
-          onFiltersChange={(next) => {
-            setFilters(cleanFilters(next));
-            setPage(1);
-          }}
-        />
+          </select>
+          <SavedViewBar
+            compact
+            entity="DEAL"
+            currentFilters={{
+              q: query,
+              sort,
+              dir,
+              archived: showArchived,
+              filters: { ...filters, status: [status] },
+              columns: columnPreferences.visibleColumns.map((column) => column.id),
+            }}
+            onApplyFilters={(filters: SavedViewFilters) => {
+              const savedStatus = filters.filters.status?.[0];
+              setQuery(filters.q);
+              setSort(
+                DEAL_SORT_OPTIONS.some((option) => option.value === filters.sort)
+                  ? filters.sort
+                  : "createdAt",
+              );
+              setDir(filters.dir);
+              setFilters(cleanFilters(Object.fromEntries(Object.entries(filters.filters).filter(([key]) => key !== "status"))));
+              setShowArchived(filters.archived);
+              if (savedStatus === "open" || savedStatus === "closed" || savedStatus === "all") setStatus(savedStatus);
+              if (filters.columns.length > 0) columnPreferences.apply(filters.columns);
+              setPage(1);
+            }}
+          />
+          <ListControls
+            compact
+            entityLabel="deals"
+            sort={sort}
+            dir={dir}
+            sortOptions={DEAL_SORT_OPTIONS}
+            filters={filters}
+            facets={facets}
+            onSortChange={(next) => {
+              setSort(next);
+              setPage(1);
+            }}
+            onDirChange={(next) => {
+              setDir(next);
+              setPage(1);
+            }}
+            onFiltersChange={(next) => {
+              setFilters(cleanFilters(next));
+              setPage(1);
+            }}
+          />
+          <ColumnPreferences preference={columnPreferences} iconOnly />
+          <Button
+            type="button"
+            variant={showArchived ? "secondary" : "outline"}
+            size="icon"
+            className="size-9"
+            aria-label="Archived"
+            aria-pressed={showArchived}
+            onClick={() => {
+              setShowArchived((value) => !value);
+              setPage(1);
+            }}
+          >
+            <Icon name="Archive" aria-hidden="true" />
+          </Button>
+        </ListToolbar>
         {unconverted.count > 0 ? (
           <div
             className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
