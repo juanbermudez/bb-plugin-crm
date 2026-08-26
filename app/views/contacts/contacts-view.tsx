@@ -23,6 +23,7 @@ import type {
   ContactListOutput,
 } from "../../../contracts/core.js";
 import { useContactsRpc, type ContactsRpcClient } from "./rpc.js";
+import { ActivityTimeline } from "../activity/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -848,6 +849,12 @@ export function ContactsView({
                 onArchive={() => void runArchiveMutation("contacts_archive")}
                 onRestore={() => void runArchiveMutation("contacts_restore")}
                 onPurge={() => void purgeRecord()}
+              />
+            ) : recordTab === "activity" ? (
+              <ActivityTimeline
+                anchor={{ contactId: record.id }}
+                title="Contact activity"
+                description="Notes, touchpoints, and follow-up work for this contact."
               />
             ) : (
               <StagedContactTab tab={recordTab} />

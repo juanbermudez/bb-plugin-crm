@@ -30,6 +30,7 @@ import {
   TableShell,
 } from "../../components/index.js";
 import { useDealsRpc, type DealsRpcClient } from "./rpc.js";
+import { ActivityTimeline } from "../activity/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -1106,6 +1107,12 @@ export function DealsView({
                 onArchive={() => void runArchiveMutation("deals_archive")}
                 onRestore={() => void runArchiveMutation("deals_restore")}
                 onPurge={() => void purgeRecord()}
+              />
+            ) : recordTab === "activity" ? (
+              <ActivityTimeline
+                anchor={{ dealId: record.id }}
+                title="Deal activity"
+                description="Notes, touchpoints, and follow-up work for this deal."
               />
             ) : (
               <StagedDealTab tab={recordTab} />

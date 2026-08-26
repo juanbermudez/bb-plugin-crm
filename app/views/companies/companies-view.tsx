@@ -17,6 +17,7 @@ import type {
   CompanyListOutput,
 } from "../../../contracts/core.js";
 import { useCompaniesRpc, type CompaniesRpcClient } from "./rpc.js";
+import { ActivityTimeline } from "../activity/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -736,6 +737,12 @@ export function CompaniesView({
                 onArchive={() => void runArchiveMutation("companies_archive")}
                 onRestore={() => void runArchiveMutation("companies_restore")}
                 onPurge={() => void purgeRecord()}
+              />
+            ) : recordTab === "activity" ? (
+              <ActivityTimeline
+                anchor={{ companyId: record.id }}
+                title="Company activity"
+                description="Notes, touchpoints, and follow-up work for this company."
               />
             ) : (
               <StagedCompanyTab tab={recordTab} />
