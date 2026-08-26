@@ -38,7 +38,7 @@ Status meanings:
 | Desktop icon rail | One first-class CRM sidebar row with a contact-record mark; BB-styled tabs sit beside the text-only host CRM title because nested groups are unavailable in SDK 0.4.x | adapted | 1 |
 | Mobile navigation | Horizontally scrollable CRM tabs fall back to the top of the panel below 1024px | adapted | 1 |
 | Global app header | BB host title bar | host-owned | 1 |
-| CRM header actions | BB nav-panel `headerContent`; search, enrichment, checklist progress, and New precede the host right-panel toggle | done | 1 |
+| CRM header actions | BB nav-panel `headerContent`; expandable search, enrichment, checklist progress, and New use one compact ghost-icon style with top tooltips and precede the host right-panel toggle without overlap | done | 1 |
 | Global create menu | Keyboard-accessible routes for company, contact, deal, agent, note, and task creation; notes/tasks require an existing CRM record | done | 5 |
 | Quick switcher | Cross-record CRM search and deep links | done | 5 |
 | Deep links | BB `subPath` routes | done | 1 |
@@ -74,7 +74,7 @@ Status meanings:
 | Owner, industry, enrichment facets | Filter bar | done | 2 |
 | Activity and custom-field facets | Contextual filter-bar counts in current search/archive scope; 7/30/90-day activity windows and `field:<key>` custom-field keys | done | 5 |
 | Saved views | Saved-view rows and installation default | done | 5 |
-| Compact list controls | One non-wrapping table toolbar with saved-view selector, searchable facet popover when merited, and tooltip-backed icon actions | done | 2/5 |
+| Compact list controls | One non-wrapping table toolbar: search/filter left; sort, saved views, columns, and archive right; one icon size/style with top tooltips; no redundant result count | done | 2/5 |
 | Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
 | Bulk owner | Bulk RPC and CLI | done | 2 |

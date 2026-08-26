@@ -28,9 +28,12 @@ Currently working end to end:
   tracking sites/events, daily traffic-source rollups, and the installation's
   website/optional company profile
 - company, contact, deal, and agent tables with a compact single-row command
-  bar; BB-native facet popovers add search when option volume merits it, while
-  icon-only save-view, sort-direction, columns, and archive controls expose
-  accessible top tooltips; pagination, standard/custom facets, saved-view restore/defaults, row
+  bar; company/contact/deal search and filtering stay grouped on the left,
+  while sorting, saved views, columns, and archive scope stay grouped on the
+  right. BB-native facet popovers add search when option volume merits it,
+  while icon-only save-view, sort-direction, columns, and archive controls use
+  one ghost-button style and expose accessible top tooltips; pagination,
+  standard/custom facets, saved-view restore/defaults, row
   selection, and bulk owner/company/stage/archive/restore/purge operations
   where applicable, plus persistent column visibility/order, deep-linked wide
   drawers, nested relationship navigation, primary-contact assignment with a
@@ -44,8 +47,9 @@ Currently working end to end:
 - work-email auto-company resolution for eligible domains and normalized
   contact-email suppression tombstones on purge, cleared only by explicit
   recreation
-- persisted first-open onboarding in a modal with a title-bar progress ring,
-  BB title-bar CRM actions, and cross-record global search for companies,
+- persisted first-open onboarding in a modal with a visually legible title-bar
+  progress ring; uniform ghost icon actions for expandable search, enrichment,
+  checklist, and New; and cross-record global search for companies,
   contacts, and deals; a keyboard-accessible global New
   menu for company/contact/deal/agent plus record-attached note/task creation
 - a shell-level enrichment queue for persisted local agent runs, field

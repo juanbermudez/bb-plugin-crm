@@ -123,9 +123,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
   retain deep-link state through `subPath`.
 - One BB `settingsSection` owns workspace, currency, field, connection, and
   tracking configuration; settings is not advertised in CRM navigation.
-- BB's host-owned title bar mounts compact CRM search, enrichment, a modal
-  onboarding checklist trigger with a progress ring, and a
-  keyboard-accessible New menu for company, contact,
+- BB's host-owned title bar mounts one consistent ghost-icon action family:
+  expandable CRM search, enrichment, a modal onboarding checklist trigger with
+  a visible minimum progress arc, and a keyboard-accessible New menu for company, contact,
   deal, note, task, and agent creation. Notes and tasks first select an
   existing company, contact, or deal and then create the activity through the
   same typed RPC as record drawers.
@@ -166,7 +166,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - One CRM destination lives in BB's sidebar; Overview, Companies, Contacts,
   Deals, and Agents are title-bar tabs on desktop and compact in-panel tabs on
   smaller layouts. Settings lives under BB Settings → Plugins → CRM.
-- Global search and quick switcher mount in BB's host-owned title bar.
+- Global search and quick switcher mount in BB's host-owned title bar as an
+  icon button that expands to a bounded field without covering adjacent actions.
 - Keyboard-accessible global New menu for company, contact, deal, note, task,
   and agent. Record-attached notes/tasks use a global picker and the existing
   activity contract rather than inventing an unscoped activity.
@@ -191,9 +192,11 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Companies
 
 - Searchable, sortable, paginated table.
-- One non-wrapping toolbar above the table contains search, saved view,
-  searchable facet popover, sort/direction, columns, archived scope,
-  tooltip-backed save-view icon, and result count.
+- One non-wrapping toolbar above the table groups search and the searchable
+  facet popover on the left. Sort/direction, saved views, columns, and archived
+  scope form a separate right-side table-organization group. All icon actions
+  share one size, ghost treatment, padding model, and top tooltip; redundant
+  result counts are omitted above the table.
 - Saved views and column preferences.
 - Standard and custom field columns, with contextual facet counts and 7/30/90-day
   activity facets; custom-field facet keys are `field:<key>`.
@@ -215,8 +218,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Contacts
 
 - Searchable, sortable, paginated table.
-- One compact toolbar above the table contains search, saved view, filter,
-  sort/direction, columns, archived scope, save-view icon, and result count.
+- One compact toolbar above the table groups search/filter on the left and
+  sort/direction, saved views, columns, and archived scope on the right. The
+  saved-view base option is labeled `All records`; no duplicate result count is
+  rendered above the table.
 - Saved views, contextual facets, standard fields, custom fields, and bulk
   actions. Activity facets use 7/30/90-day recency windows and custom-field
   keys use `field:<key>`.
@@ -234,8 +239,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Deals
 
 - Searchable, sortable, paginated table.
-- One compact toolbar above the table contains search, saved view, status,
-  filter, sort/direction, columns, archived scope, save-view icon, and result count.
+- One compact toolbar above the table groups search, status, and filters on the
+  left and sort/direction, saved views, columns, and archived scope on the
+  right. Redundant deal-count and pipeline-summary text is omitted from the
+  control row.
 - Stage, owner, company, contact, currency, close-date, and value facets;
   deal search includes associated company name and custom-field facets use
   `field:<key>`.

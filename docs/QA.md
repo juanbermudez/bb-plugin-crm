@@ -114,6 +114,16 @@ bundle reported app hash `dd8f433df71f490b` and runtime SDK `0.4.8`.
 
 Observed in the live CRM panel:
 
+- A follow-up source-development smoke after `ca22762` inspected Contacts,
+  Companies, and Deals at 1280×720. Each rendered a single 36px control row:
+  search/filter controls were grouped left, table-organization controls were
+  grouped right, `All records` replaced the ambiguous `Base filters` label,
+  and the trailing result count was absent. Sort direction, save view, columns,
+  and archive used the same ghost icon-button geometry and retained accessible
+  names/top tooltips. The title tabs remained pinned beside CRM. Expanding
+  Search CRM no longer covered enrichment, checklist progress, New, or BB's
+  right-panel toggle. The pass completed with 360 tests, TypeScript validation,
+  a production plugin build, and no live interaction failures.
 - The current simplification pass has automated coverage for one BB CRM panel,
   BB-styled internal tabs, the checklist modal/progress ring, non-wrapping
   company/contact/deal/agent controls, searchable facet popovers, tooltip-backed
