@@ -1176,6 +1176,7 @@ export default async function plugin(bb: BbPluginApi) {
       : undefined;
     const output: CompanyOutput = {
       ...company,
+      owner: company.ownerId === null ? null : localOwner(company.ownerId),
       fields: recordFieldValues("COMPANY", company.id),
       contactCount: counts.contactCount,
       openDealCount: counts.openDealCount,
@@ -3024,6 +3025,7 @@ export default async function plugin(bb: BbPluginApi) {
       undefined;
     const output: ContactOutput = {
       ...contact,
+      owner: contact.ownerId === null ? null : localOwner(contact.ownerId),
       company: company ?? null,
       isPrimaryContact,
       deals,
@@ -3105,6 +3107,7 @@ export default async function plugin(bb: BbPluginApi) {
     `).all(deal.id) as DealOutput["contacts"];
     return {
       ...deal,
+      owner: localOwner(deal.ownerId),
       currency: currencyCodeSchema.parse(deal.currency),
       baseCurrency:
         deal.baseCurrency === null ? null : currencyCodeSchema.parse(deal.baseCurrency),

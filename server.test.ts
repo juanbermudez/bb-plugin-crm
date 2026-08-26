@@ -162,8 +162,13 @@ describe("CRM plugin foundation", () => {
       "--json",
     ]);
     expect(createdDealResult.exitCode).toBe(0);
-    const deal = JSON.parse(createdDealResult.stdout) as { id: string; amountCents: number };
+    const deal = JSON.parse(createdDealResult.stdout) as {
+      id: string;
+      amountCents: number;
+      owner: { id: string; name: string };
+    };
     expect(deal.amountCents).toBe(12500);
+    expect(deal.owner).toEqual(expect.objectContaining({ id: "local_user", name: "You" }));
 
     const listed = await harness.behavior.runCli(["list", "company", "--q", "CLI", "--json"]);
     expect(listed.exitCode).toBe(0);
