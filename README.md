@@ -24,8 +24,11 @@ Currently working end to end:
 - company, contact, and deal tables with search, pagination, sorting and
   direction, standard/custom facets, saved-view restore/defaults, row
   selection, and bulk owner/company/stage/archive/restore/purge operations
-  where applicable, plus deep-linked wide drawers, relationships, and realtime
-  invalidation
+  where applicable, plus persistent column visibility/order, deep-linked wide
+  drawers, nested relationship navigation, primary-contact assignment, and
+  realtime invalidation
+- persisted first-open onboarding, CRM header actions, and cross-record global
+  search for companies, contacts, and deals
 - shared record timelines with note/call/email/meeting/task composition,
   cursor pagination, and task completion/reopen
 - eleven-currency source amounts, frozen reporting money, manual rate
@@ -34,10 +37,14 @@ Currently working end to end:
   options, visibility flags, and agent instructions
 - agent definitions, versions, validation/deployment, manual and scheduled
   triggers, durable runs/actions/audit history, hidden BB-thread dispatch, and
-  the bundled `crm` operating skill with seven native CRM tools
+  the bundled `crm` operating skill with seven native CRM tools; record Agent
+  tabs render plugin-spawned linked BB threads through host `ThreadChat`
+- evidence review for proposed facts/work history, immutable background brief
+  versions, approval resolution, auditable run retry, and linked-thread cancel
 - connection health/diagnostics boundaries for Google, Microsoft, and Slack;
-  tracking-site verification, pause/rotate/revoke, privacy-safe ingestion,
-  daily rollups, retention pruning, and one-time token display
+  tracking-site verification, pause/rotate/revoke, a fixed loader and public
+  domain/token/privacy-validated collector, daily rollups, archive/event
+  retention services, and one-time token display
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
 
 The current BB SDK does not provide plugin RBAC/current-user identity or a
@@ -45,8 +52,10 @@ plugin blob API. OAuth credentials and provider authorization are not bundled;
 connections remain metadata/health boundaries until a host-authorized flow is
 configured. Agent thread cancellation can remain pending while BB reports a
 thread as stopping. Event/webhook triggers require an external producer, and a
-public share relay is not included. These limits and the remaining source gaps
-are recorded in [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).
+public share relay is not included. General-purpose API keys are not issued
+because BB exposes no safe current-user/RBAC authority for them. These limits
+and the remaining source gaps are recorded in
+[docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).
 
 ## CLI
 

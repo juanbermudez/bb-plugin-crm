@@ -89,9 +89,10 @@ approved release tag.
 CRM brings the CRM workspace into BB as a native extension for managing
 companies, contacts, deals, activities, saved views, custom fields, currency
 reporting, agent definitions/runs, connection health, and privacy-safe site
-tracking. The current build includes a BB-thread dispatcher and the
-installation CLI for status, health, lists, CRUD, activities, tasks, and
-versioned import/export.
+tracking. The current build includes persisted onboarding/columns, linked
+record Agent threads, evidence review, fixed tracking loader/collector routes,
+archive retention, a BB-thread dispatcher, and the installation CLI for
+status, health, lists, CRUD, activities, tasks, and versioned import/export.
 
 ## Source release
 
@@ -103,7 +104,7 @@ versioned import/export.
 
 ## Plugin checks
 
-- 29 test files / 146 tests passed with `npm test -- --run`
+- 37 test files / 160 tests passed with `npm test -- --run`
 - `npm run typecheck` passed
 - `npm run build` passed and emitted identity-checked metadata
 - `git diff --check` passed
@@ -113,7 +114,9 @@ versioned import/export.
   advanced Companies facets/selection, Agent creation, Connections/Tracking
   empty states, tracking site/one-time credential behavior, and CLI
   status/doctor/list. A focused 390×844 compact dark-theme pass also succeeded;
-  full keyboard, light/custom-theme, and Electron-specific QA were not run.
+  the refreshed panel also covered onboarding, global search, column controls,
+  record Agent empty-state behavior, and the fixed public tracking loader. Full
+  keyboard, light/custom-theme, and Electron-specific QA were not run.
 
 ## Marketplace checks
 

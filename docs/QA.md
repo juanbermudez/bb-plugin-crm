@@ -5,11 +5,11 @@ port plan and marketplace draft and are not treated as passing evidence.
 
 ## Clean local gate
 
-Verified on 2026-08-25 at main revision `1bd16e2` (the source tree was clean
+Verified on 2026-08-26 at main revision `943dbaa` (the source tree was clean
 before this documentation-only update), against BB `0.39.0` and plugin SDK
 `0.4.8`:
 
-- `npm test -- --run`: 29 test files and 146 tests passed.
+- `npm test -- --run`: 37 test files and 160 tests passed.
 - `npm run typecheck`: passed.
 - `npm run build`: passed and emitted the server/app bundles and metadata.
 - `git diff --check`: passed.
@@ -35,13 +35,18 @@ databases for migrations and persistence. They cover:
 - Validated-only agent deployment, persistent disabling of invalid schedules,
   exports beyond 1,000 rows, and rejection of email- and payment-card-shaped
   tracking property values.
+- Persisted onboarding/columns, cross-record search, nested company relations,
+  record-linked Agent tabs, evidence decisions/brief history, run retry/cancel,
+  approval resolution, agent execution settings, fixed tracking HTTP routes,
+  and dependency-safe archive retention.
 
 ## Packaged BB reload smoke
 
 The freshly built package was installed and reloaded in packaged BB `0.39.0`.
-The plugin reported `running`; the reload exposed 83 registered handlers, and
-the `crm-agent-dispatcher` background service was running. No secret, one-time
-credential, or token value is recorded here.
+The plugin reported `running`; both `crm-agent-dispatcher` and
+`crm-archive-retention` background services were running. `bb crm doctor`
+reported schema version 6, SQLite integrity `ok`, and zero foreign-key
+violations. No secret, one-time credential, or token value is recorded here.
 
 Observed in the live CRM panel:
 
@@ -66,6 +71,12 @@ Observed in the live CRM panel:
 - A 390×844 compact dark-theme pass kept navigation, actions, saved views,
   search, sort controls, and the company table usable without catastrophic
   overflow. Wide tables retain intentional horizontal scrolling.
+- The refreshed packaged panel rendered the persisted onboarding checklist,
+  CRM header actions, cross-record search results, accessible column controls,
+  and the company record Agent tab. With no deployed live agent, the tab
+  correctly disabled thread creation and explained the empty state.
+- The public fixed tracking loader returned JavaScript with `PAGE_VIEW` and
+  `crmTrack`, cross-origin resource policy, and no site-token-shaped value.
 
 ## Release-gated or not run
 

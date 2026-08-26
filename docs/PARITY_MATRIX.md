@@ -18,14 +18,14 @@ Status meanings:
 | Marketing landing | GitHub README and marketplace detail | host-owned | 10 |
 | Sign-in | BB application session | host-owned | 0 |
 | Grant mailbox access | CRM connection authorization boundary | building | 7 |
-| Workspace onboarding | First-open CRM checklist | planned | 8 |
+| Workspace onboarding | Persisted first-open CRM checklist | done | 8 |
 | Research onboarding | Secret research-key setting | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
 | Desktop icon rail | Inner CRM rail inside BB nav panel | done | 1 |
 | Mobile navigation | Compact CRM navigation row | done | 1 |
 | Global app header | BB host title bar | host-owned | 1 |
-| CRM header actions | BB nav-panel header content | planned | 1 |
-| Quick switcher | CRM search and BB command palette action | planned | 5 |
+| CRM header actions | BB nav-panel header content | done | 1 |
+| Quick switcher | Cross-record CRM search and deep links | done | 5 |
 | Deep links | BB `subPath` routes | done | 1 |
 | Browser back/forward | `useBbNavigate` panel history | done | 1 |
 | Global record sheet host | Responsive CRM drawer and record stack | building | 2–5 |
@@ -59,7 +59,7 @@ Status meanings:
 | Owner, industry, enrichment facets | Filter bar | done | 2 |
 | Activity and custom-field facets | Filter bar | done | 5 |
 | Saved views | Saved-view rows and installation default | done | 5 |
-| Column preferences | Client preference plus field definitions | planned | 5 |
+| Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
 | Bulk owner | Bulk RPC and CLI | done | 2 |
 | Bulk enrichment | Bulk RPC and CLI | planned | 2 |
@@ -70,8 +70,8 @@ Status meanings:
 | Related contacts | Record tab | done | 2 |
 | Related deals | Record tab | done | 2 |
 | Company activity | Record tab | done | 5 |
-| Company Agent tab | Linked BB thread | planned | 6 |
-| Primary contact | Company relation operation | planned | 2 |
+| Company Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
+| Primary contact | Company relation operation | done | 2 |
 | Company enrichment/research | Optional integration and agent tools | planned | 3/6 |
 
 ## Contacts and evidence
@@ -89,11 +89,11 @@ Status meanings:
 | Contact overview | Record tab | done | 3 |
 | Attached deals and roles | Record tab | done | 3/4 |
 | Contact activity | Record tab | done | 5 |
-| Contact Agent tab | Linked BB thread | planned | 6 |
-| Applied facts | Evidence ledger and contact projection | building | 3 |
-| Proposed fact decision | Review action | building | 3 |
-| Dismiss/supersede | Evidence state transition | building | 3 |
-| Background brief | Versioned brief | building | 3 |
+| Contact Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
+| Applied facts | Evidence ledger and contact projection | done | 3 |
+| Proposed fact decision | Accept/dismiss review actions | done | 3 |
+| Dismiss/supersede | Evidence state transitions | done | 3 |
+| Background brief | Versioned brief display/create/history | done | 3 |
 | Email/meeting relationship summary | Timeline aggregate | planned | 7 |
 | Social lookup and work history | Optional research tools | building | 3/6 |
 | Contact portrait | Bounded plugin asset storage | gap | 3 |
@@ -117,7 +117,7 @@ BB has no plugin blob API.
 | Stage stepper | BB-tokenized stage control | building | 4 |
 | Attached contacts and roles | Record tab | done | 4 |
 | Deal activity | Record tab | done | 5 |
-| Deal Agent tab | Linked BB thread | planned | 6 |
+| Deal Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
 | Source amount/currency | Integer minor units and code | done | 4 |
 | Frozen base amount | Stored converted minor units | done | 4 |
 | Manual rates | Currency settings | done | 4/8 |
@@ -129,12 +129,12 @@ BB has no plugin blob API.
 
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
-| Nested record stack | Drawer stack state | planned | 2–5 |
+| Nested record stack | Company relation drawer stack with Back navigation | done | 2–5 |
 | Record back/close | Drawer navigation | done | 2–5 |
 | Record deep link | `subPath` record ID | done | 1 |
 | Inline field edit | Optimistic typed mutation | building | 2–5 |
 | Company/contact/deal custom fields | Typed field system | done | 5 |
-| Standard field visibility/order | Field definition flags | planned | 5 |
+| Standard field visibility/order | Persisted table-column visibility/order | done | 5 |
 | Field archive/restore/delete | Field operations | done | 5 |
 | Agent-filled field instructions | Field agent metadata | done | 5/6 |
 | Field coverage and fill-rest | Coverage RPC and agent task | building | 5/6 |
@@ -159,10 +159,10 @@ BB has no plugin blob API.
 | Evidence and identity rules | Skill references and tool validation | done | 6 |
 | Due-task leasing | SQLite transaction and dispatcher | planned | 6 |
 | Durable worker | Hidden BB thread and `crm-agent-dispatcher` service | done | 6 |
-| Record conversation | Linked BB thread | building | 6 |
-| Transcript and tools | BB `ThreadChat` | planned | 6 |
+| Record conversation | Idempotent plugin-spawned linked BB thread | done | 6 |
+| Transcript and tools | Host `ThreadChat` for linked record threads | done | 6 |
 | Clarification question | BB pending interaction | planned | 6 |
-| Builder home/chat | CRM nav routes | planned | 6 |
+| Builder home/chat | CRM Agents route, editor, runs, and linked record chat | done | 6 |
 | Builder attachments | BB project attachment inputs | planned | 6 |
 | Agent definitions and versions | Plugin tables and editor | done | 6 |
 | Draft validation/deploy | Version state machine | done | 6 |
@@ -171,8 +171,8 @@ BB has no plugin blob API.
 | CRM event trigger | Domain-event dispatcher | planned | 6 |
 | Webhook trigger | External producer boundary | gap | 6 |
 | Run/action/audit history | Plugin tables and drawer | done | 6 |
-| Approval | Pending interaction and durable state | building | 6 |
-| Retry/cancel | Thread/run lifecycle operations | building | 6 |
+| Approval | Durable approve/deny actions and run UI | done | 6 |
+| Retry/cancel | Auditable retry plus linked-thread cancel cleanup | done | 6 |
 | Share read-only builder chat | Local export only | gap | 6 |
 | Slack message action | Optional Slack integration | planned | 6/7 |
 
@@ -191,9 +191,9 @@ an external relay.
 | Slack channels and creation | Channel settings | planned | 7 |
 | Slack people matching | Exact-email match plus review | planned | 7 |
 | HubSpot/Linear coming-soon rows | Omitted until supported | host-owned | 7 |
-| Intake endpoint | Token-provisioning boundary; producer remains external | gap | 7 |
-| Tracking loader and script | Fixed plugin HTTP routes | planned | 7 |
-| Anonymous tracking collector | Token-validated RPC ingestion; external producer required | gap | 7 |
+| Intake endpoint | Fixed unauthenticated route with site-token authority | done | 7 |
+| Tracking loader and script | Fixed `GET /tracking/loader.js` route | done | 7 |
+| Anonymous tracking collector | Domain/token/privacy-validated HTTP collector | done | 7 |
 | Tracking privacy rules | Boundary sanitizer and tests | done | 7 |
 | Allowed domains and scopes | Tracking settings | done | 7 |
 | Site verify/pause/rotate | Tracking operations | done | 7 |
@@ -202,17 +202,22 @@ an external relay.
 | Workspace name | Plugin setting | done | 1 |
 | Reporting currency | Plugin setting | done | 1 |
 | Research API key | Secret plugin setting | done | 1 |
-| Archive retention | Plugin setting and prune schedule | planned | 8 |
-| Agent model | BB provider/model picker | planned | 8 |
-| API keys | Scoped plugin tokens | planned | 8 |
+| Archive retention | Bounded setting, prune RPC, and background service | done | 8 |
+| Agent model | Strict provider/model/reasoning settings forwarded to BB | done | 8 |
+| API keys | Scoped user tokens | gap | 8 |
 | Members and role changes | BB user identity | gap | 8 |
 | SSO providers | BB authentication settings | host-owned | 8 |
 | Backup/export/import | Versioned JSON and CSV CLI | done | 5/8 |
 | Diagnostics | `bb crm status` and doctor | done | 1/8 |
 
-Fallback for the collector: issue a rotatable site-scoped token that has no
-authority outside tracking ingestion. The loader/producer is external to the
-plugin, and the BB plugin token is never embedded.
+The collector uses a rotatable site-scoped token that has no authority outside
+tracking ingestion. The fixed loader never embeds the BB plugin token or a
+provisioned site token; an administrator supplies the one-time site token as a
+script data attribute on the authorized site.
+
+Fallback for API keys: no general-purpose key is issued. BB SDK `0.4.8` exposes
+the installation plugin token but no current-user/RBAC authority surface, so
+delegating that token would grant unsafe installation-wide authority.
 
 Fallback for members: the first marketplace release operates as one
 installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity or RBAC
@@ -234,6 +239,9 @@ parity claims:
 - Event and webhook triggers have a strict persisted boundary, but require an
   external event/webhook producer. The plugin does not invent or bundle those
   producers.
+- A plugin record can be linked atomically to a thread the plugin spawns. The
+  SDK has no callback for attaching an arbitrary pre-existing user-composed BB
+  thread, so that path is not claimed.
 - Builder sharing is local export only. BB exposes no public share relay, so a
   public share requires BB Connect or an external relay.
 
