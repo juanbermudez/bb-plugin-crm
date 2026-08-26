@@ -33,6 +33,7 @@ import {
 import { useDealsRpc, type DealsRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
+import { RecordFieldsEditor } from "../record-fields/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -500,6 +501,8 @@ function DealOverview({
           </p>
         </section>
       ) : null}
+
+      <RecordFieldsEditor entity="DEAL" recordId={deal.id} />
 
       <section className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
         {deal.archivedAt ? (

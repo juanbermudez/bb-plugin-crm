@@ -20,6 +20,7 @@ import type {
 import { useCompaniesRpc, type CompaniesRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
+import { RecordFieldsEditor } from "../record-fields/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -243,6 +244,7 @@ function CompanyOverview({
           </p>
         </section>
       ) : null}
+      <RecordFieldsEditor entity="COMPANY" recordId={company.id} />
       <section className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
         {company.archivedAt ? (
           <Button

@@ -14,7 +14,9 @@ import type { Contact, ContactListOutput } from "../../../contracts/core.js";
 import { ContactsView, type ContactsRpcClient } from "./index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
-  useRpc: () => ({ call: vi.fn(async (method: string) => method === "savedViews_list" ? [] : null) }),
+  useRpc: () => ({ call: vi.fn(async (method: string) =>
+    method === "savedViews_list" || method === "fields_list" || method === "fields_values_list" ? [] : null,
+  ) }),
 }));
 
 afterEach(() => {
