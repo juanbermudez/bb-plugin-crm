@@ -21,6 +21,7 @@ import {
   type DealUpdateInput,
   type SetDealStageInput,
   type DealListStatus,
+  type SavedViewFilters,
 } from "../../../contracts/core.js";
 import {
   EmptyState,
@@ -31,6 +32,7 @@ import {
 } from "../../components/index.js";
 import { useDealsRpc, type DealsRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
+import { SavedViewBar } from "../saved-views/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -871,6 +873,26 @@ export function DealsView({
         }
       />
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
+        <SavedViewBar
+          entity="DEAL"
+          currentFilters={{
+            q: query,
+            sort: "createdAt",
+            dir: "desc",
+            archived: showArchived,
+            filters: { status: [status] },
+            columns: [],
+          }}
+          onApplyFilters={(filters: SavedViewFilters) => {
+            const savedStatus = filters.filters.status?.[0];
+            setQuery(filters.q);
+            setShowArchived(filters.archived);
+            if (savedStatus === "open" || savedStatus === "closed" || savedStatus === "all") {
+              setStatus(savedStatus);
+            }
+            setPage(1);
+          }}
+        />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchField
             label="Search deals"

@@ -14,7 +14,7 @@ import type { Deal, DealListOutput } from "../../../contracts/core.js";
 import { DealsView, type DealsRpcClient } from "./index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
-  useRpc: () => ({ call: vi.fn() }),
+  useRpc: () => ({ call: vi.fn(async (method: string) => method === "savedViews_list" ? [] : null) }),
 }));
 
 afterEach(() => {

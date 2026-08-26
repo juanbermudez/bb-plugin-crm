@@ -15,9 +15,11 @@ import type {
   CompanyCreateInput,
   CompanyListInput,
   CompanyListOutput,
+  SavedViewFilters,
 } from "../../../contracts/core.js";
 import { useCompaniesRpc, type CompaniesRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
+import { SavedViewBar } from "../saved-views/index.js";
 
 const PAGE_SIZE = 25;
 
@@ -595,6 +597,22 @@ export function CompaniesView({
         }
       />
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
+        <SavedViewBar
+          entity="COMPANY"
+          currentFilters={{
+            q: query,
+            sort: "name",
+            dir: "asc",
+            archived: showArchived,
+            filters: {},
+            columns: [],
+          }}
+          onApplyFilters={(filters: SavedViewFilters) => {
+            setQuery(filters.q);
+            setShowArchived(filters.archived);
+            setPage(1);
+          }}
+        />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SearchField
             label="Search companies"
