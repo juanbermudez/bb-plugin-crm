@@ -20,6 +20,11 @@ tag, or marketplace submission.
   imports, generated metadata, package contents, icon, migrations, security
   boundaries, and checked-in release claims. Public-tag installation and
   marketplace validation remain release-gated.
+- A final managed-install rehearsal exposed that the published BB `0.39.0`
+  builder does not provide the newer `class-variance-authority`, `clsx`, and
+  `tailwind-merge` host shims. The manifest now keeps exact runtime pins for
+  compatibility with the declared minimum; the corrected public commit must
+  complete the managed Git-install smoke below before release approval.
 
 The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite

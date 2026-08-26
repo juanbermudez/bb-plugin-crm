@@ -213,9 +213,12 @@ marketplace pass is claimed before that tag.
   `git diff --check`.
 - [ ] Inspect every generated `dist/*.meta.json` for matching plugin id,
   plugin version, SDK major/version, artifact format, and build metadata.
-- [ ] Verify runtime imports are in `dependencies`, BB-shimmed packages and
-  SDK/type tooling are in exact `devDependencies`, and no private `@bb/*`
-  package is imported.
+- [ ] Verify runtime imports are resolvable after BB's managed
+  `npm install --omit=dev`, SDK/type tooling and portal shims are exact
+  `devDependencies`, and no private `@bb/*` package is imported. For the
+  declared BB `0.39` minimum, keep the exact `class-variance-authority`,
+  `clsx`, and `tailwind-merge` runtime pins: the published 0.39 builder does
+  not yet provide their newer host shims.
 - [ ] Run the frontend/backend SDK harness tests with real temporary SQLite;
   do not mock the database.
 - [ ] Complete live BB panel QA for every implemented view, drawer, keyboard
