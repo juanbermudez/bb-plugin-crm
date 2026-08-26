@@ -13,7 +13,7 @@ export interface ListToolbarProps extends HTMLAttributes<HTMLDivElement> {
 export function ListToolbar({ children, summary, className, ...props }: ListToolbarProps) {
   return (
     <div
-      className={cn("flex min-w-0 flex-wrap items-center gap-2", className)}
+      className={cn("flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5", className)}
       role="toolbar"
       {...props}
     >

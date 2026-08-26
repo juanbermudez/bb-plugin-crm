@@ -1968,7 +1968,7 @@ export function DealsView({
               setPage(1);
             }}
             placeholder="Search deals by name or company…"
-            containerClassName="w-full sm:w-64"
+            containerClassName="w-full sm:w-56"
           />
           <label className="sr-only" htmlFor="deal-status-filter">Deal status</label>
           <select

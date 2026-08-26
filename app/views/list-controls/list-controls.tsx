@@ -273,7 +273,7 @@ export function ListControls({
           <label className="sr-only" htmlFor={`${filtersId}-sort`}>Sort {entityLabel}</label>
           <select
             id={`${filtersId}-sort`}
-            className={cn(SELECT_CLASS, "w-44 pl-9")}
+            className={cn(SELECT_CLASS, "w-36 pl-9")}
             aria-label={`Sort ${entityLabel}`}
             value={sort}
             onChange={(event) => onSortChange(event.target.value)}

@@ -1619,7 +1619,7 @@ export function ContactsView({
               setPage(1);
             }}
             placeholder="Search contacts by name, email, or company…"
-            containerClassName="w-full sm:w-64"
+            containerClassName="w-full sm:w-56"
           />
           <SavedViewBar
             compact

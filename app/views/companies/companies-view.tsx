@@ -1901,7 +1901,7 @@ export function CompaniesView({
               setPage(1);
             }}
             placeholder="Search companies…"
-            containerClassName="w-full sm:w-64"
+            containerClassName="w-full sm:w-56"
           />
           <SavedViewBar
             compact

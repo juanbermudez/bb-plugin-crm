@@ -1889,7 +1889,7 @@ export function AgentsView({
             onChange={(event) => setQuery(event.target.value)}
             onClear={() => setQuery("")}
             placeholder="Search agents…"
-            containerClassName="w-full sm:w-64"
+            containerClassName="w-full sm:w-56"
           />
           <label className="sr-only" htmlFor="agent-status-filter">Filter agents by status</label>
           <select

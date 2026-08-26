@@ -310,7 +310,7 @@ export function SavedViewBar({
         className={cn("relative flex shrink-0 items-center gap-1", className)}
         data-component="saved-view-bar"
       >
-        <div className="relative w-44 min-w-36">
+        <div className="relative w-36 min-w-36">
           <Icon
             name="ListView"
             aria-hidden="true"
@@ -335,21 +335,15 @@ export function SavedViewBar({
             })}
           </select>
         </div>
-        <TooltipIconButton
-          label="Reset saved view"
-          icon="RotateCcw"
-          variant="ghost"
-          disabled={loading || selectedViewId === null}
-          onClick={resetFilters}
-        />
-        <TooltipIconButton
-          label="Manage saved view"
-          icon="MoreHorizontal"
-          variant="ghost"
-          disabled={selectedView === null}
-          aria-expanded={manageOpen}
-          onClick={() => setManageOpen((open) => !open)}
-        />
+        {selectedView ? (
+          <TooltipIconButton
+            label="Manage saved view"
+            icon="MoreHorizontal"
+            variant="ghost"
+            aria-expanded={manageOpen}
+            onClick={() => setManageOpen((open) => !open)}
+          />
+        ) : null}
         <TooltipIconButton
           label="Save current view"
           icon="Plus"
