@@ -31,6 +31,32 @@ Currently working end to end:
   activities, tasks, and custom fields, plus the bundled `crm` operating skill
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
 
+## CLI
+
+The plugin exposes repeatable record operations through `bb crm`. JSON
+payloads may be passed as one positional argument or with `--data`; payloads
+are validated against the same strict contracts used by RPC and agent tools.
+
+```sh
+bb crm help
+bb crm status --json
+bb crm doctor --json
+bb crm list company --q acme --json
+bb crm show contact <contact-id> --json
+bb crm create company '{"name":"Acme","domain":"acme.example"}' --json
+bb crm update company <company-id> '{"industry":"Software"}' --json
+bb crm archive deal <deal-id> --json
+bb crm restore deal <deal-id> --json
+bb crm add-activity '{"type":"NOTE","companyId":"<company-id>","body":"Called"}' --json
+bb crm tasks upcoming --json
+bb crm export company --format csv
+bb crm import company '<versioned-json-or-csv>' --format json --json
+```
+
+`export` writes versioned JSON (`{version, entity, records}`) or CSV to
+stdout. Imports accept that JSON document, a JSON array, or CSV inline in the
+CLI argument. The CLI never reads or prints secret plugin settings.
+
 ## Install
 
 From a local clone:

@@ -1,13 +1,20 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type {
+  BbPluginApi,
+  PluginCliContext,
+  PluginCliResult,
+} from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   activityCreateInputSchema,
   companyCreateInputSchema,
+  companyListInputSchema,
   companyUpdateDataSchema,
   contactCreateInputSchema,
+  contactListInputSchema,
   contactUpdateDataSchema,
   currencyCodeSchema,
   dealCreateInputSchema,
+  dealListInputSchema,
   dealUpdateDataSchema,
   fieldEntitySchema,
   fieldValueSchema,
@@ -56,6 +63,276 @@ import { createEvidenceStore } from "./db/evidence.js";
 import { createAgentStore } from "./db/agents.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
+
+type CrmRecordEntity = "company" | "contact" | "deal";
+type CrmOutputFormat = "json" | "csv";
+
+class CrmCliUsageError extends Error {
+  readonly exitCode = 2;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CrmCliUsageError";
+  }
+}
+
+interface ParsedCliArgs {
+  positionals: string[];
+  options: Map<string, string[]>;
+  flags: Set<string>;
+}
+
+const CLI_BOOLEAN_FLAGS = new Set([
+  "all",
+  "archived",
+  "help",
+  "json",
+]);
+
+function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
+  const positionals: string[] = [];
+  const options = new Map<string, string[]>();
+  const flags = new Set<string>();
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (!token.startsWith("--") || token === "--") {
+      positionals.push(token);
+      continue;
+    }
+    const assignment = token.slice(2).indexOf("=");
+    const rawKey = assignment < 0 ? token.slice(2) : token.slice(2, assignment);
+    const key = rawKey.trim().toLowerCase();
+    if (!key) throw new CrmCliUsageError("Option names must not be empty.");
+    if (assignment >= 0) {
+      const value = token.slice(2 + assignment + 1);
+      if (!value) throw new CrmCliUsageError(`Option --${key} needs a value.`);
+      const values = options.get(key) ?? [];
+      values.push(value);
+      options.set(key, values);
+      continue;
+    }
+    if (CLI_BOOLEAN_FLAGS.has(key) || index === argv.length - 1 || argv[index + 1]?.startsWith("--")) {
+      flags.add(key);
+      continue;
+    }
+    const values = options.get(key) ?? [];
+    values.push(argv[index + 1]!);
+    options.set(key, values);
+    index += 1;
+  }
+  return { positionals, options, flags };
+}
+
+function assertCliArgs(
+  args: ParsedCliArgs,
+  allowedOptions: readonly string[],
+  allowedFlags: readonly string[] = ["json"],
+): void {
+  const allowedOptionSet = new Set(allowedOptions);
+  const allowedFlagSet = new Set(allowedFlags);
+  for (const key of args.options.keys()) {
+    if (!allowedOptionSet.has(key)) throw new CrmCliUsageError(`Unknown option: --${key}`);
+  }
+  for (const key of args.flags) {
+    if (!allowedFlagSet.has(key)) throw new CrmCliUsageError(`Unknown option: --${key}`);
+  }
+}
+
+function oneCliOption(args: ParsedCliArgs, name: string): string | undefined {
+  const values = args.options.get(name) ?? [];
+  if (values.length > 1) throw new CrmCliUsageError(`Option --${name} may only be used once.`);
+  return values[0];
+}
+
+function aliasedCliOption(args: ParsedCliArgs, ...names: string[]): string | undefined {
+  const found = names
+    .map((name) => ({ name, value: oneCliOption(args, name) }))
+    .filter((entry): entry is { name: string; value: string } => entry.value !== undefined);
+  if (found.length > 1) {
+    throw new CrmCliUsageError(`Use only one of ${found.map((entry) => `--${entry.name}`).join(", ")}.`);
+  }
+  return found[0]?.value;
+}
+
+function cliOptionValues(args: ParsedCliArgs, name: string): string[] {
+  return (args.options.get(name) ?? [])
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function cliInteger(value: string | undefined, label: string, bounds?: { min: number; max: number }): number | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value)) throw new CrmCliUsageError(`${label} must be a non-negative integer.`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || (bounds && (parsed < bounds.min || parsed > bounds.max))) {
+    const suffix = bounds ? ` between ${bounds.min} and ${bounds.max}` : "";
+    throw new CrmCliUsageError(`${label} must be an integer${suffix}.`);
+  }
+  return parsed;
+}
+
+function requiredCliPositionals(
+  args: ParsedCliArgs,
+  count: number,
+  usage: string,
+): string[] {
+  if (args.positionals.length !== count) {
+    throw new CrmCliUsageError(`Usage: ${usage}`);
+  }
+  return args.positionals;
+}
+
+function recordEntity(value: string | undefined): CrmRecordEntity {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "company" || normalized === "companies") return "company";
+  if (normalized === "contact" || normalized === "contacts") return "contact";
+  if (normalized === "deal" || normalized === "deals") return "deal";
+  throw new CrmCliUsageError("Entity must be company, contact, or deal.");
+}
+
+function cliFormat(value: string | undefined): CrmOutputFormat {
+  const normalized = value?.trim().toLowerCase() ?? "json";
+  if (normalized === "json" || normalized === "csv") return normalized;
+  throw new CrmCliUsageError("Format must be json or csv.");
+}
+
+function isCliRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseCliJson(raw: string, label: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new CrmCliUsageError(`${label} must be valid JSON.`);
+  }
+}
+
+function parseCliJsonObject(raw: string, label: string): Record<string, unknown> {
+  const value = parseCliJson(raw, label);
+  if (!isCliRecord(value)) throw new CrmCliUsageError(`${label} must be a JSON object.`);
+  return value;
+}
+
+function parseCliSchema<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+  const details = result.error.issues
+    .map((issue) => `${issue.path.length ? issue.path.join(".") : "payload"}: ${issue.message}`)
+    .join("; ");
+  throw new CrmCliUsageError(`${label} is invalid${details ? ` (${details})` : ""}.`);
+}
+
+function cliPayload(
+  args: ParsedCliArgs,
+  positionals: readonly string[],
+  usage: string,
+): Record<string, unknown> {
+  const option = oneCliOption(args, "data");
+  if (option !== undefined && positionals.length > 0) {
+    throw new CrmCliUsageError(`Usage: ${usage}`);
+  }
+  const raw = option ?? positionals[0];
+  if (raw === undefined) throw new CrmCliUsageError(`Usage: ${usage}`);
+  if (positionals.length > (option === undefined ? 1 : 0)) {
+    throw new CrmCliUsageError(`Usage: ${usage}`);
+  }
+  return parseCliJsonObject(raw, "Payload");
+}
+
+const CRM_EXPORT_COLUMNS: Record<CrmRecordEntity, readonly string[]> = {
+  company: ["id", "name", "domain", "ownerId"],
+  contact: ["id", "firstName", "lastName", "email", "phone", "title", "companyId", "ownerId"],
+  deal: ["id", "name", "companyId", "ownerId", "stage", "amountCents", "currency", "expectedCloseDate"],
+};
+
+function csvEscape(value: unknown): string {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\r\n]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function serializeCsv(entity: CrmRecordEntity, rows: readonly Record<string, unknown>[]): string {
+  const columns = CRM_EXPORT_COLUMNS[entity];
+  const lines = [columns.join(",")];
+  for (const row of rows) lines.push(columns.map((column) => csvEscape(row[column])).join(","));
+  return `${lines.join("\n")}\n`;
+}
+
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (quoted) {
+      if (character === '"') {
+        if (text[index + 1] === '"') {
+          cell += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell += character;
+      }
+      continue;
+    }
+    if (character === '"' && cell.length === 0) {
+      quoted = true;
+    } else if (character === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (character === "\n") {
+      row.push(cell.replace(/\r$/u, ""));
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += character;
+    }
+  }
+  if (quoted) throw new CrmCliUsageError("CSV payload has an unterminated quoted field.");
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell.replace(/\r$/u, ""));
+    rows.push(row);
+  }
+  return rows;
+}
+
+function parseCsvRecords(entity: CrmRecordEntity, text: string): Record<string, unknown>[] {
+  const rows = parseCsvRows(text);
+  if (rows.length === 0) throw new CrmCliUsageError("CSV payload must include a header row.");
+  const columns = rows[0]!.map((column) => column.replace(/^\ufeff/u, "").trim());
+  const expected = CRM_EXPORT_COLUMNS[entity];
+  if (columns.length !== expected.length || columns.some((column, index) => column !== expected[index])) {
+    throw new CrmCliUsageError(`CSV header must be: ${expected.join(",")}`);
+  }
+  return rows.slice(1).map((values, rowIndex) => {
+    if (values.length !== columns.length) {
+      throw new CrmCliUsageError(`CSV row ${rowIndex + 2} has ${values.length} columns; expected ${columns.length}.`);
+    }
+    return Object.fromEntries(columns.map((column, index) => [column, values[index] === "" ? null : values[index]]));
+  });
+}
+
+function exportRecord(entity: CrmRecordEntity, row: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(CRM_EXPORT_COLUMNS[entity].map((column) => [column, row[column] ?? null]));
+}
+
+function csvOrJsonValue(value: unknown, label: string): unknown {
+  if (value === null || value === undefined || value === "") return undefined;
+  if (typeof value !== "string") return value;
+  const parsed = Number(value);
+  if (label === "amountCents") {
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new CrmCliUsageError("amountCents must be a non-negative integer.");
+    }
+    return parsed;
+  }
+  return value;
+}
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -1870,34 +2147,679 @@ export default async function plugin(bb: BbPluginApi) {
       "CRM tools are available. Search before creating, preserve source money, and record evidence or timeline context for consequential updates.",
   }));
 
+  const CRM_ROOT_HELP = [
+    "Usage: bb crm <command> [options]",
+    "",
+    "Commands:",
+    "  help                              Show this help",
+    "  status [--json]                   Show extension status",
+    "  doctor [--json]                   Check SQLite and schema health",
+    "  list <company|contact|deal>       List records",
+    "  show <company|contact|deal> <id>  Show one record",
+    "  create <entity> <json>            Create a record",
+    "  update <entity> <id> <json>       Update a record",
+    "  archive <entity> <id>             Archive a record",
+    "  restore <entity> <id>             Restore a record",
+    "  add-activity <json>               Add a note, touchpoint, or task",
+    "  tasks [overdue|upcoming|all]      List incomplete tasks",
+    "  import <entity> <payload>         Import inline JSON or CSV",
+    "  export <entity>                   Export JSON or CSV to stdout",
+    "",
+    "Use --data <json> instead of a positional JSON payload. Add --json for machine-readable results.",
+  ].join("\n");
+
+  const CRM_COMMANDS = [
+    { name: "help", summary: "Show CRM command help", usage: "bb crm help [command]" },
+    { name: "status", summary: "Show CRM extension status", usage: "bb crm status [--json]" },
+    { name: "doctor", summary: "Check CRM SQLite and schema health", usage: "bb crm doctor [--json]" },
+    { name: "list", summary: "List companies, contacts, or deals", usage: "bb crm list <company|contact|deal> [options] [--json]" },
+    { name: "show", summary: "Show one company, contact, or deal", usage: "bb crm show <company|contact|deal> <id> [--json]" },
+    { name: "create", summary: "Create a company, contact, or deal from JSON", usage: "bb crm create <entity> <json> [--json]" },
+    { name: "update", summary: "Update one record from validated JSON", usage: "bb crm update <entity> <id> <json> [--json]" },
+    { name: "archive", summary: "Archive one company, contact, or deal", usage: "bb crm archive <entity> <id> [--json]" },
+    { name: "restore", summary: "Restore one company, contact, or deal", usage: "bb crm restore <entity> <id> [--json]" },
+    { name: "add-activity", summary: "Add a note, touchpoint, meeting, or task", usage: "bb crm add-activity <json> [--json]" },
+    { name: "tasks", summary: "List incomplete CRM tasks", usage: "bb crm tasks [overdue|upcoming|all] [--limit N] [--json]" },
+    { name: "import", summary: "Import inline versioned JSON or CSV records", usage: "bb crm import <entity> <payload> [--format json|csv] [--json]" },
+    { name: "export", summary: "Export records as JSON or CSV to stdout", usage: "bb crm export <entity> [--format json|csv] [--json]" },
+  ];
+
+  function cliPretty(value: unknown): string {
+    return JSON.stringify(value, null, 2);
+  }
+
+  function cliErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message.trim()) return error.message.trim();
+    return "CRM command failed.";
+  }
+
+  function cliFailure(argv: readonly string[], error: unknown): PluginCliResult {
+    const message = cliErrorMessage(error);
+    const exitCode = error instanceof CrmCliUsageError ? error.exitCode : 1;
+    const wantsJson = argv.some((token) => token === "--json" || token.startsWith("--json="));
+    return {
+      exitCode,
+      stderr: wantsJson ? JSON.stringify({ error: message }) : `CRM error: ${message}`,
+    };
+  }
+
+  function cliRecordText(entity: CrmRecordEntity, row: Record<string, unknown>): string {
+    if (entity === "company") return `${String(row.id)}\t${String(row.name)}\t${row.domain ?? "-"}`;
+    if (entity === "contact") {
+      const name = [row.firstName, row.lastName].filter(Boolean).join(" ");
+      return `${String(row.id)}\t${name}\t${row.email ?? "-"}`;
+    }
+    const amount = row.amountCents === null || row.amountCents === undefined
+      ? "-"
+      : `${String(row.amountCents)} ${String(row.currency)}`;
+    return `${String(row.id)}\t${String(row.name)}\t${String(row.stage)}\t${amount}`;
+  }
+
+  function cliListText(entity: CrmRecordEntity, result: { rows: readonly Record<string, unknown>[]; total: number }): string {
+    const lines = [`Total: ${result.total}`];
+    for (const row of result.rows) lines.push(cliRecordText(entity, row));
+    return lines.join("\n");
+  }
+
+  function cliListQuery(args: ParsedCliArgs): {
+    q: string | undefined;
+    page: number | undefined;
+    pageSize: number | undefined;
+    sort: string | undefined;
+    dir: string | undefined;
+  } {
+    return {
+      q: aliasedCliOption(args, "q", "search"),
+      page: cliInteger(oneCliOption(args, "page"), "page", { min: 1, max: 1_000_000 }),
+      pageSize: cliInteger(aliasedCliOption(args, "page-size", "limit"), "page size", { min: 1, max: 100 }),
+      sort: oneCliOption(args, "sort"),
+      dir: oneCliOption(args, "dir"),
+    };
+  }
+
+  async function cliList(argv: readonly string[]): Promise<PluginCliResult> {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, [
+      "q", "search", "page", "page-size", "limit", "sort", "dir",
+      "owner", "industry", "enrichment", "source", "company", "title",
+      "seniority", "persona", "status", "stage", "closing",
+    ], ["json", "archived"]);
+    if (args.positionals.length !== 1) {
+      throw new CrmCliUsageError("Usage: bb crm list <company|contact|deal> [options] [--json]");
+    }
+    const entity = recordEntity(args.positionals[0]);
+    const query = cliListQuery(args);
+    if (entity === "company") {
+      const input = parseCliSchema(companyListInputSchema, {
+        q: query.q,
+        page: query.page,
+        pageSize: query.pageSize,
+        sort: query.sort,
+        dir: query.dir,
+        owner: cliOptionValues(args, "owner"),
+        industry: cliOptionValues(args, "industry"),
+        enrichment: cliOptionValues(args, "enrichment"),
+        source: cliOptionValues(args, "source"),
+        archived: args.flags.has("archived"),
+      }, "List filters");
+      const options = companyListOptions(input);
+      const result = {
+        rows: companies.list(options).map((row) => companyOutput(row)),
+        total: companies.count(options),
+        facetCounts: facetCounts(),
+      };
+      return {
+        exitCode: 0,
+        stdout: args.flags.has("json") ? JSON.stringify(result) : cliListText(entity, result),
+      };
+    }
+    if (entity === "contact") {
+      const input = parseCliSchema(contactListInputSchema, {
+        q: query.q,
+        page: query.page,
+        pageSize: query.pageSize,
+        sort: query.sort,
+        dir: query.dir,
+        owner: cliOptionValues(args, "owner"),
+        company: cliOptionValues(args, "company"),
+        source: cliOptionValues(args, "source"),
+        title: cliOptionValues(args, "title"),
+        seniority: cliOptionValues(args, "seniority"),
+        persona: cliOptionValues(args, "persona"),
+        archived: args.flags.has("archived"),
+      }, "List filters");
+      const options = contactListOptions(input);
+      const result = {
+        rows: contacts.list(options).map((row) => contactOutput(row)),
+        total: contacts.count(options),
+        facetCounts: contactFacetCounts(),
+      };
+      return {
+        exitCode: 0,
+        stdout: args.flags.has("json") ? JSON.stringify(result) : cliListText(entity, result),
+      };
+    }
+    const input = parseCliSchema(dealListInputSchema, {
+      q: query.q,
+      page: query.page,
+      pageSize: query.pageSize,
+      sort: query.sort,
+      dir: query.dir,
+      status: oneCliOption(args, "status"),
+      owner: cliOptionValues(args, "owner"),
+      stage: cliOptionValues(args, "stage"),
+      closing: cliOptionValues(args, "closing"),
+      archived: args.flags.has("archived"),
+    }, "List filters");
+    const options = dealListOptions(input);
+    const { reportingCurrency: configuredCurrency } = await settings.get();
+    const reportingCurrency = currencyCodeSchema.parse(configuredCurrency);
+    const result = {
+      rows: deals.list(options).map((row) => dealOutput(row)),
+      total: deals.count(options),
+      facetCounts: dealFacetCounts(),
+      openValueCents: (db.prepare(`
+        SELECT COALESCE(SUM(base_amount_cents), 0) AS value
+        FROM deals
+        WHERE archived_at IS NULL
+          AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+          AND base_currency = @reportingCurrency
+      `).get({ reportingCurrency }) as { value: number }).value,
+      reportingCurrency,
+      unconverted: (() => {
+        const missing = db.prepare(`
+          SELECT currency, COUNT(*) AS count
+          FROM deals
+          WHERE archived_at IS NULL
+            AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+            AND amount_cents IS NOT NULL
+            AND base_amount_cents IS NULL
+          GROUP BY currency
+          ORDER BY currency
+        `).all() as Array<{ currency: CurrencyCode; count: number }>;
+        return {
+          count: missing.reduce((total, item) => total + Number(item.count), 0),
+          currencies: missing.map((item) => item.currency),
+        };
+      })(),
+    };
+    return {
+      exitCode: 0,
+      stdout: args.flags.has("json") ? JSON.stringify(result) : cliListText(entity, result),
+    };
+  }
+
+  function unwrapCliUpdatePayload(payload: Record<string, unknown>, id: string): Record<string, unknown> {
+    if (!("data" in payload)) return payload;
+    if (!isCliRecord(payload.data)) throw new CrmCliUsageError("Payload.data must be a JSON object.");
+    if (payload.id !== undefined && payload.id !== id) {
+      throw new CrmCliUsageError("Payload id does not match the positional record id.");
+    }
+    return payload.data;
+  }
+
+  function cliRawPayload(
+    args: ParsedCliArgs,
+    positionals: readonly string[],
+    usage: string,
+  ): string {
+    const option = oneCliOption(args, "data");
+    if (option !== undefined && positionals.length > 0) throw new CrmCliUsageError(`Usage: ${usage}`);
+    if (positionals.length > (option === undefined ? 1 : 0)) throw new CrmCliUsageError(`Usage: ${usage}`);
+    const raw = option ?? positionals[0];
+    if (raw === undefined) throw new CrmCliUsageError(`Usage: ${usage}`);
+    return raw;
+  }
+
+  async function cliShow(argv: readonly string[]): Promise<PluginCliResult> {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, [], ["json"]);
+    const [entityValue, id] = requiredCliPositionals(args, 2, "bb crm show <company|contact|deal> <id> [--json]");
+    const entity = recordEntity(entityValue);
+    const record = entity === "company"
+      ? companyOutput(companies.getRequired(id), true)
+      : entity === "contact"
+        ? contactOutput(contacts.getRequired(id), true)
+        : dealOutput(deals.getRequired(id));
+    return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(record) : cliPretty(record) };
+  }
+
+  async function cliCreate(argv: readonly string[]): Promise<PluginCliResult> {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, ["data"], ["json"]);
+    if (args.positionals.length < 1 || args.positionals.length > 2) {
+      throw new CrmCliUsageError("Usage: bb crm create <company|contact|deal> <json> [--json]");
+    }
+    const entity = recordEntity(args.positionals[0]);
+    const payload = cliPayload(args, args.positionals.slice(1), "bb crm create <company|contact|deal> <json> [--json]");
+    let record: CompanyOutput | ContactOutput | DealOutput;
+    if (entity === "company") {
+      const input = parseCliSchema(companyCreateInputSchema, payload, "Company payload");
+      const stored = companies.create(input);
+      changed("company", "created", stored.id);
+      record = companyOutput(stored, true);
+    } else if (entity === "contact") {
+      const input = parseCliSchema(contactCreateInputSchema, payload, "Contact payload");
+      const stored = contacts.create(input);
+      changed("contact", "created", stored.id);
+      record = contactOutput(stored);
+    } else {
+      const input = parseCliSchema(dealCreateInputSchema, payload, "Deal payload");
+      const configured = currencyCodeSchema.parse((await settings.get()).reportingCurrency);
+      const sourceCurrency = input.currency ?? configured;
+      const conversion = input.amountCents == null
+        ? null
+        : currency.convert(input.amountCents, sourceCurrency, configured);
+      const stored = deals.create({
+        ...input,
+        currency: sourceCurrency,
+        baseAmountCents: conversion?.baseAmountCents ?? null,
+        baseCurrency: conversion?.baseCurrency ?? null,
+        fxRate: conversion?.fxRate ?? null,
+        fxRateAt: conversion?.fxRateAt ?? null,
+      });
+      changed("deal", "created", stored.id);
+      record = dealOutput(stored);
+    }
+    return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(record) : cliPretty(record) };
+  }
+
+  function cliUpdate(argv: readonly string[]): Promise<PluginCliResult> {
+    return (async () => {
+      const args = parseCliArgs(argv);
+      assertCliArgs(args, ["data"], ["json"]);
+      if (args.positionals.length < 2 || args.positionals.length > 3) {
+        throw new CrmCliUsageError("Usage: bb crm update <company|contact|deal> <id> <json> [--json]");
+      }
+      const entity = recordEntity(args.positionals[0]);
+      const id = args.positionals[1]!;
+      const payload = unwrapCliUpdatePayload(
+        cliPayload(args, args.positionals.slice(2), "bb crm update <company|contact|deal> <id> <json> [--json]"),
+        id,
+      );
+      let record: CompanyOutput | ContactOutput | DealOutput;
+      if (entity === "company") {
+        const input = parseCliSchema(companyUpdateDataSchema, payload, "Company update payload");
+        const { fields, ...data } = input;
+        const stored = db.transaction(() => {
+          const updated = companies.update(id, data);
+          if (fields) writeRecordFieldValues("COMPANY", id, fields);
+          return updated;
+        })();
+        changed("company", "updated", stored.id);
+        record = companyOutput(stored, true);
+      } else if (entity === "contact") {
+        const input = parseCliSchema(contactUpdateDataSchema, payload, "Contact update payload");
+        const { fields, ...data } = input;
+        const stored = db.transaction(() => {
+          const updated = contacts.update(id, data);
+          if (fields) writeRecordFieldValues("CONTACT", id, fields);
+          return updated;
+        })();
+        changed("contact", "updated", stored.id);
+        record = contactOutput(stored, true);
+      } else {
+        const input = parseCliSchema(dealUpdateDataSchema, payload, "Deal update payload");
+        const { fields, ...data } = input;
+        const stored = db.transaction(() => {
+          const updated = deals.update(id, data);
+          if (fields) writeRecordFieldValues("DEAL", id, fields);
+          return updated;
+        })();
+        changed("deal", "updated", stored.id);
+        record = dealOutput(stored);
+      }
+      return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(record) : cliPretty(record) };
+    })();
+  }
+
+  function cliArchiveRestore(argv: readonly string[], action: "archive" | "restore"): PluginCliResult {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, [], ["json"]);
+    const [entityValue, id] = requiredCliPositionals(args, 2, `bb crm ${action} <company|contact|deal> <id> [--json]`);
+    const entity = recordEntity(entityValue);
+    let record: CompanyOutput | ContactOutput | DealOutput;
+    if (entity === "company") {
+      const stored = action === "archive" ? companies.archive(id) : companies.restore(id);
+      changed("company", action === "archive" ? "archived" : "restored", stored.id);
+      record = companyOutput(stored, true);
+    } else if (entity === "contact") {
+      const stored = action === "archive" ? contacts.archive(id) : contacts.restore(id);
+      changed("contact", action === "archive" ? "archived" : "restored", stored.id);
+      record = contactOutput(stored, true);
+    } else {
+      const stored = action === "archive" ? deals.archive(id) : deals.restore(id);
+      changed("deal", action === "archive" ? "archived" : "restored", stored.id);
+      record = dealOutput(stored);
+    }
+    return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(record) : cliPretty(record) };
+  }
+
+  function cliActivity(argv: readonly string[]): PluginCliResult {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, ["data"], ["json"]);
+    let linkEntity: CrmRecordEntity | undefined;
+    let linkId: string | undefined;
+    let raw: string;
+    if (args.options.has("data")) {
+      if (args.positionals.length !== 0 && args.positionals.length !== 2) {
+        throw new CrmCliUsageError("Usage: bb crm add-activity <json> [--json]");
+      }
+      if (args.positionals.length === 2) {
+        linkEntity = recordEntity(args.positionals[0]);
+        linkId = args.positionals[1];
+      }
+      raw = cliRawPayload(args, [], "bb crm add-activity <json> [--json]");
+    } else if (args.positionals.length === 1) {
+      raw = args.positionals[0]!;
+    } else if (args.positionals.length === 3) {
+      linkEntity = recordEntity(args.positionals[0]);
+      linkId = args.positionals[1];
+      raw = args.positionals[2]!;
+    } else {
+      throw new CrmCliUsageError("Usage: bb crm add-activity <json> [--json]");
+    }
+    const payload = parseCliJsonObject(raw, "Activity payload");
+    if (linkEntity && linkId) {
+      const key = `${linkEntity}Id`;
+      if (payload[key] !== undefined && payload[key] !== linkId) {
+        throw new CrmCliUsageError(`Activity payload ${key} does not match the positional record id.`);
+      }
+      payload[key] = linkId;
+    }
+    const input = parseCliSchema(activityCreateInputSchema, {
+      ...payload,
+      // CLI writes are installation-owned; callers cannot impersonate another user.
+      createdById: LOCAL_OWNER_ID,
+    }, "Activity payload");
+    const stored = activities.create(input, LOCAL_OWNER_ID);
+    stampActivity(stored);
+    changed("activity", "created", stored.id);
+    const record = activityOutput(stored);
+    return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(record) : cliPretty(record) };
+  }
+
+  function cliTasks(argv: readonly string[]): PluginCliResult {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, ["window", "limit"], ["json"]);
+    if (args.positionals.length > 2 || (args.positionals.length === 2 && args.positionals[0] !== "list") ||
+      (args.positionals.length === 1 && args.positionals[0] !== "list" &&
+        args.positionals[0] !== "overdue" && args.positionals[0] !== "upcoming" && args.positionals[0] !== "all")) {
+      throw new CrmCliUsageError("Usage: bb crm tasks [overdue|upcoming|all] [--limit N] [--json]");
+    }
+    const positionalWindow = args.positionals[0] === "list"
+      ? args.positionals[1]
+      : args.positionals[0];
+    const optionWindow = oneCliOption(args, "window");
+    if (positionalWindow !== undefined && optionWindow !== undefined) {
+      throw new CrmCliUsageError("Use either a task window positional or --window.");
+    }
+    const window = optionWindow ?? positionalWindow ?? "all";
+    if (window !== "overdue" && window !== "upcoming" && window !== "all") {
+      throw new CrmCliUsageError("Task window must be overdue, upcoming, or all.");
+    }
+    const limit = cliInteger(oneCliOption(args, "limit"), "limit", { min: 1, max: 100 }) ?? 25;
+    const records = activities.myTasks({ actorId: LOCAL_OWNER_ID, window, limit }).map(activityOutput);
+    if (args.flags.has("json")) return { exitCode: 0, stdout: JSON.stringify(records) };
+    const lines = [`Tasks: ${records.length}`];
+    for (const record of records) lines.push(`${record.id}\t${record.dueAt ?? "-"}\t${record.subject ?? "(untitled)"}`);
+    return { exitCode: 0, stdout: lines.join("\n") };
+  }
+
+  function cliDoctor(argv: readonly string[]): PluginCliResult {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, [], ["json"]);
+    if (args.positionals.length !== 0) throw new CrmCliUsageError("Usage: bb crm doctor [--json]");
+    const metadata = db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").get() as { value?: unknown } | undefined;
+    const actualSchema = typeof metadata?.value === "string" ? Number(metadata.value) : null;
+    const integrityRow = db.prepare("PRAGMA integrity_check").get() as Record<string, unknown> | undefined;
+    const integrity = String(integrityRow?.integrity_check ?? "unknown");
+    const foreignKeys = db.prepare("PRAGMA foreign_key_check").all() as unknown[];
+    const records = {
+      companies: Number((db.prepare("SELECT COUNT(*) AS count FROM companies").get() as { count: number }).count),
+      contacts: Number((db.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number }).count),
+      deals: Number((db.prepare("SELECT COUNT(*) AS count FROM deals").get() as { count: number }).count),
+      activities: Number((db.prepare("SELECT COUNT(*) AS count FROM activities").get() as { count: number }).count),
+    };
+    const report = {
+      ok: actualSchema === CRM_SCHEMA_VERSION && integrity === "ok" && foreignKeys.length === 0,
+      version: CRM_PLUGIN_VERSION,
+      schemaVersion: { expected: CRM_SCHEMA_VERSION, actual: actualSchema },
+      sqlite: { integrity, foreignKeyViolations: foreignKeys.length },
+      records,
+    };
+    if (args.flags.has("json")) {
+      return { exitCode: report.ok ? 0 : 1, stdout: JSON.stringify(report) };
+    }
+    return {
+      exitCode: report.ok ? 0 : 1,
+      stdout: [
+        `CRM doctor: ${report.ok ? "OK" : "FAILED"}`,
+        `Schema: ${String(report.schemaVersion.actual ?? "missing")}/${CRM_SCHEMA_VERSION}`,
+        `SQLite integrity: ${report.sqlite.integrity}`,
+        `Foreign keys: ${report.sqlite.foreignKeyViolations} violations`,
+        `Records: companies=${records.companies} contacts=${records.contacts} deals=${records.deals} activities=${records.activities}`,
+      ].join("\n"),
+    };
+  }
+
+  function exportRows(entity: CrmRecordEntity, args: ParsedCliArgs): Record<string, unknown>[] {
+    const search = aliasedCliOption(args, "q", "search");
+    const limit = cliInteger(oneCliOption(args, "limit"), "limit", { min: 1, max: 1_000 }) ?? 1_000;
+    if (args.flags.has("all") && args.flags.has("archived")) {
+      throw new CrmCliUsageError("Use either --all or --archived, not both.");
+    }
+    const listOptions = {
+      search,
+      limit,
+      offset: 0,
+      archivedOnly: args.flags.has("archived"),
+      includeArchived: args.flags.has("all"),
+    };
+    if (entity === "company") {
+      return companies.list({ ...listOptions, sortBy: "name", sortDirection: "asc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
+    }
+    if (entity === "contact") {
+      return contacts.list({ ...listOptions, sortBy: "name", sortDirection: "asc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
+    }
+    return deals.list({ ...listOptions, sortBy: "createdAt", sortDirection: "desc" }).map((row) => exportRecord(entity, row as unknown as Record<string, unknown>));
+  }
+
+  function cliExport(argv: readonly string[]): PluginCliResult {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, ["format", "q", "search", "limit"], ["json", "archived", "all"]);
+    if (args.positionals.length !== 1) throw new CrmCliUsageError("Usage: bb crm export <company|contact|deal> [--format json|csv]");
+    const entity = recordEntity(args.positionals[0]);
+    const format = cliFormat(oneCliOption(args, "format"));
+    const records = exportRows(entity, args);
+    if (format === "csv") return { exitCode: 0, stdout: serializeCsv(entity, records) };
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({ version: 1, entity, records }),
+    };
+  }
+
+  function importRecords(entity: CrmRecordEntity, value: unknown): Record<string, unknown>[] {
+    if (Array.isArray(value)) return value.map((row) => {
+      if (!isCliRecord(row)) throw new CrmCliUsageError("Each import record must be a JSON object.");
+      return row;
+    });
+    if (!isCliRecord(value)) throw new CrmCliUsageError("Import JSON must be an array or a versioned object.");
+    if (value.version !== 1) throw new CrmCliUsageError("Import JSON version must be 1.");
+    if (value.entity !== undefined && value.entity !== entity) {
+      throw new CrmCliUsageError("Import entity does not match the command entity.");
+    }
+    if (!Array.isArray(value.records)) throw new CrmCliUsageError("Import JSON records must be an array.");
+    return value.records.map((row) => {
+      if (!isCliRecord(row)) throw new CrmCliUsageError("Each import record must be a JSON object.");
+      return row;
+    });
+  }
+
+  function importInput(entity: CrmRecordEntity, row: Record<string, unknown>, rowNumber: number): {
+    id?: string;
+    data: Record<string, unknown>;
+  } {
+    const allowed = new Set(CRM_EXPORT_COLUMNS[entity]);
+    for (const key of Object.keys(row)) {
+      if (!allowed.has(key)) throw new CrmCliUsageError(`Import row ${rowNumber} has unsupported field: ${key}.`);
+    }
+    let id: string | undefined;
+    if (row.id !== null && row.id !== undefined) id = parseCliSchema(idSchema, row.id, `Import row ${rowNumber} id`);
+    if (entity === "company") {
+      const input = parseCliSchema(companyCreateInputSchema, {
+        name: row.name,
+        domain: row.domain === null ? undefined : row.domain,
+        ownerId: row.ownerId === null ? null : row.ownerId,
+      }, `Import row ${rowNumber}`);
+      return { id, data: { ...input, source: "IMPORT" } };
+    }
+    if (entity === "contact") {
+      const input = parseCliSchema(contactCreateInputSchema, {
+        firstName: row.firstName,
+        lastName: row.lastName === null ? undefined : row.lastName,
+        email: row.email === null ? undefined : row.email,
+        phone: row.phone === null ? undefined : row.phone,
+        title: row.title === null ? undefined : row.title,
+        companyId: row.companyId === null ? null : row.companyId,
+        ownerId: row.ownerId === null ? null : row.ownerId,
+      }, `Import row ${rowNumber}`);
+      return { id, data: { ...input, source: "IMPORT" } };
+    }
+    const amountCents = csvOrJsonValue(row.amountCents, "amountCents");
+    const input = parseCliSchema(dealCreateInputSchema, {
+      name: row.name,
+      companyId: row.companyId,
+      ownerId: row.ownerId,
+      stage: row.stage === null ? undefined : row.stage,
+      amountCents,
+      currency: row.currency === null ? undefined : row.currency,
+      expectedCloseDate: row.expectedCloseDate === null ? undefined : row.expectedCloseDate,
+    }, `Import row ${rowNumber}`);
+    return { id, data: input };
+  }
+
+  async function cliImport(argv: readonly string[]): Promise<PluginCliResult> {
+    const args = parseCliArgs(argv);
+    assertCliArgs(args, ["data", "format"], ["json"]);
+    if (args.positionals.length < 1 || args.positionals.length > 2) {
+      throw new CrmCliUsageError("Usage: bb crm import <company|contact|deal> <payload> [--format json|csv] [--json]");
+    }
+    const entity = recordEntity(args.positionals[0]);
+    const raw = cliRawPayload(args, args.positionals.slice(1), "bb crm import <company|contact|deal> <payload> [--format json|csv] [--json]");
+    const explicitFormat = oneCliOption(args, "format");
+    const format = explicitFormat === undefined
+      ? (/^[\s]*[\[{]/u.test(raw) ? "json" : "csv")
+      : cliFormat(explicitFormat);
+    const records = format === "json"
+      ? importRecords(entity, parseCliJson(raw, "Import payload"))
+      : parseCsvRecords(entity, raw);
+    const configured = currencyCodeSchema.parse((await settings.get()).reportingCurrency);
+    const created: Array<{ id: string; record: CrmRecordEntity }> = [];
+    db.transaction(() => {
+      records.forEach((row, index) => {
+        const rowNumber = index + 1;
+        try {
+          const input = importInput(entity, row, rowNumber);
+          if (entity === "company") {
+            const stored = companies.create({ ...input.data, ...(input.id ? { id: input.id } : {}) } as Parameters<typeof companies.create>[0]);
+            created.push({ id: stored.id, record: entity });
+          } else if (entity === "contact") {
+            const stored = contacts.create({ ...input.data, ...(input.id ? { id: input.id } : {}) } as Parameters<typeof contacts.create>[0]);
+            created.push({ id: stored.id, record: entity });
+          } else {
+            const data = input.data as unknown as z.infer<typeof dealCreateInputSchema>;
+            const sourceCurrency = data.currency ?? configured;
+            const conversion = data.amountCents == null
+              ? null
+              : currency.convert(data.amountCents, sourceCurrency, configured);
+            const stored = deals.create({
+              ...data,
+              ...(input.id ? { id: input.id } : {}),
+              currency: sourceCurrency,
+              baseAmountCents: conversion?.baseAmountCents ?? null,
+              baseCurrency: conversion?.baseCurrency ?? null,
+              fxRate: conversion?.fxRate ?? null,
+              fxRateAt: conversion?.fxRateAt ?? null,
+            });
+            created.push({ id: stored.id, record: entity });
+          }
+        } catch (error) {
+          throw new CrmCliUsageError(`Import row ${rowNumber} failed: ${cliErrorMessage(error)}`);
+        }
+      });
+    })();
+    for (const item of created) changed(item.record, "created", item.id);
+    const summary = { entity, imported: created.length, ids: created.map((item) => item.id) };
+    return {
+      exitCode: 0,
+      stdout: args.flags.has("json") ? JSON.stringify(summary) : `Imported ${created.length} ${entity}${created.length === 1 ? "" : "s"}.`,
+    };
+  }
+
   bb.cli.register({
     name: "crm",
     summary: "Manage CRM records, activities, agents, and integrations",
-    commands: [
-      {
-        name: "status",
-        summary: "Show CRM extension status",
-        usage: "bb crm status",
-      },
-    ],
-    async run(argv) {
+    commands: CRM_COMMANDS,
+    async run(argv, _ctx: PluginCliContext): Promise<PluginCliResult> {
       const command = argv[0] ?? "status";
-      if (command !== "status") {
+      if (!["help", "status", "doctor", "list", "show", "create", "update", "archive", "restore", "add-activity", "tasks", "import", "export"].includes(command)) {
+        const message = `Unknown CRM command: ${command}`;
+        const wantsJson = argv.some((token) => token === "--json" || token.startsWith("--json="));
         return {
           exitCode: 2,
-          stderr: `Unknown CRM command: ${command}\nRun: bb crm status`,
+          stderr: wantsJson
+            ? JSON.stringify({ error: message })
+            : `${message}\nRun: bb crm status`,
         };
       }
-      const { workspaceName, reportingCurrency } = await settings.get();
-      return {
-        exitCode: 0,
-        stdout: [
-          `CRM ${CRM_PLUGIN_VERSION}`,
-          `Workspace: ${workspaceName}`,
-          `Reporting currency: ${reportingCurrency}`,
-          `Schema: ${CRM_SCHEMA_VERSION}`,
-        ].join("\n"),
-      };
+      try {
+        if (command === "help") {
+          const args = parseCliArgs(argv.slice(1));
+          assertCliArgs(args, [], ["json"]);
+          if (args.positionals.length > 1) throw new CrmCliUsageError("Usage: bb crm help [command]");
+          const topic = args.positionals[0];
+          if (!topic) return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(CRM_COMMANDS) : CRM_ROOT_HELP };
+          const item = CRM_COMMANDS.find((entry) => entry.name === topic);
+          if (!item) throw new CrmCliUsageError(`Unknown CRM command: ${topic}`);
+          return { exitCode: 0, stdout: args.flags.has("json") ? JSON.stringify(item) : `${item.summary}\nUsage: ${item.usage}` };
+        }
+        if (command === "status") {
+          const args = parseCliArgs(argv.slice(1));
+          assertCliArgs(args, [], ["json"]);
+          if (args.positionals.length !== 0) throw new CrmCliUsageError("Usage: bb crm status [--json]");
+          const { workspaceName, reportingCurrency } = await settings.get();
+          const status = {
+            version: CRM_PLUGIN_VERSION,
+            schemaVersion: CRM_SCHEMA_VERSION,
+            workspaceName,
+            reportingCurrency,
+          };
+          return {
+            exitCode: 0,
+            stdout: args.flags.has("json")
+              ? JSON.stringify(status)
+              : [
+                  `CRM ${CRM_PLUGIN_VERSION}`,
+                  `Workspace: ${workspaceName}`,
+                  `Reporting currency: ${reportingCurrency}`,
+                  `Schema: ${CRM_SCHEMA_VERSION}`,
+                ].join("\n"),
+          };
+        }
+        if (command === "doctor") return cliDoctor(argv.slice(1));
+        if (command === "list") return await cliList(argv.slice(1));
+        if (command === "show") return await cliShow(argv.slice(1));
+        if (command === "create") return await cliCreate(argv.slice(1));
+        if (command === "update") return await cliUpdate(argv.slice(1));
+        if (command === "archive" || command === "restore") return cliArchiveRestore(argv.slice(1), command);
+        if (command === "add-activity") return cliActivity(argv.slice(1));
+        if (command === "tasks") return cliTasks(argv.slice(1));
+        if (command === "import") return await cliImport(argv.slice(1));
+        return cliExport(argv.slice(1));
+      } catch (error) {
+        return cliFailure(argv, error);
+      }
     },
   });
 

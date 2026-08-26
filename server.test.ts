@@ -43,6 +43,137 @@ describe("CRM plugin foundation", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("runs strict JSON CLI CRUD, activity, tasks, and diagnostics against SQLite", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    const createdCompanyResult = await harness.behavior.runCli([
+      "create",
+      "company",
+      JSON.stringify({ name: "CLI Systems", domain: "cli.example" }),
+      "--json",
+    ]);
+    expect(createdCompanyResult.exitCode).toBe(0);
+    const company = JSON.parse(createdCompanyResult.stdout) as { id: string; name: string };
+    expect(company).toMatchObject({ name: "CLI Systems" });
+
+    const createdContactResult = await harness.behavior.runCli([
+      "create",
+      "contact",
+      "--data",
+      JSON.stringify({
+        firstName: "CLI",
+        lastName: "User",
+        email: "CLI.USER@EXAMPLE.COM",
+        companyId: company.id,
+      }),
+      "--json",
+    ]);
+    expect(createdContactResult.exitCode).toBe(0);
+    const contact = JSON.parse(createdContactResult.stdout) as { id: string; email: string };
+    expect(contact.email).toBe("cli.user@example.com");
+
+    const createdDealResult = await harness.behavior.runCli([
+      "create",
+      "deal",
+      JSON.stringify({
+        name: "CLI Renewal",
+        companyId: company.id,
+        ownerId: "local_user",
+        amountCents: 12500,
+      }),
+      "--json",
+    ]);
+    expect(createdDealResult.exitCode).toBe(0);
+    const deal = JSON.parse(createdDealResult.stdout) as { id: string; amountCents: number };
+    expect(deal.amountCents).toBe(12500);
+
+    const listed = await harness.behavior.runCli(["list", "company", "--q", "CLI", "--json"]);
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout)).toMatchObject({ total: 1, rows: [expect.objectContaining({ id: company.id })] });
+
+    const updated = await harness.behavior.runCli([
+      "update",
+      "contact",
+      contact.id,
+      JSON.stringify({ title: "Operator" }),
+      "--json",
+    ]);
+    expect(updated.exitCode).toBe(0);
+    expect(JSON.parse(updated.stdout)).toMatchObject({ id: contact.id, title: "Operator" });
+
+    const shown = await harness.behavior.runCli(["show", "deal", deal.id, "--json"]);
+    expect(shown.exitCode).toBe(0);
+    expect(JSON.parse(shown.stdout)).toMatchObject({ id: deal.id, name: "CLI Renewal" });
+
+    const archived = await harness.behavior.runCli(["archive", "company", company.id, "--json"]);
+    expect(archived.exitCode).toBe(0);
+    expect(JSON.parse(archived.stdout)).toMatchObject({ id: company.id, archivedAt: expect.any(String) });
+    const restored = await harness.behavior.runCli(["restore", "company", company.id, "--json"]);
+    expect(restored.exitCode).toBe(0);
+    expect(JSON.parse(restored.stdout)).toMatchObject({ id: company.id, archivedAt: null });
+
+    const activity = await harness.behavior.runCli([
+      "add-activity",
+      JSON.stringify({ type: "TASK", companyId: company.id, subject: "Call CLI account", dueAt: "2099-01-01T00:00:00.000Z" }),
+      "--json",
+    ]);
+    expect(activity.exitCode).toBe(0);
+    expect(JSON.parse(activity.stdout)).toMatchObject({ type: "TASK", subject: "Call CLI account" });
+
+    const tasks = await harness.behavior.runCli(["tasks", "upcoming", "--json"]);
+    expect(tasks.exitCode).toBe(0);
+    expect(JSON.parse(tasks.stdout)).toEqual([expect.objectContaining({ subject: "Call CLI account" })]);
+
+    const doctor = await harness.behavior.runCli(["doctor", "--json"]);
+    expect(doctor.exitCode).toBe(0);
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      ok: true,
+      schemaVersion: { expected: CRM_SCHEMA_VERSION, actual: CRM_SCHEMA_VERSION },
+      sqlite: { integrity: "ok", foreignKeyViolations: 0 },
+    });
+
+    const invalid = await harness.behavior.runCli(["create", "company", JSON.stringify({ name: "Bad", secret: "nope" }), "--json"]);
+    expect(invalid.exitCode).toBe(2);
+    expect(invalid.stderr).toContain("Company payload is invalid");
+    const missing = await harness.behavior.runCli(["show", "company", "missing", "--json"]);
+    expect(missing.exitCode).toBe(1);
+    expect(JSON.parse(missing.stderr)).toMatchObject({ error: expect.stringContaining("No company") });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("round-trips versioned JSON and CSV CLI exports through import", async () => {
+    const source = createFakePluginHost({ pluginId: "crm" });
+    await plugin(source.bb);
+    const created = await source.harness.behavior.runCli([
+      "create",
+      "company",
+      JSON.stringify({ name: "Importable", domain: "importable.example", ownerId: "owner_import" }),
+      "--json",
+    ]);
+    const record = JSON.parse(created.stdout) as { id: string };
+    const exportedJson = await source.harness.behavior.runCli(["export", "company", "--format", "json"]);
+    expect(exportedJson.exitCode).toBe(0);
+    const document = JSON.parse(exportedJson.stdout) as { version: number; entity: string; records: unknown[] };
+    expect(document).toMatchObject({ version: 1, entity: "company", records: [expect.objectContaining({ id: record.id })] });
+    await source.harness.lifecycle.dispose();
+
+    const target = createFakePluginHost({ pluginId: "crm" });
+    await plugin(target.bb);
+    const importedJson = await target.harness.behavior.runCli(["import", "company", exportedJson.stdout, "--json"]);
+    expect(importedJson.exitCode).toBe(0);
+    expect(JSON.parse(importedJson.stdout)).toMatchObject({ entity: "company", imported: 1, ids: [record.id] });
+    const listed = await target.harness.behavior.runCli(["list", "company", "--json"]);
+    expect(JSON.parse(listed.stdout)).toMatchObject({ total: 1, rows: [expect.objectContaining({ name: "Importable", source: "IMPORT" })] });
+
+    const exportedCsv = await target.harness.behavior.runCli(["export", "company", "--format", "csv"]);
+    expect(exportedCsv.exitCode).toBe(0);
+    expect(exportedCsv.stdout).toContain("id,name,domain,ownerId");
+    expect(exportedCsv.stdout).toContain("Importable");
+    await target.harness.lifecycle.dispose();
+  });
+
   it("registers native CRM agent tools for search, records, fields, and activity", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
     await plugin(bb);
