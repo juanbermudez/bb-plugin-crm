@@ -32,13 +32,13 @@ Status meanings:
 | Marketing landing | GitHub README and marketplace detail | host-owned | 10 |
 | Sign-in | BB application session | host-owned | 0 |
 | Grant mailbox access | BB secret settings accept operator-provisioned access tokens; OAuth callback/refresh custody remains host-owned because plugins cannot write secret settings | adapted | 7 |
-| Workspace onboarding | Persisted first-open CRM checklist | done | 8 |
+| Workspace onboarding | Persisted first-open CRM checklist modal with title-bar progress ring | done | 8 |
 | Research onboarding | Explicit live/deployed BB research-agent selection; provider credentials stay with that agent's tools | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
-| Desktop icon rail | Flat first-class BB sidebar rows for CRM, Companies, Contacts, Deals, and Agents; nested groups are unavailable in SDK 0.4.x | adapted | 1 |
-| Mobile navigation | BB host navigation for the registered CRM panels | adapted | 1 |
+| Desktop icon rail | One first-class CRM sidebar row; BB-styled top tabs expose Overview, Companies, Contacts, Deals, and Agents because nested groups are unavailable in SDK 0.4.x | adapted | 1 |
+| Mobile navigation | Horizontally scrollable CRM top tabs within the registered host panel | adapted | 1 |
 | Global app header | BB host title bar | host-owned | 1 |
-| CRM header actions | BB nav-panel `headerContent`; host right-panel toggle follows New | done | 1 |
+| CRM header actions | BB nav-panel `headerContent`; search, enrichment, checklist progress, and New precede the host right-panel toggle | done | 1 |
 | Global create menu | Keyboard-accessible routes for company, contact, deal, agent, note, and task creation; notes/tasks require an existing CRM record | done | 5 |
 | Quick switcher | Cross-record CRM search and deep links | done | 5 |
 | Deep links | BB `subPath` routes | done | 1 |
@@ -74,7 +74,7 @@ Status meanings:
 | Owner, industry, enrichment facets | Filter bar | done | 2 |
 | Activity and custom-field facets | Contextual filter-bar counts in current search/archive scope; 7/30/90-day activity windows and `field:<key>` custom-field keys | done | 5 |
 | Saved views | Saved-view rows and installation default | done | 5 |
-| Compact list controls | One table toolbar with saved-view selector and icon-only save/manage/reset actions | done | 2/5 |
+| Compact list controls | One non-wrapping table toolbar with saved-view selector, searchable facet popover when merited, and tooltip-backed icon actions | done | 2/5 |
 | Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
 | Bulk owner | Bulk RPC and CLI | done | 2 |

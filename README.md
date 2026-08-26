@@ -16,9 +16,9 @@ have actually run in [docs/QA.md](docs/QA.md).
 
 Currently working end to end:
 
-- BB-native sidebar destinations for CRM, Companies, Contacts, Deals, and
-  Agents; BB Settings owns CRM configuration. The SDK currently exposes flat
-  rows rather than nested CRM children, and BB retains its host-owned title.
+- one BB-native CRM sidebar destination with an in-panel tab bar for Overview,
+  Companies, Contacts, Deals, and Agents; BB Settings owns CRM configuration,
+  and BB retains its host-owned title and panel controls
 - source-shaped dashboard with Me (the installation-local
   owner)/Everyone scope,
   pipeline, performance, six-month trend, closing totals, overdue work, and
@@ -27,9 +27,10 @@ Currently working end to end:
   activities, saved views, custom fields, agent lifecycles, connection health,
   tracking sites/events, daily traffic-source rollups, and the installation's
   website/optional company profile
-- company, contact, and deal tables with a compact single-row command bar for
-  search, views, filters, sorting/direction, columns, archive scope, and save
-  view; pagination, standard/custom facets, saved-view restore/defaults, row
+- company, contact, deal, and agent tables with a compact single-row command
+  bar; BB-native facet popovers add search when option volume merits it, while
+  icon-only save-view, sort-direction, columns, and archive controls expose
+  accessible top tooltips; pagination, standard/custom facets, saved-view restore/defaults, row
   selection, and bulk owner/company/stage/archive/restore/purge operations
   where applicable, plus persistent column visibility/order, deep-linked wide
   drawers, nested relationship navigation, primary-contact assignment with a
@@ -43,8 +44,9 @@ Currently working end to end:
 - work-email auto-company resolution for eligible domains and normalized
   contact-email suppression tombstones on purge, cleared only by explicit
   recreation
-- persisted first-open onboarding, BB title-bar CRM actions, and cross-record global
-  search for companies, contacts, and deals; a keyboard-accessible global New
+- persisted first-open onboarding in a modal with a title-bar progress ring,
+  BB title-bar CRM actions, and cross-record global search for companies,
+  contacts, and deals; a keyboard-accessible global New
   menu for company/contact/deal/agent plus record-attached note/task creation
 - a shell-level enrichment queue for persisted local agent runs, field
   backfills, due tasks, and scheduled work, with record context and explicit

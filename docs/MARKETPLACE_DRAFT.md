@@ -16,6 +16,8 @@ Git repository.
 - Current manifest package version (release approval still pending): `0.1.0`
 - Proposed immutable tag: `v0.1.0`
 - Proposed marketplace source range: `^0.1.0`
+- Current review branch: `codex/ui-simplification` (latest verified UI commit
+  `5bb6d87`; release tag remains intentionally uncreated)
 - Declared engines: BB `>=0.39`; plugin SDK `>=0.4.8`
 - Current plugin icon: `assets/icon.svg` (784 bytes, SHA-256
   `f1ddd8a46e88b19777e38d4a2cbc0fe222a4497d64f5b163248a3d78b91a61b1`)

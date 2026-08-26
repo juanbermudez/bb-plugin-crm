@@ -114,15 +114,20 @@ bundle reported app hash `dd8f433df71f490b` and runtime SDK `0.4.8`.
 
 Observed in the live CRM panel:
 
-- The current simplification pass has automated coverage for five BB sidebar
-  panel registrations, removal of the plugin-owned navigation/header, compact
-  single-row company/contact/deal controls, CRM settings registration in BB
-  Settings, and an Agents builder composer that is hidden until its modal opens.
-- A fresh isolated BB path install of commit `723041f` was inspected in the
-  in-app browser at 1280×720. CRM, Companies, Contacts, Deals, and Agents
-  appeared as main-sidebar rows; Contacts/Companies/Deals rendered one compact
-  table toolbar; BB's right-panel toggle followed the title-bar New action; the
-  Agents composer was absent until `Build with BB` opened its modal; and
+- The current simplification pass has automated coverage for one BB CRM panel,
+  BB-styled internal tabs, the checklist modal/progress ring, non-wrapping
+  company/contact/deal/agent controls, searchable facet popovers, tooltip-backed
+  icon actions, CRM settings registration in BB Settings, and an Agents builder
+  composer that is hidden until its modal opens.
+- A fresh isolated BB path install of commit `5bb6d87` was inspected in the
+  in-app browser at 1280×720. Only CRM appeared in the main sidebar; Overview,
+  Companies, Contacts, Deals, and Agents appeared as top tabs; Companies
+  rendered one non-wrapping toolbar with exactly one create entry point in the
+  host New menu; the filter popover rendered grouped contextual options; the
+  Save current view icon exposed its top hover tooltip; the title-bar Checklist
+  showed a progress ring and opened onboarding in a modal; BB's right-panel
+  toggle followed New; the Agents composer was absent until `Build with BB`
+  opened its modal; and
   `/settings/plugins/crm` rendered Workspace, Currency, Custom fields,
   Connections, and Tracking under BB Settings. Existing user CRM data was not
   used or mutated for this smoke.
@@ -147,7 +152,7 @@ Observed in the live CRM panel:
 - A 390×844 compact dark-theme pass kept navigation, actions, saved views,
   search, sort controls, and the company table usable without catastrophic
   overflow. Wide tables retain intentional horizontal scrolling.
-- The refreshed packaged panel rendered the persisted onboarding checklist,
+- The refreshed packaged panel rendered the persisted onboarding checklist modal,
   CRM header actions, cross-record search results, accessible column controls,
   and the company record Agent tab. With no deployed live agent, the tab
   correctly disabled thread creation and explained the empty state.
