@@ -1,6 +1,9 @@
 import { createActivity } from "./activities.js";
+import { companyForEmail } from "./companies.js";
 import {
   ENRICHMENT_STATUSES,
+  activityFilterClause,
+  isSqliteUniqueConstraint,
   newRecordId,
   nowIso,
   nullableText,
@@ -8,6 +11,7 @@ import {
   normalizeLimit,
   normalizeOffset,
   RECORD_SOURCES,
+  RecordConflictError,
   RecordNotFoundError,
   requiredText,
   type Db,
@@ -62,7 +66,7 @@ export interface ContactListOptions extends ListOptions {
   sources?: readonly RecordSource[];
   source?: RecordSource;
   enrichmentStatus?: EnrichmentStatus;
-  sortBy?: "name" | "email" | "title" | "company" | "owner" | "createdAt" | "lastActivity";
+  sortBy?: "name" | "email" | "title" | "company" | "owner" | "createdAt" | "lastActivity" | "archivedAt";
   sortDirection?: "asc" | "desc";
 }
 
@@ -187,6 +191,72 @@ function dbValues(value: Contact): Record<string, string | null> {
   };
 }
 
+function nameOf(value: Pick<Contact, "firstName" | "lastName">): string {
+  return [value.firstName, value.lastName].filter(Boolean).join(" ");
+}
+
+function activeContactForEmail(
+  db: Db,
+  email: string,
+  excludeId?: string,
+): { id: string; firstName: string; lastName: string | null } | undefined {
+  const where = excludeId === undefined
+    ? "email = ? COLLATE NOCASE AND archived_at IS NULL"
+    : "email = ? COLLATE NOCASE AND archived_at IS NULL AND id <> ?";
+  const statement = db.prepare(`
+    SELECT id, first_name AS firstName, last_name AS lastName
+    FROM contacts
+    WHERE ${where}
+    LIMIT 1`);
+  return (excludeId === undefined
+    ? statement.get(email)
+    : statement.get(email, excludeId)) as
+      | { id: string; firstName: string; lastName: string | null }
+      | undefined;
+}
+
+function assertContactEmailAvailable(db: Db, email: string | null, excludeId?: string): void {
+  if (!email) return;
+  const existing = activeContactForEmail(db, email, excludeId);
+  if (existing) {
+    throw new RecordConflictError(
+      "contact",
+      "email",
+      email,
+      `${nameOf(existing)} already uses ${email}.`,
+    );
+  }
+}
+
+function rethrowContactEmailConflict(error: unknown, email: string | null): never {
+  if (email && isSqliteUniqueConstraint(error, "contacts", "email")) {
+    throw new RecordConflictError(
+      "contact",
+      "email",
+      email,
+      "Another contact already uses that email address.",
+    );
+  }
+  throw error;
+}
+
+function suppressContact(db: Db, value: Contact): void {
+  if (!value.email) return;
+  db.prepare(`
+    INSERT INTO suppressed_contacts (email, reason)
+    VALUES (@email, @reason)
+    ON CONFLICT(email) DO NOTHING
+  `).run({
+    email: value.email,
+    reason: `Deleted from the CRM (${nameOf(value)})`,
+  });
+}
+
+function allowContactAgain(db: Db, email: string | null): void {
+  if (!email) return;
+  db.prepare("DELETE FROM suppressed_contacts WHERE email = ? COLLATE NOCASE").run(email);
+}
+
 export class ContactStore {
   constructor(private readonly db: Db) {}
 
@@ -205,22 +275,34 @@ export class ContactStore {
 
   create(input: ContactCreateInput): Contact {
     const value = normalizeCreate(input);
-    const insert = this.db.prepare(`
-      INSERT INTO contacts (
-        id, first_name, last_name, email, phone, title, seniority, function,
-        linkedin_url, twitter_url, github_url, image_url, socials_checked_at,
-        enrichment_status, enriched_at, enrichment_error, company_id, owner_id,
-        source, last_activity_at, archived_at, created_at, updated_at
-      ) VALUES (
-        @id, @first_name, @last_name, @email, @phone, @title, @seniority,
-        @function, @linkedin_url, @twitter_url, @github_url, @image_url,
-        @socials_checked_at, @enrichment_status, @enriched_at,
-        @enrichment_error, @company_id, @owner_id, @source, @last_activity_at,
-        @archived_at, @created_at, @updated_at
-      )`);
+    assertContactEmailAvailable(this.db, value.email);
+    const companyId = value.companyId ?? (value.email
+      ? companyForEmail(this.db, value.email, {
+          ownerId: value.ownerId,
+          source: value.source === "CALENDAR" ? "CALENDAR" : "EMAIL",
+        })
+      : null);
+    const next = { ...value, companyId };
     return this.db.transaction(() => {
-      insert.run(dbValues(value));
-      return this.getRequired(value.id);
+      allowContactAgain(this.db, next.email);
+      try {
+        this.db.prepare(`
+          INSERT INTO contacts (
+            id, first_name, last_name, email, phone, title, seniority, function,
+            linkedin_url, twitter_url, github_url, image_url, socials_checked_at,
+            enrichment_status, enriched_at, enrichment_error, company_id, owner_id,
+            source, last_activity_at, archived_at, created_at, updated_at
+          ) VALUES (
+            @id, @first_name, @last_name, @email, @phone, @title, @seniority,
+            @function, @linkedin_url, @twitter_url, @github_url, @image_url,
+            @socials_checked_at, @enrichment_status, @enriched_at,
+            @enrichment_error, @company_id, @owner_id, @source, @last_activity_at,
+            @archived_at, @created_at, @updated_at
+          )`).run(dbValues(next));
+      } catch (error) {
+        rethrowContactEmailConflict(error, next.email);
+      }
+      return this.getRequired(next.id);
     })();
   }
 
@@ -232,15 +314,20 @@ export class ContactStore {
       name: "last_name",
       email: "email",
       title: "title",
-      company: "company_id",
+      company: "(SELECT name FROM companies WHERE companies.id = contacts.company_id)",
       owner: "owner_id",
       createdAt: "created_at",
       lastActivity: "last_activity_at",
+      archivedAt: "archived_at",
     };
     const sortColumn = sortColumns[options.sortBy ?? "name"];
     const direction = options.sortDirection === "desc" ? "DESC" : "ASC";
+    const nullLast = options.sortBy === "lastActivity" || options.sortBy === "archivedAt"
+      ? `${sortColumn} IS NULL ASC, `
+      : "";
+    const nameTieDirection = options.sortBy === "name" ? direction : "ASC";
     return this.db
-      .prepare(`${CONTACT_SELECT}${where} ORDER BY ${sortColumn} COLLATE NOCASE ${direction}, first_name COLLATE NOCASE ${direction}, id ${direction} LIMIT @limit OFFSET @offset`)
+      .prepare(`${CONTACT_SELECT}${where} ORDER BY ${nullLast}${sortColumn} COLLATE NOCASE ${direction}, last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ${nameTieDirection}, id ${direction} LIMIT @limit OFFSET @offset`)
       .all(params)
       .map(row);
   }
@@ -359,10 +446,16 @@ export class ContactStore {
         first_name LIKE @search COLLATE NOCASE OR
         last_name LIKE @search COLLATE NOCASE OR
         email LIKE @search COLLATE NOCASE OR
-        title LIKE @search COLLATE NOCASE
+        title LIKE @search COLLATE NOCASE OR
+        company_id IN (
+          SELECT id FROM companies
+          WHERE name LIKE @search COLLATE NOCASE
+        )
       )`);
       params.search = `%${search}%`;
     }
+    const activity = activityFilterClause(options.activity, "last_activity_at", params);
+    if (activity) clauses.push(activity);
     return {
       where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
       params,
@@ -400,9 +493,15 @@ export class ContactStore {
       next.updatedAt = nowIso();
       const values = dbValues(next);
       const changed: readonly ContactColumn[] = CONTACT_COLUMNS;
-      this.db
-        .prepare(`UPDATE contacts SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
-        .run(values);
+      assertContactEmailAvailable(this.db, next.email, id);
+      try {
+        this.db
+          .prepare(`UPDATE contacts SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
+          .run(values);
+      } catch (error) {
+        rethrowContactEmailConflict(error, next.email);
+      }
+      if (has("email")) allowContactAgain(this.db, next.email);
       if (enrichmentStatusChanged) {
         const occurredAt = next.updatedAt;
         createActivity(
@@ -457,12 +556,17 @@ export class ContactStore {
 
   private setArchived(id: string, archivedAt: string | null): Contact {
     return this.db.transaction(() => {
-      this.getRequired(id);
-      this.db.prepare("UPDATE contacts SET archived_at = @archivedAt, updated_at = @updatedAt WHERE id = @id").run({
-        id,
-        archivedAt,
-        updatedAt: nowIso(),
-      });
+      const current = this.getRequired(id);
+      if (archivedAt === null) assertContactEmailAvailable(this.db, current.email, id);
+      try {
+        this.db.prepare("UPDATE contacts SET archived_at = @archivedAt, updated_at = @updatedAt WHERE id = @id").run({
+          id,
+          archivedAt,
+          updatedAt: nowIso(),
+        });
+      } catch (error) {
+        rethrowContactEmailConflict(error, current.email);
+      }
       return this.getRequired(id);
     })();
   }
@@ -471,6 +575,7 @@ export class ContactStore {
     return this.db.transaction(() => {
       const value = this.getRequired(id);
       this.db.prepare("DELETE FROM contacts WHERE id = ?").run(id);
+      suppressContact(this.db, value);
       return value;
     })();
   }
@@ -506,6 +611,12 @@ export function restoreContact(db: Db, id: string): Contact {
 
 export function purgeContact(db: Db, id: string): Contact {
   return new ContactStore(db).purge(id);
+}
+
+export function isContactSuppressed(db: Db, email: string | null | undefined): boolean {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return false;
+  return db.prepare("SELECT 1 FROM suppressed_contacts WHERE email = ? COLLATE NOCASE LIMIT 1").get(normalized) !== undefined;
 }
 
 export const deleteContact = purgeContact;

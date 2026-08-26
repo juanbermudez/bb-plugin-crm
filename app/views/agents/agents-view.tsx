@@ -1682,10 +1682,14 @@ function CreateAgentForm({
 export interface AgentsViewProps {
   /** Optional route-selected agent id used for deep links from BB navigation. */
   initialRecordId?: string | null;
+  /** Open the create-agent drawer from a routed header action. */
+  initialCreate?: boolean;
   /** Optional detail tab persisted in the BB panel sub-path. */
   initialTab?: string | null;
   /** Called whenever the selected agent changes so the route stays shareable. */
   onRecordIdChange?: (recordId: string | null) => void;
+  /** Clears a routed create action after the drawer closes or submits. */
+  onCreateChange?: (open: boolean) => void;
   /** Called when the selected agent detail tab changes. */
   onTabChange?: (tab: AgentTab, recordId: string) => void;
   /** Narrow RPC client override used by previews and focused tests. */
@@ -1694,8 +1698,10 @@ export interface AgentsViewProps {
 
 export function AgentsView({
   initialRecordId = null,
+  initialCreate = false,
   initialTab,
   onRecordIdChange,
+  onCreateChange,
   onTabChange,
   rpcClient,
 }: AgentsViewProps) {
@@ -1712,7 +1718,7 @@ export function AgentsView({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailRefreshKey, setDetailRefreshKey] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(initialCreate);
   const [createValue, setCreateValue] = useState<AgentFormValue>({ name: "", description: "" });
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
@@ -1745,6 +1751,11 @@ export function AgentsView({
   useEffect(() => {
     setSelectedId(initialRecordId ?? null);
   }, [initialRecordId]);
+
+  useEffect(() => {
+    setCreateError(null);
+    setCreateOpen(initialCreate);
+  }, [initialCreate]);
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -1780,6 +1791,12 @@ export function AgentsView({
     onRecordIdChange?.(null);
   };
 
+  const closeCreate = useCallback(() => {
+    setCreateOpen(false);
+    setCreateError(null);
+    onCreateChange?.(false);
+  }, [onCreateChange]);
+
   const reloadDetail = useCallback(async () => {
     if (!selectedId) return;
     await loadDetail(selectedId);
@@ -1801,7 +1818,7 @@ export function AgentsView({
         description: createValue.description.trim() || null,
       });
       const created = result as AgentDefinition;
-      setCreateOpen(false);
+      closeCreate();
       setCreateValue({ name: "", description: "" });
       await loadList();
       if (created.id) openAgent(created.id);
@@ -1939,12 +1956,19 @@ export function AgentsView({
 
       <RecordDrawer
         open={createOpen}
-        onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateError(null); }}
+        onOpenChange={(open) => {
+          if (open) {
+            setCreateError(null);
+            setCreateOpen(true);
+          } else {
+            closeCreate();
+          }
+        }}
         title="New agent"
         description="Create a definition first, then add a version and deploy it from the detail workspace."
         footer={
           <>
-            <Button type="button" variant="outline" disabled={createSaving} onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button type="button" variant="outline" disabled={createSaving} onClick={closeCreate}>Cancel</Button>
             <Button type="submit" form="create-agent-form" disabled={createSaving}>{createSaving ? "Creating…" : "Create agent"}</Button>
           </>
         }

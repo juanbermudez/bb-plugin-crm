@@ -30,4 +30,22 @@ describe("CRM panel routes", () => {
     };
     expect(parseCrmRoute(crmRouteToSubPath(route))).toEqual(route);
   });
+
+  it("round-trips a routed create action", () => {
+    const route = {
+      kind: "contacts" as const,
+      recordId: null,
+      create: "contact" as const,
+    };
+    expect(parseCrmRoute(crmRouteToSubPath(route))).toEqual(route);
+    expect(parseCrmRoute("dashboard?create=task")).toEqual({
+      kind: "dashboard",
+      recordId: null,
+      create: "task",
+    });
+    expect(parseCrmRoute("dashboard?create=unknown")).toEqual({
+      kind: "dashboard",
+      recordId: null,
+    });
+  });
 });

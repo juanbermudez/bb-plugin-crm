@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { initializeSchema } from "./schema.js";
+import { CRM_SCHEMA_MIGRATIONS, initializeSchema } from "./schema.js";
 import {
   archiveCompany,
+  companyFaviconUrl,
+  companyForEmail,
   createCompany,
   getCompany,
   listCompanies,
   purgeCompany,
   restoreCompany,
+  setPrimaryContact,
   updateCompany,
 } from "./companies.js";
 import {
@@ -19,6 +22,7 @@ import {
   restoreContact,
   updateContact,
 } from "./contacts.js";
+import { domainFromEmail, RecordConflictError } from "./types.js";
 import {
   archiveDeal,
   createDeal,
@@ -33,6 +37,13 @@ function withDatabase() {
   const host = createFakePluginHost({ pluginId: "crm-db-test" });
   const db = host.bb.storage.database();
   initializeSchema(host.bb, db);
+  return { ...host, db, bb: host.bb, lifecycle: host.harness.lifecycle };
+}
+
+function withSchema9Database() {
+  const host = createFakePluginHost({ pluginId: "crm-schema-9-test" });
+  const db = host.bb.storage.database();
+  host.bb.storage.migrate(db, CRM_SCHEMA_MIGRATIONS.slice(0, 9));
   return { ...host, db, bb: host.bb, lifecycle: host.harness.lifecycle };
 }
 
@@ -78,7 +89,9 @@ describe("CRM SQLite foundation", () => {
         "field_options",
         "field_values",
         "saved_views",
+        "suppressed_contacts",
         "tracking_daily_aggregates",
+        "tracking_daily_traffic_sources",
         "tracking_events",
         "tracking_retention",
         "tracking_sites",
@@ -88,13 +101,13 @@ describe("CRM SQLite foundation", () => {
       const migrationIds = db
         .prepare("SELECT id FROM _bb_migrations ORDER BY id")
         .all() as Array<{ id: number }>;
-      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
       expect(
         db
           .prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'")
           .pluck()
           .get(),
-      ).toBe("8");
+      ).toBe("10");
 
       const indexNames = db
         .prepare(
@@ -119,7 +132,7 @@ describe("CRM SQLite foundation", () => {
       expect(
         (db.prepare("SELECT COUNT(*) AS count FROM _bb_migrations").get() as { count: number })
           .count,
-      ).toBe(8);
+      ).toBe(10);
     } finally {
       await lifecycle.dispose();
     }
@@ -207,6 +220,184 @@ describe("CRM SQLite foundation", () => {
     }
   });
 
+  it("derives HTTPS company favicons and preserves explicit artwork", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const created = createCompany(db, {
+        name: "Favicon Systems",
+        domain: "https://www.Favicon.Example/pricing",
+      });
+      expect(created.iconUrl).toBe("https://favicon.example/favicon.ico");
+      expect(created.logoUrl).toBeNull();
+      expect(created.iconDarkUrl).toBeNull();
+
+      const renamed = updateCompany(db, created.id, { domain: "new.favicon.example" });
+      expect(renamed.iconUrl).toBe("https://new.favicon.example/favicon.ico");
+
+      const explicitlyBlank = createCompany(db, {
+        name: "No Favicon",
+        domain: "blank.favicon.example",
+        iconUrl: null,
+      });
+      expect(explicitlyBlank.iconUrl).toBeNull();
+
+      const custom = updateCompany(db, renamed.id, {
+        iconUrl: "https://cdn.example/favicon-systems.svg",
+        logoUrl: "https://cdn.example/favicon-systems-logo.svg",
+      });
+      const customAfterDomainChange = updateCompany(db, custom.id, {
+        domain: "custom.favicon.example",
+      });
+      expect(customAfterDomainChange.iconUrl).toBe("https://cdn.example/favicon-systems.svg");
+      expect(customAfterDomainChange.logoUrl).toBe("https://cdn.example/favicon-systems-logo.svg");
+
+      expect(companyFaviconUrl("WWW.Example.com/path")).toBe("https://example.com/favicon.ico");
+      expect(companyFaviconUrl(null)).toBeNull();
+      expect(companyFaviconUrl("localhost")).toBeNull();
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("applies the tracking configuration migration after schema 9", async () => {
+    const { bb, db, lifecycle } = withSchema9Database();
+    try {
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("9");
+      expect(db.prepare("SELECT id FROM _bb_migrations ORDER BY id").all()).toEqual(
+        [0, 1, 2, 3, 4, 5, 6, 7, 8].map((id) => ({ id })),
+      );
+      expect(db.prepare("PRAGMA table_info(tracking_events)").all()).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "medium" })]),
+      );
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracking_daily_traffic_sources'").get()).toBeUndefined();
+
+      const timestamp = "2026-08-25T12:00:00.000Z";
+      db.prepare(`
+        INSERT INTO tracking_sites (
+          id, site_key, name, allowed_domains, status, verification_status,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "site_legacy",
+        "site_legacy",
+        "Legacy site",
+        JSON.stringify(["example.com"]),
+        "ACTIVE",
+        "PENDING",
+        timestamp,
+        timestamp,
+      );
+      db.prepare(`
+        INSERT INTO tracking_retention (
+          site_id, event_retention_days, aggregate_retention_days, updated_at
+        ) VALUES (?, ?, ?, ?)
+      `).run("site_legacy", 30, 730, timestamp);
+      db.prepare(`
+        INSERT INTO tracking_tokens (
+          id, site_id, scope, token_hash, token_hint, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run("token_legacy", "site_legacy", "TRACKING", "a".repeat(64), "aaaaaaaaaaaa", timestamp);
+      db.prepare(`
+        INSERT INTO tracking_events (
+          id, site_id, token_id, event_type, occurred_at, received_at,
+          origin, path, source, properties, event_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "event_legacy",
+        "site_legacy",
+        "token_legacy",
+        "PAGE_VIEW",
+        timestamp,
+        timestamp,
+        "https://example.com",
+        "/pricing",
+        "newsletter",
+        "{}",
+        "legacy-event",
+        timestamp,
+      );
+
+      initializeSchema(bb, db);
+
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'suppressed_contacts'").get()).toBeDefined();
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracking_daily_traffic_sources'").get()).toBeDefined();
+      expect(db.prepare("SELECT cross_domain, limit_to_domains, cookie_days FROM tracking_sites WHERE id = ?").get("site_legacy")).toEqual({
+        cross_domain: 1,
+        limit_to_domains: 1,
+        cookie_days: 395,
+      });
+      expect(db.prepare("SELECT source, medium, properties FROM tracking_events WHERE id = ?").get("event_legacy")).toEqual({
+        source: "newsletter",
+        medium: null,
+        properties: "{}",
+      });
+      expect(db.prepare("PRAGMA table_info(tracking_events)").all()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "medium" })]),
+      );
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("10");
+      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(9);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("reports normalized duplicate conflicts, writes purge tombstones, and auto-associates work domains", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      expect(domainFromEmail("Ada@Acme.Example")).toBe("acme.example");
+      expect(domainFromEmail("Ada@gmail.com")).toBeNull();
+      expect(domainFromEmail("no-reply@sendgrid.net")).toBeNull();
+
+      const company = createCompany(db, { name: "Acme", domain: "acme.example" });
+      expect(() => createCompany(db, { name: "Duplicate", domain: "HTTPS://ACME.EXAMPLE/path" })).toThrow(RecordConflictError);
+
+      const contact = createContact(db, {
+        firstName: "Ada",
+        lastName: "Lovelace",
+        email: "ADA@OTHER.EXAMPLE",
+        ownerId: "owner_1",
+      });
+      expect(contact.companyId).not.toBeNull();
+      expect(getCompany(db, contact.companyId!)).toMatchObject({
+        name: "other.example",
+        domain: "other.example",
+        website: "https://other.example",
+        source: "EMAIL",
+        ownerId: "owner_1",
+      });
+      expect(companyForEmail(db, "second@OTHER.EXAMPLE", { ownerId: "owner_2" })).toBe(contact.companyId);
+      expect(() => createContact(db, { firstName: "Ada Again", email: "ada@other.example" })).toThrow(RecordConflictError);
+
+      const free = createContact(db, { firstName: "Free", email: "free@gmail.com" });
+      expect(free.companyId).toBeNull();
+      const machine = createContact(db, { firstName: "Robot", email: "noreply@sendgrid.net" });
+      expect(machine.companyId).toBeNull();
+
+      archiveContact(db, contact.id);
+      expect(db.prepare("SELECT 1 FROM suppressed_contacts WHERE email = ?").get(contact.email)).toBeUndefined();
+      restoreContact(db, contact.id);
+      const purged = purgeContact(db, contact.id);
+      expect(purged.email).toBe("ada@other.example");
+      expect(db.prepare("SELECT reason FROM suppressed_contacts WHERE email = ?").pluck().get("ADA@OTHER.EXAMPLE")).toBe(
+        "Deleted from the CRM (Ada Lovelace)",
+      );
+
+      const recreated = createContact(db, {
+        firstName: "Ada Recreated",
+        email: "ADA@OTHER.EXAMPLE",
+      });
+      expect(recreated.companyId).toBe(contact.companyId);
+      expect(db.prepare("SELECT 1 FROM suppressed_contacts WHERE email = ?").get("ada@other.example")).toBeUndefined();
+
+      const updateTarget = createContact(db, { firstName: "Update", email: "update@other.example" });
+      expect(() => updateContact(db, updateTarget.id, { email: "ada@other.example" })).toThrow(RecordConflictError);
+      expect(getContact(db, updateTarget.id)?.email).toBe("update@other.example");
+      expect(company.id).toBeDefined();
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
   it("enforces relationships, active uniqueness, and frozen deal base money", async () => {
     const { db, lifecycle } = withDatabase();
     try {
@@ -224,6 +415,24 @@ describe("CRM SQLite foundation", () => {
         email: "grace@example.com",
         companyId: replacement.id,
       });
+      const otherCompany = createCompany(db, { name: "Other", domain: "other.example" });
+      const foreignContact = createContact(db, {
+        firstName: "Foreign",
+        email: "foreign@other.example",
+        companyId: otherCompany.id,
+      });
+      expect(setPrimaryContact(db, replacement.id, contact.id).primaryContactId).toBe(contact.id);
+      expect(() => setPrimaryContact(db, replacement.id, foreignContact.id)).toThrow(
+        "That contact does not work at this company.",
+      );
+      expect(() => updateCompany(db, replacement.id, { primaryContactId: "missing-contact" })).toThrow(
+        "No contact with id missing-contact.",
+      );
+      expect(() => createCompany(db, {
+        name: "Invalid Primary",
+        domain: "invalid-primary.example",
+        primaryContactId: foreignContact.id,
+      })).toThrow("That contact does not work at this company.");
       const deal = createDeal(db, {
         name: "Expansion",
         companyId: replacement.id,
@@ -269,6 +478,133 @@ describe("CRM SQLite foundation", () => {
       expect(db.prepare("SELECT COUNT(*) AS count FROM activities").pluck().get()).toBe(0);
       expect(db.prepare("SELECT COUNT(*) AS count FROM field_values").pluck().get()).toBe(0);
       expect(db.prepare("SELECT COUNT(*) AS count FROM field_options").pluck().get()).toBe(1);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("keeps list activity, relation search, relation sorting, null ordering, and count sorting aligned", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const day = 24 * 60 * 60 * 1_000;
+      const recent = new Date(Date.now() - 2 * day).toISOString();
+      const stale = new Date(Date.now() - 45 * day).toISOString();
+      const alpha = createCompany(db, {
+        id: "cmp_alpha",
+        name: "Alpha Account",
+        lastActivityAt: recent,
+      });
+      const zulu = createCompany(db, {
+        id: "cmp_zulu",
+        name: "Zulu Account",
+        lastActivityAt: stale,
+      });
+      const inactive = createCompany(db, {
+        id: "cmp_inactive",
+        name: "No Activity Account",
+      });
+
+      const alphaContact = createContact(db, {
+        id: "con_alpha",
+        firstName: "Alpha",
+        lastName: "Contact",
+        companyId: alpha.id,
+        lastActivityAt: recent,
+      });
+      createContact(db, {
+        id: "con_alpha_second",
+        firstName: "Alpha Second",
+        lastName: "Contact",
+        companyId: alpha.id,
+      });
+      const archivedZuluContact = createContact(db, {
+        id: "con_zulu_archived",
+        firstName: "Archived",
+        lastName: "Zulu Contact",
+        companyId: zulu.id,
+      });
+      archiveContact(db, archivedZuluContact.id);
+      const zuluContact = createContact(db, {
+        id: "con_zulu",
+        firstName: "Zulu",
+        lastName: "Contact",
+        companyId: zulu.id,
+        lastActivityAt: stale,
+      });
+
+      const alphaDeal = createDeal(db, {
+        id: "deal_alpha",
+        name: "Alpha renewal",
+        companyId: alpha.id,
+        ownerId: "owner_alpha",
+        amountCents: 5_000,
+        baseAmountCents: 5_000,
+        currency: "USD",
+        baseCurrency: "USD",
+        fxRate: 1,
+        lastActivityAt: recent,
+      });
+      createDeal(db, {
+        id: "deal_alpha_second",
+        name: "Alpha expansion",
+        companyId: alpha.id,
+        ownerId: "owner_alpha",
+        amountCents: 4_000,
+        baseAmountCents: 4_000,
+        currency: "USD",
+        baseCurrency: "USD",
+        fxRate: 1,
+      });
+      const zuluDeal = createDeal(db, {
+        id: "deal_zulu",
+        name: "Zulu renewal",
+        companyId: zulu.id,
+        ownerId: "owner_zulu",
+        lastActivityAt: stale,
+      });
+      const archivedZuluDeal = createDeal(db, {
+        id: "deal_zulu_archived",
+        name: "Zulu archived renewal",
+        companyId: zulu.id,
+        ownerId: "owner_zulu",
+      });
+      archiveDeal(db, archivedZuluDeal.id);
+
+      expect(listCompanies(db, { activity: ["7"] }).map((value) => value.id)).toEqual([alpha.id]);
+      expect(listCompanies(db, { activity: ["7", "30"] }).map((value) => value.id)).toEqual([alpha.id]);
+      expect(listContacts(db, { activity: ["7"] }).map((value) => value.id)).toEqual([alphaContact.id]);
+      expect(listContacts(db, { search: "Alpha Account" }).map((value) => value.id)).toEqual(
+        expect.arrayContaining([alphaContact.id]),
+      );
+      expect(listDeals(db, { search: "Alpha Account" }).map((value) => value.id)).toEqual(
+        expect.arrayContaining([alphaDeal.id]),
+      );
+
+      expect(listContacts(db, { sortBy: "company", sortDirection: "asc" }).map((value) => value.id)).toEqual([
+        alphaContact.id,
+        "con_alpha_second",
+        zuluContact.id,
+      ]);
+      expect(listDeals(db, { sortBy: "company", sortDirection: "asc" }).map((value) => value.id)).toEqual([
+        "deal_alpha_second",
+        alphaDeal.id,
+        zuluDeal.id,
+      ]);
+      expect(listCompanies(db, { sortBy: "lastActivity", sortDirection: "desc" }).map((value) => value.id)).toEqual([
+        alpha.id,
+        zulu.id,
+        inactive.id,
+      ]);
+      expect(listCompanies(db, { sortBy: "contacts", sortDirection: "desc" }).map((value) => value.id)).toEqual([
+        zulu.id,
+        alpha.id,
+        inactive.id,
+      ]);
+      expect(listCompanies(db, { sortBy: "deals", sortDirection: "desc" }).map((value) => value.id)).toEqual([
+        zulu.id,
+        alpha.id,
+        inactive.id,
+      ]);
     } finally {
       await lifecycle.dispose();
     }

@@ -10,6 +10,7 @@ import {
   ingestTrackingEvent,
   listTrackingAggregates,
   listTrackingEvents,
+  listTrackingTrafficSources,
   listTrackingTokens,
   markConnectionSyncFailure,
   markConnectionSyncSuccess,
@@ -18,6 +19,7 @@ import {
   rollupTrackingEvents,
   rotateTrackingSite,
   sanitizeTrackingEvent,
+  updateTrackingSite,
   verifyTrackingSite,
   type TrackingEventInput,
 } from "./connections.js";
@@ -182,12 +184,14 @@ describe("tracking persistence", () => {
         siteId: provisioned.site.id,
         origin: "https://example.com",
         path: "/home",
+        referrer: "https://search.example/results?q=private#result",
         eventType: "PAGE_VIEW",
         visitorId: "visitor-1",
         occurredAt: "2026-08-25T12:00:00.000Z",
       };
       const event = ingestTrackingEvent(db, { ...base, token: provisioned.token });
       expect(event.path).toBe("/home");
+      expect(event.referrerPath).toBe("/results");
       expect(event.visitorHash).not.toBe("visitor-1");
       expect(() => ingestTrackingEvent(db, { ...base, token: "crm_trk_wrong-token-123456" })).toThrow(
         "not authorized",
@@ -202,6 +206,16 @@ describe("tracking persistence", () => {
         token: provisioned.token,
         path: "/home?utm_source=secret",
       })).toThrow("query string or fragment");
+      expect(() => ingestTrackingEvent(db, {
+        ...base,
+        token: provisioned.token,
+        source: "person@example.com",
+      })).toThrow("Sensitive tracking source value");
+      expect(() => ingestTrackingEvent(db, {
+        ...base,
+        token: provisioned.token,
+        medium: "4111 1111 1111 1111",
+      })).toThrow("Sensitive tracking medium value");
 
       pauseTrackingSite(db, provisioned.site.id, true, "2026-08-25T12:01:00.000Z");
       expect(() => ingestTrackingEvent(db, { ...base, token: provisioned.token })).toThrow("paused");
@@ -274,6 +288,127 @@ describe("tracking persistence", () => {
       expect(db.prepare("SELECT last_pruned_at FROM tracking_retention WHERE site_id = ?").get(provisioned.site.id)).toEqual({
         last_pruned_at: "2026-08-25T14:00:00.000Z",
       });
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("persists cookie/rule configuration and verifies only from observed page views", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const provisioned = createTrackingSite(db, {
+        id: "site_config",
+        siteKey: "config_site",
+        name: "Config site",
+        allowedDomains: ["example.com", "*.preview.example.com"],
+        crossDomain: false,
+        limitToDomains: false,
+        cookieSubdomains: true,
+        secureCookies: false,
+        honourDnt: false,
+        cookieDays: 0,
+      });
+      expect(provisioned.site).toMatchObject({
+        crossDomain: false,
+        limitToDomains: false,
+        cookieSubdomains: true,
+        secureCookies: false,
+        honourDnt: false,
+        cookieDays: 0,
+        verificationStatus: "PENDING",
+        verificationEventId: null,
+      });
+      expect(() => verifyTrackingSite(db, provisioned.site.id, { domain: "example.com" })).toThrow(
+        "requires an observed PAGE_VIEW",
+      );
+
+      const observed = ingestTrackingEvent(db, {
+        siteId: provisioned.site.id,
+        siteKey: provisioned.site.siteKey,
+        token: provisioned.token,
+        eventType: "PAGE_VIEW",
+        origin: "https://docs.preview.example.com",
+        path: "/pricing",
+        eventKey: "config-observed",
+        occurredAt: "2026-08-25T12:00:00.000Z",
+        receivedAt: "2026-08-25T12:00:00.000Z",
+      });
+      const verified = verifyTrackingSite(db, provisioned.site.id, {
+        domain: "*.preview.example.com",
+        observedEventId: observed.id,
+        verifiedAt: "2099-01-01T00:00:00.000Z",
+      });
+      expect(verified).toMatchObject({
+        verificationStatus: "VERIFIED",
+        verificationEventId: observed.id,
+        verificationDomain: "docs.preview.example.com",
+        // Caller-supplied future dates cannot manufacture evidence time.
+        verifiedAt: observed.receivedAt,
+      });
+
+      const updated = updateTrackingSite(db, {
+        id: provisioned.site.id,
+        allowedDomains: ["example.com"],
+        cookieDays: 180,
+        at: "2026-08-25T13:00:00.000Z",
+      });
+      expect(updated).toMatchObject({
+        allowedDomains: ["example.com"],
+        cookieDays: 180,
+        verificationStatus: "PENDING",
+        verificationEventId: null,
+      });
+
+      const unrestricted = createTrackingSite(db, {
+        id: "site_unrestricted",
+        name: "Unrestricted site",
+        allowedDomains: [],
+        limitToDomains: false,
+      });
+      expect(() => updateTrackingSite(db, {
+        id: unrestricted.site.id,
+        limitToDomains: true,
+      })).toThrow("At least one allowed domain is required");
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("rolls up anonymous page-view traffic by source and medium without contact attribution", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const provisioned = createTrackingSite(db, {
+        id: "site_sources",
+        siteKey: "sources_site",
+        name: "Sources site",
+        allowedDomains: ["example.com"],
+      });
+      const event = (id: string, source: string, medium: string, visitorId: string): TrackingEventInput => ({
+        id,
+        siteId: provisioned.site.id,
+        token: provisioned.token,
+        origin: "https://example.com",
+        path: "/pricing",
+        eventType: "PAGE_VIEW",
+        visitorId,
+        source,
+        medium,
+        eventKey: id,
+        occurredAt: "2026-08-25T12:00:00.000Z",
+        receivedAt: "2026-08-25T12:00:00.000Z",
+      });
+      ingestTrackingEvent(db, event("source-1", "newsletter", "email", "visitor-1"));
+      ingestTrackingEvent(db, event("source-2", "newsletter", "email", "visitor-2"));
+      ingestTrackingEvent(db, event("source-3", "google", "cpc", "visitor-3"));
+      ingestTrackingEvent(db, {
+        ...event("source-4", "newsletter", "email", "visitor-1"),
+        eventType: "CUSTOM",
+      });
+      expect(rollupTrackingEvents(db, { siteId: provisioned.site.id, now: "2026-08-25T13:00:00.000Z" })).toMatchObject({ eventCount: 4 });
+      expect(listTrackingTrafficSources(db, { siteId: provisioned.site.id })).toEqual([
+        expect.objectContaining({ siteId: provisioned.site.id, source: "newsletter", medium: "email", eventCount: 2, visitorDays: 2 }),
+        expect.objectContaining({ siteId: provisioned.site.id, source: "google", medium: "cpc", eventCount: 1, visitorDays: 1 }),
+      ]);
     } finally {
       await lifecycle.dispose();
     }

@@ -10,6 +10,7 @@ export const TRACKING_METHODS = [
   "tracking_sites_list",
   "tracking_sites_get",
   "tracking_sites_create",
+  "tracking_sites_update",
   "tracking_sites_verify",
   "tracking_sites_pause",
   "tracking_sites_rotate",
@@ -20,6 +21,7 @@ export const TRACKING_METHODS = [
   "tracking_aggregates_list",
   "tracking_aggregates_rollup",
   "tracking_aggregates_prune",
+  "tracking_traffic_sources_list",
 ] as const satisfies readonly (keyof typeof rpcContract)[];
 
 export type TrackingMethod = (typeof TRACKING_METHODS)[number];
@@ -34,4 +36,3 @@ export type TrackingRpcClient = {
 export function useTrackingRpc(): TrackingRpcClient {
   return useRpc<typeof rpcContract>() as unknown as TrackingRpcClient;
 }
-

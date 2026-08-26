@@ -51,6 +51,12 @@ export const TRACKING_LIMITS = {
   maxTokenLength: 512,
 } as const;
 
+export const TRACKING_COOKIE_LIFETIMES = [
+  { days: 395, label: "13 months" },
+  { days: 180, label: "6 months" },
+  { days: 0, label: "Session only" },
+] as const;
+
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
@@ -142,8 +148,17 @@ export interface TrackingSite {
   status: TrackingSiteStatus;
   verificationStatus: TrackingVerificationStatus;
   verifiedAt: string | null;
+  /** Verification is only truthful when tied to an observed page-view event. */
+  verificationEventId?: string | null;
+  verificationDomain?: string | null;
   pausedAt: string | null;
   rotatedAt: string | null;
+  crossDomain?: boolean;
+  limitToDomains?: boolean;
+  cookieSubdomains?: boolean;
+  secureCookies?: boolean;
+  honourDnt?: boolean;
+  cookieDays?: number;
   retention: TrackingRetention;
   createdAt: string;
   updatedAt: string;
@@ -158,10 +173,32 @@ export interface TrackingSiteCreateInput {
   domains?: readonly string[];
   eventRetentionDays?: number;
   aggregateRetentionDays?: number;
+  crossDomain?: boolean;
+  limitToDomains?: boolean;
+  cookieSubdomains?: boolean;
+  secureCookies?: boolean;
+  honourDnt?: boolean;
+  cookieDays?: number;
+}
+
+export interface TrackingSiteUpdateInput {
+  id: string;
+  name?: string;
+  allowedDomains?: readonly string[];
+  crossDomain?: boolean;
+  limitToDomains?: boolean;
+  cookieSubdomains?: boolean;
+  secureCookies?: boolean;
+  honourDnt?: boolean;
+  cookieDays?: number;
+  eventRetentionDays?: number;
+  aggregateRetentionDays?: number;
+  at?: string | Date | null;
 }
 
 export interface TrackingSiteVerifyInput {
   domain?: string;
+  observedEventId?: string;
   verifiedAt?: string | Date | null;
 }
 
@@ -215,6 +252,7 @@ export interface TrackingEventInput {
   visitorId?: string | null;
   sessionId?: string | null;
   source?: string | null;
+  medium?: string | null;
   properties?: Record<string, unknown> | null;
   eventKey?: string | null;
   occurredAt?: string | Date | null;
@@ -234,6 +272,7 @@ export interface SanitizedTrackingEvent {
   visitorHash: string | null;
   sessionHash: string | null;
   source: string | null;
+  medium: string | null;
   properties: JsonObject;
   eventKey: string | null;
   receivedAt: string;
@@ -273,6 +312,27 @@ export interface TrackingAggregateListOptions {
   eventType?: TrackingEventType | string;
   path?: string;
   source?: string | null;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TrackingTrafficSource {
+  siteId: string;
+  source: string;
+  medium: string | null;
+  eventCount: number;
+  /** Sum of per-day distinct visitors; one returning visitor may count on multiple days. */
+  visitorDays: number;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+}
+
+export interface TrackingTrafficSourceListOptions {
+  siteId?: string;
+  source?: string;
+  medium?: string | null;
   from?: string;
   to?: string;
   limit?: number;
@@ -349,8 +409,16 @@ interface RawSite extends Record<string, unknown> {
   status: string;
   verificationStatus: string;
   verifiedAt: string | null;
+  verificationEventId: string | null;
+  verificationDomain: string | null;
   pausedAt: string | null;
   rotatedAt: string | null;
+  crossDomain: number;
+  limitToDomains: number;
+  cookieSubdomains: number;
+  secureCookies: number;
+  honourDnt: number;
+  cookieDays: number;
   createdAt: string;
   updatedAt: string;
   eventRetentionDays: number;
@@ -383,6 +451,7 @@ interface RawEvent extends Record<string, unknown> {
   visitorHash: string | null;
   sessionHash: string | null;
   source: string | null;
+  medium: string | null;
   properties: string;
   eventKey: string | null;
   createdAt: string;
@@ -399,6 +468,16 @@ interface RawAggregate extends Record<string, unknown> {
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   rolledUpAt: string;
+}
+
+interface RawTrafficSource extends Record<string, unknown> {
+  siteId: string;
+  source: string;
+  medium: string;
+  eventCount: number;
+  visitorDays: number;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -693,13 +772,26 @@ function normalizeAllowedDomain(value: string): string {
   return normalizeHost(normalized, "Allowed domain");
 }
 
-function normalizeAllowedDomains(values: readonly string[] | undefined): string[] {
-  if (!values || !Array.isArray(values) || values.length === 0 || values.length > 32) {
-    throw new Error("At least one allowed domain is required.");
+function normalizeAllowedDomains(values: readonly string[] | undefined, allowEmpty = false): string[] {
+  if (values === undefined && allowEmpty) return [];
+  if (values === undefined || !Array.isArray(values) || values.length > 32 || (!allowEmpty && values.length === 0)) {
+    throw new Error("At least one allowed domain is required while domain limiting is enabled.");
   }
   const domains = [...new Set(values.map(normalizeAllowedDomain))].sort();
-  if (domains.length === 0) throw new Error("At least one allowed domain is required.");
+  if (domains.length === 0 && !allowEmpty) throw new Error("At least one allowed domain is required while domain limiting is enabled.");
   return domains;
+}
+
+function normalizeCookieDays(value: number | undefined, fallback = 395): number {
+  const days = value ?? fallback;
+  if (!Number.isSafeInteger(days) || days < 0 || days > 400) {
+    throw new Error("Cookie lifetime must be an integer between 0 and 400 days.");
+  }
+  return days;
+}
+
+function sqliteBoolean(value: unknown, fallback: boolean): boolean {
+  return value === undefined || value === null ? fallback : Number(value) === 1;
 }
 
 function hostMatchesAllowed(host: string, domains: readonly string[]): boolean {
@@ -755,8 +847,21 @@ function pathFromUrl(value: string, label: string, expectedOrigin?: string): str
 function normalizeReferrer(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const input = normalizeRequiredText(value, "Tracking referrer", 4_096);
-  if (input.startsWith("/")) return normalizePath(input, "Tracking referrer");
-  return pathFromUrl(input, "Tracking referrer");
+  // Referrers routinely contain attribution/search parameters. Persist only
+  // the path so those values never enter CRM storage, while still accepting a
+  // normal browser `document.referrer` value.
+  let parsed: URL;
+  try {
+    parsed = input.startsWith("/")
+      ? new URL(input, "https://tracking-referrer.invalid")
+      : new URL(input);
+  } catch {
+    throw new Error("Tracking referrer must be a path or absolute URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Tracking referrer must use HTTP or HTTPS.");
+  }
+  return normalizePath(parsed.pathname || "/", "Tracking referrer");
 }
 
 function hashIdentifier(value: string | null | undefined, label: string): string | null {
@@ -815,6 +920,17 @@ function normalizeTrackingProperties(value: Record<string, unknown> | null | und
   return output;
 }
 
+function normalizeTrackingAttribution(
+  value: string | null | undefined,
+  label: "Tracking source" | "Tracking medium",
+): string | null {
+  const normalized = normalizeOptionalText(value, label, TRACKING_LIMITS.maxSourceLength);
+  if (normalized && isSensitiveTrackingValue(normalized)) {
+    throw new Error(`Sensitive ${label.toLowerCase()} value is not allowed.`);
+  }
+  return normalized;
+}
+
 /**
  * Enforces the collector privacy contract without touching the database. In
  * particular, URLs with query strings/fragments and sensitive properties are
@@ -834,11 +950,23 @@ export function sanitizeTrackingEvent(input: TrackingEventInput): SanitizedTrack
       ? normalizePath(pageValue, "Tracking page path")
       : pathFromUrl(pageValue, "Tracking page URL", origin);
   const referrerPath = normalizeReferrer(input.referrer ?? input.referrerUrl);
-  const source = normalizeOptionalText(input.source, "Tracking source", TRACKING_LIMITS.maxSourceLength);
+  const properties = normalizeTrackingProperties(input.properties);
+  const sourceProperty = properties.utm_source ?? properties.source;
+  const mediumProperty = properties.utm_medium ?? properties.medium;
+  const source = normalizeTrackingAttribution(
+    input.source ?? (typeof sourceProperty === "string" ? sourceProperty : null),
+    "Tracking source",
+  );
+  const medium = normalizeTrackingAttribution(
+    input.medium ?? (typeof mediumProperty === "string" ? mediumProperty : null),
+    "Tracking medium",
+  );
   if (source && (source.includes("?") || source.includes("#"))) {
     throw new Error("Tracking source must not contain a query string or fragment.");
   }
-  const properties = normalizeTrackingProperties(input.properties);
+  if (medium && (medium.includes("?") || medium.includes("#"))) {
+    throw new Error("Tracking medium must not contain a query string or fragment.");
+  }
   const id = input.id === undefined ? newRecordId("tev") : normalizeRequiredText(input.id, "Tracking event id", 128);
   const eventKey = normalizeOptionalText(input.eventKey, "Tracking event key", 128);
   const encoded = encodeJson(properties, "Tracking properties");
@@ -855,6 +983,7 @@ export function sanitizeTrackingEvent(input: TrackingEventInput): SanitizedTrack
     visitorHash: hashIdentifier(input.visitorId, "Tracking visitor id"),
     sessionHash: hashIdentifier(input.sessionId, "Tracking session id"),
     source,
+    medium,
     properties,
     eventKey,
     receivedAt,
@@ -871,8 +1000,16 @@ function rawSiteSelect(): string {
       s.status,
       s.verification_status AS verificationStatus,
       s.verified_at AS verifiedAt,
+      s.verification_event_id AS verificationEventId,
+      s.verification_domain AS verificationDomain,
       s.paused_at AS pausedAt,
       s.rotated_at AS rotatedAt,
+      s.cross_domain AS crossDomain,
+      s.limit_to_domains AS limitToDomains,
+      s.cookie_subdomains AS cookieSubdomains,
+      s.secure_cookies AS secureCookies,
+      s.honour_dnt AS honourDnt,
+      s.cookie_days AS cookieDays,
       s.created_at AS createdAt,
       s.updated_at AS updatedAt,
       r.event_retention_days AS eventRetentionDays,
@@ -886,17 +1023,26 @@ function rawSiteSelect(): string {
 
 function parseSite(row: RawSite): TrackingSite {
   const allowedDomains = parseJsonArray(row.allowedDomains, "Tracking allowed domains");
-  if (allowedDomains.length === 0) throw new Error("Tracking site has no allowed domains.");
+  const verificationEventId = row.verificationEventId ?? null;
+  const verified = normalizeEnum(row.verificationStatus, TRACKING_VERIFICATION_STATUSES, "tracking verification status") === "VERIFIED" && verificationEventId !== null;
   return {
     id: requiredText(row.id, "Tracking site id"),
     siteKey: requiredText(row.siteKey, "Tracking site key"),
     name: requiredText(row.name, "Tracking site name"),
     allowedDomains,
     status: normalizeEnum(row.status, TRACKING_SITE_STATUSES, "tracking site status"),
-    verificationStatus: normalizeEnum(row.verificationStatus, TRACKING_VERIFICATION_STATUSES, "tracking verification status"),
-    verifiedAt: row.verifiedAt ?? null,
+    verificationStatus: verified ? "VERIFIED" : "PENDING",
+    verifiedAt: verified ? row.verifiedAt ?? null : null,
+    verificationEventId: verified ? verificationEventId : null,
+    verificationDomain: verified ? row.verificationDomain ?? null : null,
     pausedAt: row.pausedAt ?? null,
     rotatedAt: row.rotatedAt ?? null,
+    crossDomain: sqliteBoolean(row.crossDomain, true),
+    limitToDomains: sqliteBoolean(row.limitToDomains, true),
+    cookieSubdomains: sqliteBoolean(row.cookieSubdomains, false),
+    secureCookies: sqliteBoolean(row.secureCookies, true),
+    honourDnt: sqliteBoolean(row.honourDnt, true),
+    cookieDays: Number(row.cookieDays ?? 395),
     retention: {
       siteId: requiredText(row.id, "Tracking retention site"),
       eventRetentionDays: Number(row.eventRetentionDays),
@@ -937,6 +1083,7 @@ function rawEventSelect(): string {
       visitor_hash AS visitorHash,
       session_hash AS sessionHash,
       source,
+      medium,
       properties,
       event_key AS eventKey,
       created_at AS createdAt
@@ -958,6 +1105,7 @@ function parseEvent(row: RawEvent): TrackingEvent {
     visitorHash: row.visitorHash ?? null,
     sessionHash: row.sessionHash ?? null,
     source: row.source ?? null,
+    medium: row.medium ?? null,
     properties: parseJsonObject(row.properties, "Tracking event properties"),
     eventKey: row.eventKey ?? null,
     createdAt: requiredText(row.createdAt, "Tracking event created timestamp"),
@@ -976,6 +1124,18 @@ function parseAggregate(row: RawAggregate): TrackingAggregate {
     firstSeenAt: row.firstSeenAt ?? null,
     lastSeenAt: row.lastSeenAt ?? null,
     rolledUpAt: requiredText(row.rolledUpAt, "Tracking aggregate rollup timestamp"),
+  };
+}
+
+function parseTrafficSource(row: RawTrafficSource): TrackingTrafficSource {
+  return {
+    siteId: requiredText(row.siteId, "Tracking traffic source site"),
+    source: requiredText(row.source, "Tracking traffic source"),
+    medium: row.medium || null,
+    eventCount: Number(row.eventCount),
+    visitorDays: Number(row.visitorDays),
+    firstSeenAt: row.firstSeenAt ?? null,
+    lastSeenAt: row.lastSeenAt ?? null,
   };
 }
 
@@ -1370,9 +1530,15 @@ export class TrackingSiteStore {
 
   create(input: TrackingSiteCreateInput): TrackingSite {
     const name = normalizeRequiredText(input.name, "Tracking site name", 200);
-    const domains = normalizeAllowedDomains(input.allowedDomains ?? input.domains);
+    const limitToDomains = input.limitToDomains ?? true;
+    const domains = normalizeAllowedDomains(input.allowedDomains ?? input.domains, !limitToDomains);
     const eventRetentionDays = retentionDays(input.eventRetentionDays, "Event retention days", 30);
     const aggregateRetentionDays = retentionDays(input.aggregateRetentionDays, "Aggregate retention days", 730);
+    const crossDomain = input.crossDomain ?? true;
+    const cookieSubdomains = input.cookieSubdomains ?? false;
+    const secureCookies = input.secureCookies ?? true;
+    const honourDnt = input.honourDnt ?? true;
+    const cookieDays = normalizeCookieDays(input.cookieDays);
     const id = input.id === undefined ? newRecordId("site") : requireId(input.id, "Tracking site id");
     const siteKey = input.siteKey === undefined
       ? `trk_${randomBytes(18).toString("base64url")}`
@@ -1382,15 +1548,97 @@ export class TrackingSiteStore {
       this.db.prepare(`
         INSERT INTO tracking_sites (
           id, site_key, name, allowed_domains, status, verification_status,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'ACTIVE', 'PENDING', ?, ?)
-      `).run(id, siteKey, name, encodeJson(domains, "Tracking allowed domains"), timestamp, timestamp);
+          cross_domain, limit_to_domains, cookie_subdomains, secure_cookies,
+          honour_dnt, cookie_days, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'ACTIVE', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        siteKey,
+        name,
+        encodeJson(domains, "Tracking allowed domains"),
+        crossDomain ? 1 : 0,
+        limitToDomains ? 1 : 0,
+        cookieSubdomains ? 1 : 0,
+        secureCookies ? 1 : 0,
+        honourDnt ? 1 : 0,
+        cookieDays,
+        timestamp,
+        timestamp,
+      );
       this.db.prepare(`
         INSERT INTO tracking_retention (
           site_id, event_retention_days, aggregate_retention_days, updated_at
         ) VALUES (?, ?, ?, ?)
       `).run(id, eventRetentionDays, aggregateRetentionDays, timestamp);
       return this.getRequired(id);
+    })();
+  }
+
+  update(input: TrackingSiteUpdateInput): TrackingSite {
+    const siteId = requireId(input.id, "Tracking site id");
+    const timestamp = normalizeTimestamp(input.at, "Tracking site update timestamp", nowIso()) as string;
+    return this.db.transaction(() => {
+      const current = this.getRequired(siteId);
+      const assignments: string[] = [];
+      const params: Array<string | number | null> = [];
+      let domainsChanged = false;
+      const nextLimitToDomains = input.limitToDomains ?? current.limitToDomains ?? true;
+      const nextAllowedDomains = normalizeAllowedDomains(
+        input.allowedDomains ?? current.allowedDomains,
+        !nextLimitToDomains,
+      );
+      if (input.name !== undefined) {
+        assignments.push("name = ?");
+        params.push(normalizeRequiredText(input.name, "Tracking site name", 200));
+      }
+      if (input.allowedDomains !== undefined) {
+        assignments.push("allowed_domains = ?");
+        params.push(encodeJson(nextAllowedDomains, "Tracking allowed domains"));
+        domainsChanged = JSON.stringify(nextAllowedDomains) !== JSON.stringify(current.allowedDomains);
+      }
+      const bools: Array<[keyof TrackingSiteUpdateInput, string, boolean]> = [
+        ["crossDomain", "cross_domain", current.crossDomain ?? true],
+        ["limitToDomains", "limit_to_domains", current.limitToDomains ?? true],
+        ["cookieSubdomains", "cookie_subdomains", current.cookieSubdomains ?? false],
+        ["secureCookies", "secure_cookies", current.secureCookies ?? true],
+        ["honourDnt", "honour_dnt", current.honourDnt ?? true],
+      ];
+      for (const [inputKey, column, fallback] of bools) {
+        const value = input[inputKey];
+        if (value !== undefined) {
+          assignments.push(`${column} = ?`);
+          params.push(value ? 1 : 0);
+        } else {
+          void fallback;
+        }
+      }
+      if (input.cookieDays !== undefined) {
+        assignments.push("cookie_days = ?");
+        params.push(normalizeCookieDays(input.cookieDays));
+      }
+      if (input.eventRetentionDays !== undefined || input.aggregateRetentionDays !== undefined) {
+        const eventRetentionDays = retentionDays(input.eventRetentionDays, "Event retention days", current.retention.eventRetentionDays);
+        const aggregateRetentionDays = retentionDays(input.aggregateRetentionDays, "Aggregate retention days", current.retention.aggregateRetentionDays);
+        this.db.prepare(`
+          UPDATE tracking_retention
+          SET event_retention_days = ?, aggregate_retention_days = ?, updated_at = ?
+          WHERE site_id = ?`).run(eventRetentionDays, aggregateRetentionDays, timestamp, siteId);
+      }
+      if (assignments.length > 0) {
+        assignments.push("updated_at = ?");
+        params.push(timestamp, siteId);
+        this.db.prepare(`UPDATE tracking_sites SET ${assignments.join(", ")} WHERE id = ?`).run(...params);
+      } else if (input.eventRetentionDays === undefined && input.aggregateRetentionDays === undefined) {
+        throw new Error("At least one tracking site setting must change.");
+      }
+      if (domainsChanged) {
+        this.db.prepare(`
+          UPDATE tracking_sites
+          SET verification_status = 'PENDING', verification_event_id = NULL,
+              verification_domain = NULL, verified_at = NULL, updated_at = ?
+          WHERE id = ?`).run(timestamp, siteId);
+      }
+      return this.getRequired(siteId);
     })();
   }
 
@@ -1404,7 +1652,6 @@ export class TrackingSiteStore {
     const siteId = requireId(id, "Tracking site id");
     const normalized: TrackingSiteVerifyInput = typeof input === "string" ? { domain: input } : input;
     const domain = normalized.domain === undefined ? undefined : normalizeAllowedDomain(normalized.domain);
-    const verifiedAt = normalizeTimestamp(normalized.verifiedAt, "Tracking verification timestamp", nowIso()) as string;
     return this.db.transaction(() => {
       const site = this.getRequired(siteId);
       if (domain && (domain.startsWith("*.")
@@ -1412,10 +1659,40 @@ export class TrackingSiteStore {
         : !hostMatchesAllowed(domain, site.allowedDomains))) {
         throw new Error("Verification domain is not allowed for this site.");
       }
+
+      const evidence = normalized.observedEventId
+        ? this.db.prepare(`
+            SELECT id, origin, occurred_at AS occurredAt, received_at AS receivedAt
+            FROM tracking_events
+            WHERE id = ? AND site_id = ? AND event_type = 'PAGE_VIEW'`).get(
+            requireId(normalized.observedEventId, "Tracking verification event id"),
+            siteId,
+          ) as { id: string; origin: string; occurredAt: string; receivedAt: string } | undefined
+        : this.db.prepare(`
+            SELECT id, origin, occurred_at AS occurredAt, received_at AS receivedAt
+            FROM tracking_events
+            WHERE site_id = ? AND event_type = 'PAGE_VIEW'
+            ORDER BY received_at DESC, id DESC LIMIT 1`).get(siteId) as
+            { id: string; origin: string; occurredAt: string; receivedAt: string } | undefined;
+      if (!evidence) {
+        throw new Error("Tracking verification requires an observed PAGE_VIEW from the site.");
+      }
+      const evidenceHost = normalizeOrigin(evidence.origin).host;
+      if ((site.limitToDomains ?? true) && !hostMatchesAllowed(evidenceHost, site.allowedDomains)) {
+        throw new Error("The observed page view is not from an allowed domain.");
+      }
+      if (domain && !hostMatchesAllowed(evidenceHost, [domain])) {
+        throw new Error("The observed page view does not match the verification domain.");
+      }
+      // The evidence timestamp, rather than an arbitrary caller timestamp, is
+      // the claim's source of truth.  A caller can only annotate when the
+      // observation occurred; it cannot manufacture a successful check.
+      const verifiedAt = evidence.receivedAt;
       this.db.prepare(`
         UPDATE tracking_sites
-        SET verification_status = 'VERIFIED', verified_at = ?, updated_at = ?
-        WHERE id = ?`).run(verifiedAt, verifiedAt, siteId);
+        SET verification_status = 'VERIFIED', verified_at = ?,
+            verification_event_id = ?, verification_domain = ?, updated_at = ?
+        WHERE id = ?`).run(verifiedAt, evidence.id, evidenceHost, verifiedAt, siteId);
       return this.getRequired(siteId);
     })();
   }
@@ -1590,7 +1867,7 @@ export class TrackingStore {
       WHERE site_id = ? AND scope = 'TRACKING' AND token_hash = ? AND revoked_at IS NULL`).get(site.id, tokenHash) as RawToken | undefined;
     if (!token) throw new TrackingAuthorizationError();
     const { host } = normalizeOrigin(normalized.origin);
-    if (!hostMatchesAllowed(host, site.allowedDomains)) {
+    if ((site.limitToDomains ?? true) && !hostMatchesAllowed(host, site.allowedDomains)) {
       throw new TrackingAuthorizationError("Tracking origin is not allowed for this site.");
     }
     return { site, tokenId: token.id, normalized };
@@ -1619,11 +1896,11 @@ export class TrackingStore {
       INSERT INTO tracking_events (
         id, site_id, token_id, event_type, occurred_at, received_at,
         origin, path, referrer_path, visitor_hash, session_hash,
-        source, properties, event_key, created_at
+        source, medium, properties, event_key, created_at
       ) VALUES (
         @id, @siteId, @tokenId, @eventType, @occurredAt, @receivedAt,
         @origin, @path, @referrerPath, @visitorHash, @sessionHash,
-        @source, @properties, @eventKey, @createdAt
+        @source, @medium, @properties, @eventKey, @createdAt
       )`).run({
       id: authorization.normalized.id,
       siteId: authorization.site.id,
@@ -1637,6 +1914,7 @@ export class TrackingStore {
       visitorHash: authorization.normalized.visitorHash,
       sessionHash: authorization.normalized.sessionHash,
       source: authorization.normalized.source,
+      medium: authorization.normalized.medium,
       properties: encodeJson(authorization.normalized.properties, "Tracking properties"),
       eventKey: authorization.normalized.eventKey,
       createdAt: timestamp,
@@ -1711,6 +1989,49 @@ export class TrackingStore {
       ORDER BY day DESC, event_type, path, source LIMIT ? OFFSET ?`).all(...params).map((row) => parseAggregate(row as RawAggregate));
   }
 
+  /**
+   * Read source/medium totals from the daily rollup table.  This deliberately
+   * exposes only anonymous event totals; there is no inferred contact count.
+   */
+  listTrafficSources(options: TrackingTrafficSourceListOptions = {}): TrackingTrafficSource[] {
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (options.siteId !== undefined) {
+      clauses.push("site_id = ?");
+      params.push(requireId(options.siteId, "Tracking site id"));
+    }
+    if (options.source !== undefined) {
+      clauses.push("source = ?");
+      params.push(normalizeRequiredText(options.source, "Tracking source", TRACKING_LIMITS.maxSourceLength));
+    }
+    if (options.medium !== undefined) {
+      clauses.push("medium = ?");
+      params.push(normalizeOptionalText(options.medium, "Tracking medium", TRACKING_LIMITS.maxSourceLength) ?? "");
+    }
+    if (options.from !== undefined) {
+      clauses.push("day >= ?");
+      params.push(normalizeDateOnly(options.from, "Tracking traffic source from"));
+    }
+    if (options.to !== undefined) {
+      clauses.push("day <= ?");
+      params.push(normalizeDateOnly(options.to, "Tracking traffic source to"));
+    }
+    const limit = normalizeLimit(options.limit, 100);
+    const offset = normalizeOffset(options.offset);
+    params.push(limit, offset);
+    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+    return this.db.prepare(`
+      SELECT site_id AS siteId, source, medium,
+        SUM(event_count) AS eventCount,
+        SUM(unique_visitors) AS visitorDays,
+        MIN(first_seen_at) AS firstSeenAt,
+        MAX(last_seen_at) AS lastSeenAt
+      FROM tracking_daily_traffic_sources${where}
+      GROUP BY site_id, source, medium
+      ORDER BY eventCount DESC, site_id, source, medium
+      LIMIT ? OFFSET ?`).all(...params).map((row) => parseTrafficSource(row as RawTrafficSource));
+  }
+
   rollup(options: TrackingRollupOptions = {}): TrackingRollupResult {
     const timestamp = normalizeTimestamp(options.now, "Tracking rollup timestamp", nowIso()) as string;
     const clauses: string[] = [];
@@ -1732,6 +2053,16 @@ export class TrackingStore {
         eventType: TrackingEventType;
         path: string;
         source: string;
+        eventCount: number;
+        visitors: Set<string>;
+        firstSeenAt: string | null;
+        lastSeenAt: string | null;
+      }>();
+      const trafficSources = new Map<string, {
+        siteId: string;
+        day: string;
+        source: string;
+        medium: string;
         eventCount: number;
         visitors: Set<string>;
         firstSeenAt: string | null;
@@ -1759,6 +2090,25 @@ export class TrackingStore {
         current.firstSeenAt = current.firstSeenAt === null || row.occurredAt < current.firstSeenAt ? row.occurredAt : current.firstSeenAt;
         current.lastSeenAt = current.lastSeenAt === null || row.occurredAt > current.lastSeenAt ? row.occurredAt : current.lastSeenAt;
         groups.set(key, current);
+        if (eventType === "PAGE_VIEW" && row.source) {
+          const medium = row.medium ?? "";
+          const trafficKey = `${row.siteId}\u0000${day}\u0000${row.source}\u0000${medium}`;
+          const traffic = trafficSources.get(trafficKey) ?? {
+            siteId: row.siteId,
+            day,
+            source: row.source,
+            medium,
+            eventCount: 0,
+            visitors: new Set<string>(),
+            firstSeenAt: null,
+            lastSeenAt: null,
+          };
+          traffic.eventCount += 1;
+          if (row.visitorHash) traffic.visitors.add(row.visitorHash);
+          traffic.firstSeenAt = traffic.firstSeenAt === null || row.occurredAt < traffic.firstSeenAt ? row.occurredAt : traffic.firstSeenAt;
+          traffic.lastSeenAt = traffic.lastSeenAt === null || row.occurredAt > traffic.lastSeenAt ? row.occurredAt : traffic.lastSeenAt;
+          trafficSources.set(trafficKey, traffic);
+        }
       }
       const upsert = this.db.prepare(`
         INSERT INTO tracking_daily_aggregates (
@@ -1785,6 +2135,33 @@ export class TrackingStore {
           uniqueVisitors: group.visitors.size,
           firstSeenAt: group.firstSeenAt,
           lastSeenAt: group.lastSeenAt,
+          rolledUpAt: timestamp,
+        });
+      }
+      const trafficUpsert = this.db.prepare(`
+        INSERT INTO tracking_daily_traffic_sources (
+          site_id, day, source, medium, event_count, unique_visitors,
+          first_seen_at, last_seen_at, rolled_up_at
+        ) VALUES (
+          @siteId, @day, @source, @medium, @eventCount, @uniqueVisitors,
+          @firstSeenAt, @lastSeenAt, @rolledUpAt
+        )
+        ON CONFLICT(site_id, day, source, medium) DO UPDATE SET
+          event_count = excluded.event_count,
+          unique_visitors = excluded.unique_visitors,
+          first_seen_at = excluded.first_seen_at,
+          last_seen_at = excluded.last_seen_at,
+          rolled_up_at = excluded.rolled_up_at`);
+      for (const source of trafficSources.values()) {
+        trafficUpsert.run({
+          siteId: source.siteId,
+          day: source.day,
+          source: source.source,
+          medium: source.medium,
+          eventCount: source.eventCount,
+          uniqueVisitors: source.visitors.size,
+          firstSeenAt: source.firstSeenAt,
+          lastSeenAt: source.lastSeenAt,
           rolledUpAt: timestamp,
         });
       }
@@ -1835,6 +2212,8 @@ export class TrackingStore {
         ) - aggregateDays * 86_400_000).toISOString().slice(0, 10);
         const aggregateDeleteResult = this.db.prepare("DELETE FROM tracking_daily_aggregates WHERE site_id = ? AND day < ?").run(siteId, aggregateCutoff);
         aggregatesDeleted += Number(aggregateDeleteResult.changes);
+        const trafficDeleteResult = this.db.prepare("DELETE FROM tracking_daily_traffic_sources WHERE site_id = ? AND day < ?").run(siteId, aggregateCutoff);
+        aggregatesDeleted += Number(trafficDeleteResult.changes);
         this.db.prepare("UPDATE tracking_retention SET last_pruned_at = ?, updated_at = ? WHERE site_id = ?").run(timestamp, timestamp, siteId);
       }
     })();
@@ -1908,6 +2287,10 @@ export const provisionTrackingSite = createTrackingSite;
 
 export function createSite(db: Db, input: TrackingSiteCreateInput): TrackingSite {
   return new TrackingSiteStore(db).create(input);
+}
+
+export function updateTrackingSite(db: Db, input: TrackingSiteUpdateInput): TrackingSite {
+  return new TrackingSiteStore(db).update(input);
 }
 
 export function getTrackingSite(db: Db, id: string): TrackingSite | null {
@@ -2002,6 +2385,12 @@ export function listTrackingAggregates(db: Db, options?: TrackingAggregateListOp
 
 export const readTrackingAggregates = listTrackingAggregates;
 export const getTrackingAggregates = listTrackingAggregates;
+
+export function listTrackingTrafficSources(db: Db, options?: TrackingTrafficSourceListOptions): TrackingTrafficSource[] {
+  return new TrackingStore(db).listTrafficSources(options);
+}
+
+export const getTrackingTrafficSources = listTrackingTrafficSources;
 
 export function pruneTrackingData(db: Db, options?: TrackingPruneOptions): TrackingPruneResult {
   return new TrackingStore(db).prune(options);

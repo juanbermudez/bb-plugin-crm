@@ -23,6 +23,7 @@ import type {
   TokenScope,
   TrackingAggregate,
   TrackingSite,
+  TrackingTrafficSource,
   TrackingToken,
 } from "../../../../contracts/connections.js";
 import {
@@ -42,6 +43,12 @@ const INITIAL_SITE_FORM = {
   allowedDomains: "",
   eventRetentionDays: "30",
   aggregateRetentionDays: "730",
+  crossDomain: true,
+  limitToDomains: true,
+  cookieSubdomains: false,
+  secureCookies: true,
+  honourDnt: true,
+  cookieDays: "395",
 };
 
 type SiteForm = typeof INITIAL_SITE_FORM;
@@ -58,6 +65,12 @@ type RollupResult = {
   aggregateCount: number;
   eventCount: number;
 };
+
+const COOKIE_LIFETIMES = [
+  { days: 395, label: "13 months" },
+  { days: 180, label: "6 months" },
+  { days: 0, label: "Session only" },
+] as const;
 
 type PruneResult = {
   eventsDeleted: number;
@@ -105,6 +118,10 @@ function parseDomains(value: string): string[] {
     .split(/[\n,]+/u)
     .map((domain) => domain.trim())
     .filter(Boolean);
+}
+
+function installSnippet(siteKey: string, token = "YOUR_TRACKING_TOKEN"): string {
+  return `<script src="/tracking/loader.js?siteKey=${encodeURIComponent(siteKey)}" data-site-key="${siteKey}" data-token="${token}" async defer></script>`;
 }
 
 function optionalPositiveInteger(value: string, label: string): number | undefined {
@@ -187,6 +204,7 @@ function SiteCreateDialog({
   onChange,
   onSubmit,
 }: SiteCreateDialogProps) {
+  const hasAllowedDomains = parseDomains(value.allowedDomains).length > 0;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl" aria-describedby="tracking-site-description">
@@ -225,14 +243,72 @@ function SiteCreateDialog({
             <textarea
               id="tracking-site-domains"
               className={TEXTAREA_CLASS}
-              required
               value={value.allowedDomains}
               onChange={(event) => onChange({ ...value, allowedDomains: event.target.value })}
               placeholder="example.com\n*.preview.example.com"
               spellCheck={false}
             />
-            <p className="text-xs text-muted-foreground">One hostname per line. Wildcards such as *.preview.example.com are supported.</p>
+            <p className="text-xs text-muted-foreground">One hostname per line. Wildcards such as *.preview.example.com are supported. Leave empty only when domain limiting is disabled.</p>
           </div>
+          <fieldset className="space-y-3 rounded-md border border-border p-3">
+            <legend className="px-1 text-sm font-medium">Tracking rules and cookies</legend>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value.crossDomain}
+                onChange={(event) => onChange({ ...value, crossDomain: event.target.checked })}
+              />
+              <span><span className="font-medium">Automatic cross-domain linking</span><span className="block text-xs text-muted-foreground">Carry the anonymous visitor between configured domains.</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value.limitToDomains}
+                disabled={!hasAllowedDomains && !value.limitToDomains}
+                onChange={(event) => {
+                  if (event.target.checked && !hasAllowedDomains) return;
+                  onChange({ ...value, limitToDomains: event.target.checked });
+                }}
+              />
+              <span><span className="font-medium">Limit tracking to the domains below</span><span className="block text-xs text-muted-foreground">Reject events from hosts outside the allow list.</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value.cookieSubdomains}
+                onChange={(event) => onChange({ ...value, cookieSubdomains: event.target.checked })}
+              />
+              <span><span className="font-medium">Limit cookies to subdomains</span><span className="block text-xs text-muted-foreground">Keep the visitor cookie on the exact host.</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value.secureCookies}
+                onChange={(event) => onChange({ ...value, secureCookies: event.target.checked })}
+              />
+              <span><span className="font-medium">Use secure cookies only</span><span className="block text-xs text-muted-foreground">Set the cookie's secure attribute on HTTPS.</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value.honourDnt}
+                onChange={(event) => onChange({ ...value, honourDnt: event.target.checked })}
+              />
+              <span><span className="font-medium">Honour Do Not Track</span><span className="block text-xs text-muted-foreground">Record nothing when the browser asks not to be tracked.</span></span>
+            </label>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="tracking-cookie-days">Cookie lifetime</label>
+              <select
+                id="tracking-cookie-days"
+                className={SELECT_CLASS}
+                value={value.cookieDays}
+                onChange={(event) => onChange({ ...value, cookieDays: event.target.value })}
+              >
+                {COOKIE_LIFETIMES.map((lifetime) => <option key={lifetime.days} value={lifetime.days}>{lifetime.label}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">After this a returning visitor counts as somebody new.</p>
+            </div>
+          </fieldset>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="tracking-event-retention">Event retention (days)</label>
@@ -303,6 +379,14 @@ function OneTimeTokenCard({ token, copyStatus, onCopy, onHide }: OneTimeTokenCar
         <code className="block select-all break-all rounded-md border border-border bg-background px-3 py-3 text-xs leading-relaxed" data-one-time-token="true">
           {token.secret}
         </code>
+        {token.siteKey ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Paste this site snippet after replacing the token only if your deployment does not already inject it.</p>
+            <code className="block select-all break-all rounded-md border border-border bg-background px-3 py-3 text-xs leading-relaxed" data-tracking-snippet="true">
+              {installSnippet(token.siteKey, token.secret)}
+            </code>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" onClick={onCopy}>
             <Icon name="Copy" aria-hidden="true" />
@@ -320,10 +404,18 @@ interface SiteCardProps {
   site: TrackingSite;
   busyAction: string | null;
   onAction: (site: TrackingSite, action: "verify" | "pause" | "resume" | "rotate" | "token") => void;
+  onUpdate: (site: TrackingSite, update: Record<string, unknown>) => void;
 }
 
-function SiteCard({ site, busyAction, onAction }: SiteCardProps) {
+function SiteCard({ site, busyAction, onAction, onUpdate }: SiteCardProps) {
   const actionBusy = busyAction !== null;
+  const crossDomain = site.crossDomain ?? true;
+  const limitToDomains = site.limitToDomains ?? true;
+  const cookieSubdomains = site.cookieSubdomains ?? false;
+  const secureCookies = site.secureCookies ?? true;
+  const honourDnt = site.honourDnt ?? true;
+  const cookieDays = site.cookieDays ?? 395;
+  const hasAllowedDomains = site.allowedDomains.length > 0;
   return (
     <Card className="min-w-0">
       <CardHeader className="gap-3 pb-4">
@@ -338,7 +430,7 @@ function SiteCard({ site, busyAction, onAction }: SiteCardProps) {
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
             <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClass(site.status)}`} role="status">{site.status === "ACTIVE" ? "Active" : "Paused"}</span>
-            <span className={`rounded-full px-2 py-1 text-xs font-medium ${verificationClass(site.verificationStatus)}`} role="status">{site.verificationStatus === "VERIFIED" ? "Operator confirmed" : "Confirmation required"}</span>
+            <span className={`rounded-full px-2 py-1 text-xs font-medium ${verificationClass(site.verificationStatus)}`} role="status">{site.verificationStatus === "VERIFIED" ? "Observed traffic verified" : "Observed traffic required"}</span>
           </div>
         </div>
       </CardHeader>
@@ -368,7 +460,30 @@ function SiteCard({ site, busyAction, onAction }: SiteCardProps) {
             <dt className="text-xs text-muted-foreground">Last prune</dt>
             <dd className="mt-1 font-medium">{formatDate(site.retention.lastPrunedAt)}</dd>
           </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Verification evidence</dt>
+            <dd className="mt-1 font-medium">{site.verificationEventId ? `${site.verificationDomain ?? "Allowed host"} · ${site.verificationEventId}` : "No page view observed yet"}</dd>
+          </div>
         </dl>
+        <details className="rounded-md border border-border bg-muted/20 p-3">
+          <summary className="cursor-pointer text-sm font-medium">Install snippet and tracking rules</summary>
+          <div className="mt-3 space-y-3">
+            <p className="text-xs text-muted-foreground">The token placeholder is intentional. Copy the one-time token into this snippet only on an allowed site; token secrets are never persisted or listed.</p>
+            <code className="block select-all break-all rounded-md border border-border bg-background px-3 py-3 text-xs leading-relaxed" data-tracking-snippet="true">{installSnippet(site.siteKey)}</code>
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={crossDomain} disabled={actionBusy} onChange={(event) => onUpdate(site, { crossDomain: event.target.checked })} />Automatic cross-domain linking</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={limitToDomains} disabled={actionBusy || (!hasAllowedDomains && !limitToDomains)} onChange={(event) => {
+                if (event.target.checked && !hasAllowedDomains) return;
+                onUpdate(site, { limitToDomains: event.target.checked });
+              }} />Limit tracking to the domains below</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={cookieSubdomains} disabled={actionBusy} onChange={(event) => onUpdate(site, { cookieSubdomains: event.target.checked })} />Limit cookies to subdomains</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={secureCookies} disabled={actionBusy} onChange={(event) => onUpdate(site, { secureCookies: event.target.checked })} />Use secure cookies only</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={honourDnt} disabled={actionBusy} onChange={(event) => onUpdate(site, { honourDnt: event.target.checked })} />Honour Do Not Track</label>
+              <label className="flex items-center gap-2"><span className="shrink-0">Cookie lifetime</span><select className={SELECT_CLASS} value={String(cookieDays)} disabled={actionBusy} onChange={(event) => onUpdate(site, { cookieDays: Number(event.target.value) })}>{COOKIE_LIFETIMES.map((lifetime) => <option key={lifetime.days} value={lifetime.days}>{lifetime.label}</option>)}</select></label>
+            </div>
+            {!hasAllowedDomains ? <p className="text-xs text-muted-foreground" role="status">Add an allowed domain before enabling domain-limited tracking.</p> : null}
+          </div>
+        </details>
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
           {site.verificationStatus === "VERIFIED" ? null : (
             <Button type="button" size="sm" onClick={() => onAction(site, "verify")} disabled={actionBusy}>
@@ -414,6 +529,13 @@ const AGGREGATE_COLUMNS = [
   { id: "aggregate-visitors", label: "Visitors", className: "min-w-24" },
 ] as const;
 
+const TRAFFIC_SOURCE_COLUMNS = [
+  { id: "traffic-source", label: "Source", className: "min-w-32" },
+  { id: "traffic-medium", label: "Medium", className: "min-w-28" },
+  { id: "traffic-events", label: "Page views", className: "min-w-24" },
+  { id: "traffic-visitors", label: "Visitor-days", className: "min-w-24" },
+] as const;
+
 export interface TrackingSettingsViewProps {
   rpcClient?: TrackingRpcClient;
 }
@@ -424,6 +546,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
   const [sites, setSites] = useState<readonly TrackingSite[]>([]);
   const [tokens, setTokens] = useState<readonly TrackingToken[]>([]);
   const [aggregates, setAggregates] = useState<readonly TrackingAggregate[]>([]);
+  const [trafficSources, setTrafficSources] = useState<readonly TrackingTrafficSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -447,8 +570,9 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
       rpc.call("tracking_sites_list", { limit: 100, offset: 0 }),
       rpc.call("tracking_tokens_list", {}),
       rpc.call("tracking_aggregates_list", { limit: 100, offset: 0 }),
+      rpc.call("tracking_traffic_sources_list", { limit: 100, offset: 0 }),
     ]);
-    const [siteResult, tokenResult, aggregateResult] = results;
+    const [siteResult, tokenResult, aggregateResult, trafficResult] = results;
     if (siteResult?.status === "fulfilled") {
       setSites(Array.isArray(siteResult.value) ? siteResult.value : []);
     }
@@ -457,6 +581,9 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
     }
     if (aggregateResult?.status === "fulfilled") {
       setAggregates(Array.isArray(aggregateResult.value) ? aggregateResult.value : []);
+    }
+    if (trafficResult?.status === "fulfilled") {
+      setTrafficSources(Array.isArray(trafficResult.value) ? trafficResult.value : []);
     }
     const rejected = results.find((result) => result.status === "rejected");
     if (rejected?.status === "rejected") setError(errorMessage(rejected.reason));
@@ -475,6 +602,20 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
       return found ? current.map((site) => site.id === next.id ? next : site) : [next, ...current];
     });
   }, []);
+
+  const updateSiteConfig = useCallback(async (site: TrackingSite, update: Record<string, unknown>) => {
+    const key = `update:${site.id}`;
+    setBusyAction(key);
+    setError(null);
+    try {
+      const next = await rpc.call("tracking_sites_update", { id: site.id, ...update });
+      updateSite(next);
+    } catch (cause) {
+      setError(`${site.name}: ${errorMessage(cause)}`);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [rpc, updateSite]);
 
   const presentOneTimeToken = useCallback((value: unknown, fallbackSite?: TrackingSite) => {
     const fields = provisionedTokenFields(value);
@@ -498,7 +639,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
       setCreateError("A site name is required.");
       return;
     }
-    if (allowedDomains.length === 0) {
+    if (allowedDomains.length === 0 && siteForm.limitToDomains) {
       setCreateError("At least one allowed domain is required.");
       return;
     }
@@ -512,6 +653,12 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
         allowedDomains,
         ...(eventRetentionDays === undefined ? {} : { eventRetentionDays }),
         ...(aggregateRetentionDays === undefined ? {} : { aggregateRetentionDays }),
+        ...(siteForm.crossDomain ? {} : { crossDomain: false }),
+        ...(siteForm.limitToDomains ? {} : { limitToDomains: false }),
+        ...(siteForm.cookieSubdomains ? { cookieSubdomains: true } : {}),
+        ...(siteForm.secureCookies ? {} : { secureCookies: false }),
+        ...(siteForm.honourDnt ? {} : { honourDnt: false }),
+        ...(siteForm.cookieDays === "395" ? {} : { cookieDays: Number(siteForm.cookieDays) }),
       };
       const created = await rpc.call("tracking_sites_create", input);
       updateSite(created);
@@ -677,7 +824,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 id="tracking-sites-heading" className="text-base font-semibold">Sites</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">Allowed domains, explicit operator confirmation, status, site keys, and retention windows. Confirmation records your review; the site token and exact Origin remain the collection authority.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Allowed domains, observed installation evidence, status, site keys, cookie controls, and retention windows. A site is verified only after an allowed PAGE_VIEW is received.</p>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={() => { setCreateError(null); setCreateOpen(true); }}>
                   <Icon name="Plus" aria-hidden="true" />
@@ -698,6 +845,7 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
                       key={site.id}
                       site={site}
                       busyAction={busyAction?.endsWith(`:${site.id}`) === true ? busyAction : null}
+                      onUpdate={(value, update) => void updateSiteConfig(value, update)}
                       onAction={(value, action) =>
                         action === "rotate"
                           ? setConfirmAction({ kind: "rotate-site", site: value })
@@ -784,6 +932,26 @@ export function TrackingSettingsView({ rpcClient }: TrackingSettingsViewProps) {
                       <td className="px-3 py-3 text-muted-foreground">{aggregate.source ?? "Direct"}</td>
                       <td className="px-3 py-3">{formatNumber(aggregate.eventCount)}</td>
                       <td className="px-3 py-3">{formatNumber(aggregate.uniqueVisitors)}</td>
+                    </tr>
+                  ))}
+                </TableShell>
+              </div>
+              <div className="mt-6">
+                <div className="mb-3">
+                  <h3 className="text-sm font-semibold">Traffic sources</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">Page-view totals grouped from locally collected source and medium fields. Anonymous traffic is not attributed to contacts.</p>
+                </div>
+                <TableShell
+                  caption="Traffic source aggregates"
+                  columns={TRAFFIC_SOURCE_COLUMNS}
+                  empty={<EmptyState title="No traffic sources yet" description="Traffic sources appear after a rollup receives UTM or referrer data." className="min-h-24 rounded-none border-0 bg-transparent" />}
+                >
+                  {trafficSources.map((source) => (
+                    <tr key={`${source.siteId}:${source.source}:${source.medium ?? ""}`}>
+                      <td className="px-3 py-3 font-medium">{source.source}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{source.medium ?? "Direct"}</td>
+                      <td className="px-3 py-3">{formatNumber(source.eventCount)}</td>
+                      <td className="px-3 py-3">{formatNumber(source.visitorDays)}</td>
                     </tr>
                   ))}
                 </TableShell>

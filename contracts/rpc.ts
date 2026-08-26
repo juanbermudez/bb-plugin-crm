@@ -79,6 +79,8 @@ import {
   companyListInputSchema,
   companyListOutputSchema,
   companySchema,
+  companySetPrimaryContactInputSchema,
+  companySetPrimaryContactOutputSchema,
   companyUpdateInputSchema,
   contactCreateInputSchema,
   contactResearchInputSchema,
@@ -208,7 +210,10 @@ import {
   trackingSitePauseInputSchema,
   trackingSiteRotateInputSchema,
   trackingSiteSchema,
+  trackingSiteUpdateInputSchema,
   trackingSiteVerifyInputSchema,
+  trackingTrafficSourceListInputSchema,
+  trackingTrafficSourceListSchema,
   trackingTokenListInputSchema,
   trackingTokenListSchema,
   trackingTokenProvisionInputSchema,
@@ -222,6 +227,10 @@ import {
   archiveRetentionPruneResultSchema,
   archiveRetentionSettingsSchema,
 } from "./maintenance.js";
+import {
+  enrichmentQueueInputSchema,
+  enrichmentQueueOutputSchema,
+} from "./enrichment-queue.js";
 
 export const rpcContract = defineRpcContract({
   status: {
@@ -234,6 +243,10 @@ export const rpcContract = defineRpcContract({
         reportingCurrency: z.string(),
       })
       .strict(),
+  },
+  enrichment_queue: {
+    input: enrichmentQueueInputSchema,
+    output: enrichmentQueueOutputSchema,
   },
   connections_list: {
     input: connectionListInputSchema,
@@ -285,6 +298,10 @@ export const rpcContract = defineRpcContract({
   },
   tracking_sites_create: {
     input: trackingSiteCreateInputSchema,
+    output: trackingSiteSchema,
+  },
+  tracking_sites_update: {
+    input: trackingSiteUpdateInputSchema,
     output: trackingSiteSchema,
   },
   tracking_sites_verify: {
@@ -343,6 +360,10 @@ export const rpcContract = defineRpcContract({
     input: trackingPruneInputSchema,
     output: trackingPruneResultSchema,
   },
+  tracking_traffic_sources_list: {
+    input: trackingTrafficSourceListInputSchema,
+    output: trackingTrafficSourceListSchema,
+  },
   archive_retention_get: {
     input: archiveRetentionGetInputSchema,
     output: archiveRetentionSettingsSchema,
@@ -366,6 +387,10 @@ export const rpcContract = defineRpcContract({
   companies_update: {
     input: companyUpdateInputSchema,
     output: companySchema,
+  },
+  companies_setPrimaryContact: {
+    input: companySetPrimaryContactInputSchema,
+    output: companySetPrimaryContactOutputSchema,
   },
   companies_archive: {
     input: archiveInputSchema,

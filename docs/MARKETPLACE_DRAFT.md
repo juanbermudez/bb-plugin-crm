@@ -93,11 +93,12 @@ transactional CRM event triggers, signed external webhook triggers, fixed
 tracking loader/collector routes, inline record editing, contact portrait URL
 fallbacks, bounded custom-field fill-rest, due-task leasing, native agent
 clarification, BB project attachments, archive retention, a BB-thread
-dispatcher, and the installation CLI for status, doctor, lists, CRUD,
-add-activity, tasks, and versioned import/export. Natural-language builder
-chat includes durable visible-thread history, explicit new/delete actions, and
-reviewed assistant-message transfer into a version draft. Public sharing is
-not included because BB exposes no public plugin share relay. The
+dispatcher, global activity creation, a shell-level enrichment queue, and the
+installation CLI for status, doctor, lists, CRUD, add-activity, tasks, and
+versioned import/export. Natural-language builder chat includes durable
+visible-thread history, explicit new/delete actions, and reviewed
+assistant-message transfer into a version draft. Public sharing is not
+included because BB exposes no public plugin share relay. The
 source's intake route remains unavailable; tracking ingestion uses
 operator-confirmed site authority.
 
@@ -111,30 +112,31 @@ operator-confirmed site authority.
 
 ## Plugin checks
 
-- Public clean-clone gate at implementation revision
-  `93d68ba4799de162c674026449f910fae93db698`: `npm ci` found zero
-  vulnerabilities, and 47 test files / 225 tests passed with `npm test`.
-- `npm run typecheck` passed
-- `npm run build` passed and emitted identity-checked metadata
-- `git diff --check` passed
-- `npm pack --json --dry-run` passed with 160 entries, 1,517,149 packed
-  bytes, and SHA-1 `b823589ce981c6bf703d6a651a96bc687cf3b5d0`
-- `<approved public-tag install/build command>` remains release-gated and
-  unrun
-- Live packaged-BB panel smoke passed for Dashboard Me (installation-local
-  owner)/Everyone, saved default,
-  advanced Companies facets/selection, Agent creation, Connections/Tracking
-  empty states, tracking site/one-time credential behavior, and CLI
-  status/doctor/list. A focused 390×844 compact dark-theme pass also succeeded;
-  the refreshed panel also covered onboarding, global search, column controls,
-  record Agent empty-state behavior, provider-backed enrichment controls, the
-  deal stage stepper, contact portraits/Photo URL editing, and the fixed public
-  tracking loader. The release-candidate smoke additionally covered bounded
-  896×720 drawers in a 1280×720 viewport, drawer-tab URL restoration,
-  `Cmd/Ctrl+Shift+K` CRM search with keyboard result selection, keyboard entity
-  selection, builder Conversation routing/fail-closed provider error, required
-  closed-stage reasons, and BB AlertDialogs. A complete keyboard-only sweep,
-  light/custom-theme sweep, and Electron-specific QA were not run.
+- Integrated release-candidate checks in the local working tree (schema
+  version 10): `npm test` passed with 50 test files / 256 tests;
+  `npm run typecheck` passed; `./node_modules/.bin/bb plugin types --check .`
+  passed; `npm run build` passed and emitted identity-checked metadata; and
+  `git diff --check` passed.
+- Release-boundary audit passed for the manifest, runtime dependencies, SDK
+  imports, generated metadata, package contents, icon, migrations, security
+  boundaries, and checked-in release claims. These are local working-tree
+  checks and do not claim a public release.
+- A managed Git install and packaged-BB panel smoke was previously run from an
+  exact public commit before this final integrated work. It is pre-final
+  historical evidence only and must be rerun from the final approved release
+  commit/tag; no final public-tag install is claimed.
+- The pre-final smoke covered Dashboard Me (installation-local owner)/Everyone,
+  saved defaults, advanced Companies facets/selection, Agent creation,
+  Connections/Tracking empty states, tracking-site one-time credentials, CLI
+  status/doctor/list, onboarding, global search, column controls, record Agent
+  empty-state behavior, provider-backed enrichment controls, the deal stage
+  stepper, contact portraits/Photo URL editing, the fixed public tracking
+  loader, bounded drawers, drawer-tab URL restoration, CRM keyboard search and
+  entity selection, builder Conversation fail-closed behavior, closed-stage
+  reasons, and BB AlertDialogs.
+- A complete keyboard-only sweep, light/custom-theme sweep, and
+  Electron-specific QA were not run. Final clean-tag package and BB smoke
+  evidence remains required.
 
 ## Marketplace checks
 
@@ -158,7 +160,8 @@ baseline `a683caa2ffb502cdc26926c48c88a45a8579970a`, including
 omits per-entry `engines`, `subdir`, and `tagPrefix`. A temporary concrete
 entry/icon passed `npm ci` and `npm run build` (83 entries); `npm run check`
 failed only at the expected source-liveness gate because `v0.1.0` has not been
-approved or created. No full marketplace pass is claimed before that tag.
+approved or created. No marketplace check or PR exists, and no full
+marketplace pass is claimed before that tag.
 
 ## Permissions and security
 
@@ -202,8 +205,8 @@ approved or created. No full marketplace pass is claimed before that tag.
   ```
 
 - [ ] Keep the marketplace id, filename, and manifest-derived id identical.
-- [ ] Run `<approved plugin-types command>` against the BB version being
-  released against;
+- [ ] Run `./node_modules/.bin/bb plugin types --check .` against the BB
+  version being released against;
   then run `npm install` and commit the intentional dependency/lockfile
   changes.
 - [ ] Run the clean gate: `npm run typecheck`, `npm test`, `npm run build`, and

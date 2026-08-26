@@ -116,6 +116,28 @@ export function pruneArchivedRecords(
       )
     `);
     if (remaining > 0) {
+      db.prepare(`
+        INSERT INTO suppressed_contacts (email, reason)
+        SELECT
+          lower(trim(email)),
+          'Deleted from the CRM (' || trim(
+            first_name || CASE
+              WHEN last_name IS NULL OR trim(last_name) = '' THEN ''
+              ELSE ' ' || trim(last_name)
+            END
+          ) || ')'
+        FROM contacts
+        WHERE id IN (
+          SELECT id
+          FROM contacts
+          WHERE archived_at IS NOT NULL AND archived_at < ?
+          ORDER BY archived_at ASC, id ASC
+          LIMIT ?
+        )
+          AND email IS NOT NULL
+          AND length(trim(email)) > 0
+        ON CONFLICT(email) DO NOTHING
+      `).run(cutoff, remaining);
       contactsDeleted = Number(deleteContacts.run(cutoff, remaining).changes);
       remaining -= contactsDeleted;
     }

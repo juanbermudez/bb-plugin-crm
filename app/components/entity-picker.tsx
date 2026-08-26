@@ -23,6 +23,9 @@ export interface EntityPickerProps {
   disabled?: boolean;
   placeholder?: string;
   emptyMessage?: string;
+  /** Optional server-backed search hook for selectors with large datasets. */
+  onQueryChange?: (query: string) => void;
+  loading?: boolean;
   className?: string;
   id?: string;
 }
@@ -42,6 +45,8 @@ export function EntityPicker({
   disabled = false,
   placeholder = "Choose a record",
   emptyMessage = "No matching CRM records.",
+  onQueryChange,
+  loading = false,
   className,
   id: providedId,
 }: EntityPickerProps) {
@@ -113,6 +118,7 @@ export function EntityPicker({
               const nextQuery = event.target.value;
               setQuery(nextQuery);
               setOpen(true);
+              onQueryChange?.(nextQuery);
               // Typing an existing identifier remains a valid shortcut while
               // preventing arbitrary/unverified user or record IDs.
               const exact = options.find((option) => option.value === nextQuery.trim());
@@ -191,7 +197,11 @@ export function EntityPicker({
             ) : null}
             {filteredOptions.length === 0 ? (
               <p className="px-3 py-3 text-sm text-muted-foreground" role="status">
-                {options.length === 0 ? "No CRM choices are available yet." : emptyMessage}
+                {loading
+                  ? "Searching CRM records…"
+                  : options.length === 0
+                    ? "No CRM choices are available yet."
+                    : emptyMessage}
               </p>
             ) : (
               filteredOptions.map((option, index) => (

@@ -3,24 +3,23 @@
 This log records checks that have actually run. Planned checks remain in the
 port plan and marketplace draft and are not treated as passing evidence.
 
-## Clean local and public-clone gate
+## Current integrated release-candidate checks
 
-Verified on 2026-08-26 at public implementation revision
-`93d68ba4799de162c674026449f910fae93db698`, against BB `0.39.0` and
-plugin SDK `0.4.8`. The same gate was run both in the working copy and in a
-new depth-one clone from `https://github.com/juanbermudez/bb-plugin-crm.git`:
+Verified on 2026-08-26 against the integrated release-candidate working tree,
+with CRM schema version 10, BB `0.39.0`, and plugin SDK `0.4.8`. These
+checks are local working-tree evidence; they do not claim a public release,
+tag, or marketplace submission.
 
-- `npm ci`: installed 453 packages, audited 454, and found 0 vulnerabilities.
-- `npm test`: 47 test files and 225 tests passed.
+- `npm test`: 50 test files and 256 tests passed.
 - `npm run typecheck`: passed.
-- `npm run build`: passed and emitted the server/app bundles and metadata.
+- `./node_modules/.bin/bb plugin types --check .`: passed.
+- `npm run build`: passed and emitted identity-checked server/app bundles and
+  metadata.
 - `git diff --check`: passed.
-- `npm pack --json --dry-run`: passed with 160 entries, 1,517,149 packed
-  bytes, 8,400,103 unpacked bytes, and SHA-1
-  `b823589ce981c6bf703d6a651a96bc687cf3b5d0`. The package includes both
-  compiled bundles and metadata, the icon, CRM skill, docs, license, tests,
-  and the task-dispatch, portrait, clarification, builder, and BB attachment
-  runtime paths.
+- Release-boundary audit passed for the manifest, runtime dependencies, SDK
+  imports, generated metadata, package contents, icon, migrations, security
+  boundaries, and checked-in release claims. Public-tag installation and
+  marketplace validation remain release-gated.
 
 The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite
@@ -42,7 +41,7 @@ databases for migrations and persistence. They cover:
   pending case.
 - Validated-only agent deployment, persistent disabling of invalid schedules,
   exports beyond 1,000 rows, and rejection of email- and payment-card-shaped
-  tracking property values.
+  tracking property, source, and medium values.
 - Persisted onboarding/columns, cross-record search, nested company relations,
   record-linked Agent tabs, evidence decisions/brief history, run retry/cancel,
   approval resolution, agent execution settings, fixed tracking HTTP routes,
@@ -60,15 +59,21 @@ databases for migrations and persistence. They cover:
   provider-native clarification capability gating.
 - Due-task lease fencing, retry bounds, deterministic run idempotency, explicit
   live-agent selection, strict `CRM_DUE_TASK` snapshots, completion/reopen
-  tooling, and the rule that activity authors are never inferred as assignees.
+  tooling, global activity creation, the shell enrichment queue, the rule that
+  activity authors are never inferred as assignees, and persisted schema-9 to
+  schema-10 migration upgrades.
 
-## Packaged BB reload smoke
+## Pre-final managed Git-install / packaged-BB smoke
 
-The freshly built package was installed and reloaded in packaged BB `0.39.0`.
-The plugin reported `running`; both `crm-agent-dispatcher` and
-`crm-archive-retention` background services were running. `bb crm doctor`
-reported schema version 8, SQLite integrity `ok`, and zero foreign-key
-violations. No secret, one-time credential, or token value is recorded here.
+A managed Git install and packaged-BB `0.39.0` smoke was previously run from an
+exact public commit before this final integrated work. It is retained as
+pre-final historical evidence only; it does not certify the current working
+tree and must be rerun from the final approved release commit/tag. No secret,
+one-time credential, or token value is recorded here.
+
+That pre-final smoke loaded the plugin successfully; both
+`crm-agent-dispatcher` and `crm-archive-retention` background services were
+running, SQLite integrity was `ok`, and no foreign-key violations were found.
 
 Observed in the live CRM panel:
 
@@ -97,7 +102,7 @@ Observed in the live CRM panel:
   CRM header actions, cross-record search results, accessible column controls,
   and the company record Agent tab. With no deployed live agent, the tab
   correctly disabled thread creation and explained the empty state.
-- After the schema-8 reload, the company drawer rendered the provider-backed
+- In the pre-final reload, the company drawer rendered the provider-backed
   enrichment/research controls and the deal drawer rendered all seven stages
   as an accessible stepper with the persisted current stage selected.
 - The Contacts table rendered a BB-tokenized portrait with initials fallback;
@@ -105,9 +110,8 @@ Observed in the live CRM panel:
   editing.
 - The public fixed tracking loader returned JavaScript with `PAGE_VIEW` and
   `crmTrack`, cross-origin resource policy, and no site-token-shaped value.
-- The release-candidate drawer fix was loaded from immutable app bundle hash
-  `a0aa100f9494df45`. At a 1280×720 browser viewport, a company drawer stayed
-  within the viewport at 896×720; its tab strip remained on-screen.
+- At a 1280×720 browser viewport, a company drawer stayed within the viewport
+  at 896×720; its tab strip remained on-screen.
 - Switching the company drawer from Overview to Contacts updated the BB URL to
   `/companies/<id>/contacts`; a full browser reload retained both that URL and
   the selected tab. Browser console error output was empty.
@@ -142,8 +146,8 @@ The following are not claimed as passing evidence in this log:
   dark-theme and focused keyboard paths are covered by the smokes above, but a
   complete keyboard-only audit was not run;
 - Electron-specific smoke (no Electron QA was run for this update);
-- production release tag creation, public-tag installation, or marketplace
-  submission.
+- final production release tag creation, final public-tag installation, or
+  marketplace submission. No final tag, marketplace check, or PR is claimed.
 - Marketplace draft schema/build-contract audit is documented in
   [docs/MARKETPLACE_DRAFT.md](MARKETPLACE_DRAFT.md). A temporary concrete
   `entries/crm.json` plus icon passed `npm ci` and `npm run build` against the

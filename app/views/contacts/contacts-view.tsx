@@ -45,6 +45,7 @@ import { RecordFieldsEditor } from "../record-fields/index.js";
 import { ContactEvidence, type ContactEvidenceRpcClient } from "../../components/contact-evidence.js";
 import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
 import {
+  activityFacetOptions,
   customFieldFacets,
   facetOptionsFromCounts,
   ListControls,
@@ -64,6 +65,7 @@ const CONTACT_SORT_OPTIONS: readonly ListSortOption[] = [
   { value: "owner", label: "Owner" },
   { value: "createdAt", label: "Created" },
   { value: "lastActivity", label: "Last activity" },
+  { value: "archivedAt", label: "Archived" },
 ];
 
 const CONTACT_STANDARD_FILTERS = [
@@ -115,15 +117,32 @@ function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat(undefined, {
+  const options: Intl.DateTimeFormatOptions = {
     month: "short",
     day: "numeric",
     year: "numeric",
+  };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) options.timeZone = "UTC";
+  return new Intl.DateTimeFormat(undefined, {
+    ...options,
   }).format(date);
 }
 
 function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
+}
+
+function ArchivedRelationshipBadge({
+  archivedAt,
+}: {
+  archivedAt: string | null | undefined;
+}) {
+  if (!archivedAt) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      Archived
+    </span>
+  );
 }
 
 function formatMinorAmount(
@@ -216,6 +235,33 @@ function isCompanyListOutput(value: unknown): value is CompanyListOutput {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function enrichmentResultMessage(result: unknown): string {
+  if (typeof result !== "object" || result === null) {
+    return "Contact enrichment completed.";
+  }
+  const value = result as {
+    requested?: unknown;
+    succeeded?: unknown;
+    skipped?: unknown;
+    failed?: unknown;
+    message?: unknown;
+  };
+  const requested = typeof value.requested === "number" ? value.requested : 0;
+  const succeeded = typeof value.succeeded === "number" ? value.succeeded : 0;
+  const skipped = typeof value.skipped === "number" ? value.skipped : 0;
+  const failed = typeof value.failed === "number" ? value.failed : 0;
+  const message = typeof value.message === "string" && value.message.trim()
+    ? value.message.trim()
+    : null;
+  return [
+    `Contact enrichment: requested ${requested}`,
+    `succeeded ${succeeded}`,
+    `skipped ${skipped}`,
+    `failed ${failed}`,
+    ...(message ? [message] : []),
+  ].join(" · ");
 }
 
 function listRpc(rpc: ContactsRpcClient): ContactBulkRpcClient {
@@ -410,6 +456,68 @@ function ContactForm({
   );
 }
 
+function ContactRelationshipSummary({
+  relationship,
+}: {
+  relationship?: Contact["relationship"];
+}) {
+  if (relationship === undefined) return null;
+  return (
+    <section
+      className="space-y-4 border-t border-border pt-5"
+      aria-label="We Know Them"
+    >
+      <div>
+        <h3 className="text-sm font-medium">We Know Them</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          A compact view of the relationship history already recorded in CRM.
+        </p>
+      </div>
+      <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Emails</dt>
+          <dd className="mt-1 text-sm tabular-nums">{relationship.emails}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Threads</dt>
+          <dd className="mt-1 text-sm tabular-nums">{relationship.threads}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Meetings</dt>
+          <dd className="mt-1 text-sm tabular-nums">{relationship.meetings}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Last reply</dt>
+          <dd className="mt-1 text-sm">{formatDate(relationship.lastReplyAt)}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs font-medium text-muted-foreground">Next meeting</dt>
+          <dd className="mt-1 text-sm">
+            {relationship.nextMeeting
+              ? `${relationship.nextMeeting.title} · ${formatDate(relationship.nextMeeting.startsAt)}`
+              : "—"}
+          </dd>
+        </div>
+      </dl>
+      <div>
+        <h4 className="text-xs font-medium text-muted-foreground">Colleagues</h4>
+        {relationship.colleagues.length > 0 ? (
+          <ul className="mt-2 divide-y divide-border rounded-lg border border-border" aria-label="Known colleagues">
+            {relationship.colleagues.map((colleague) => (
+              <li key={colleague.id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
+                <span className="truncate text-sm font-medium">{colleague.name}</span>
+                <span className="truncate text-xs text-muted-foreground">{displayValue(colleague.title)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">No colleagues recorded.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 interface ContactOverviewProps {
   contact: Contact;
   rpc: ContactsRpcClient;
@@ -584,6 +692,7 @@ function ContactOverview({
           </dd>
         </div>
       </dl>
+      <ContactRelationshipSummary relationship={contact.relationship} />
       <section
         className="space-y-3 border-t border-border pt-5"
         aria-label="Contact enrichment"
@@ -691,7 +800,7 @@ function ContactDeals({
   return (
     <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Contact deals">
       {deals.map((deal) => (
-        <li key={deal.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_repeat(4,minmax(0,0.7fr))] sm:items-center">
+        <li key={deal.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_repeat(5,minmax(0,0.7fr))] sm:items-center">
           <div className="min-w-0">
             {onOpenDeal ? (
               <button
@@ -699,10 +808,16 @@ function ContactDeals({
                 className="truncate rounded text-left text-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 onClick={() => onOpenDeal(deal.id)}
               >
-                {deal.name}
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <span className="truncate">{deal.name}</span>
+                  <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
+                </span>
               </button>
             ) : (
-              <p className="truncate text-sm font-medium">{deal.name}</p>
+              <p className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">
+                <span className="truncate">{deal.name}</span>
+                <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
+              </p>
             )}
             <p className="truncate text-xs text-muted-foreground">{deal.id}</p>
           </div>
@@ -720,7 +835,11 @@ function ContactDeals({
           </div>
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Owner</p>
-            <p className="truncate text-sm">{displayValue(deal.ownerId)}</p>
+            <p className="truncate text-sm">{deal.owner?.name ?? displayValue(deal.ownerId)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Close date</p>
+            <p className="truncate text-sm">{formatDate(deal.expectedCloseDate)}</p>
           </div>
         </li>
       ))}
@@ -745,8 +864,14 @@ export interface ContactsViewProps {
   rpcClient?: ContactsRpcClient;
   /** Record selected by the BB panel sub-path or browser history. */
   initialRecordId?: string | null;
+  /** Open the create-contact drawer from a routed header action. */
+  initialCreate?: boolean;
   /** Reflects record drawer changes back into the BB panel sub-path. */
   onRecordIdChange?: (id: string | null) => void;
+  /** Opens a linked company or deal through the owning BB route. */
+  onOpenRelatedRecord?: (kind: "company" | "deal", id: string) => void;
+  /** Clears a routed create action after the drawer closes or submits. */
+  onCreateChange?: (open: boolean) => void;
   /** Reflects the active record drawer tab back into the BB panel sub-path. */
   initialTab?: string | null;
   onTabChange?: (tab: ContactTab, recordId: string) => void;
@@ -755,7 +880,10 @@ export interface ContactsViewProps {
 export function ContactsView({
   rpcClient,
   initialRecordId = null,
+  initialCreate = false,
   onRecordIdChange,
+  onOpenRelatedRecord,
+  onCreateChange,
   initialTab,
   onTabChange,
 }: ContactsViewProps) {
@@ -790,7 +918,7 @@ export function ContactsView({
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState<"archive" | "purge" | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(initialCreate);
   const [createValue, setCreateValue] = useState<ContactCreateInput>({
     firstName: "",
     lastName: undefined,
@@ -924,6 +1052,11 @@ export function ContactsView({
   }, [initialRecordId]);
 
   useEffect(() => {
+    setCreateError(null);
+    setCreateOpen(initialCreate);
+  }, [initialCreate]);
+
+  useEffect(() => {
     if (recordId === null) return;
     let active = true;
     setRecordLoading(true);
@@ -956,6 +1089,12 @@ export function ContactsView({
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
+
+  const closeCreate = useCallback(() => {
+    setCreateOpen(false);
+    setCreateError(null);
+    onCreateChange?.(false);
+  }, [onCreateChange]);
 
   const runRecordUpdate = useCallback(
     async (data: ContactUpdateData, optimistic: Partial<Contact>) => {
@@ -1114,7 +1253,7 @@ export function ContactsView({
           companyId: createValue.companyId?.trim() || null,
           ownerId: createValue.ownerId?.trim() || null,
         });
-        setCreateOpen(false);
+        closeCreate();
         setCreateValue({
           firstName: "",
           lastName: undefined,
@@ -1132,7 +1271,7 @@ export function ContactsView({
         setCreateSaving(false);
       }
     },
-    [createValue, rpc],
+    [closeCreate, createValue, rpc],
   );
 
   const openRecord = useCallback(
@@ -1240,6 +1379,11 @@ export function ContactsView({
           facetValueLabel,
         ),
       },
+      {
+        id: "activity",
+        label: "Activity",
+        options: activityFacetOptions(list.facetCounts, filters.activity),
+      },
       ...customFieldFacets(filterDefinitions, list.facetCounts, filters),
     ],
     [companyLabels, filterDefinitions, filters, list.facetCounts, ownerLabels],
@@ -1262,14 +1406,20 @@ export function ContactsView({
     [visibleIds],
   );
   const runBulk = useCallback(
-    async (method: string, input: unknown, successMessage: string) => {
+    async (
+      method: string,
+      input: unknown,
+      successMessage: string | ((result: unknown) => string),
+    ) => {
       setBulkBusy(true);
       setBulkError(null);
       setBulkStatus(null);
       try {
-        await listRpc(rpc).call(method, input);
+        const result = await listRpc(rpc).call(method, input);
         setSelectedIds([]);
-        setBulkStatus(successMessage);
+        setBulkStatus(
+          typeof successMessage === "function" ? successMessage(result) : successMessage,
+        );
         setRefreshKey((value) => value + 1);
       } catch (cause) {
         setBulkError(errorMessage(cause));
@@ -1356,7 +1506,7 @@ export function ContactsView({
                 setQuery("");
                 setPage(1);
               }}
-              placeholder="Search contacts…"
+              placeholder="Search contacts by name, email, or company…"
               containerClassName="w-full sm:w-80"
             />
             <ColumnPreferences preference={columnPreferences} />
@@ -1459,7 +1609,7 @@ export function ContactsView({
                     void runBulk(
                       "contacts_bulkEnrich",
                       { ids: selectedIds },
-                      `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} queued for enrichment.`,
+                      enrichmentResultMessage,
                     )
                   }
                 >
@@ -1807,7 +1957,14 @@ export function ContactsView({
                 onPurge={() => setPurgeOpen(true)}
               />
             ) : recordTab === "deals" ? (
-              <ContactDeals contact={record} />
+              <ContactDeals
+                contact={record}
+                onOpenDeal={
+                  onOpenRelatedRecord === undefined
+                    ? undefined
+                    : (id) => onOpenRelatedRecord("deal", id)
+                }
+              />
             ) : recordTab === "activity" ? (
               <ActivityTimeline
                 anchor={{ contactId: record.id }}
@@ -1829,8 +1986,12 @@ export function ContactsView({
       <RecordDrawer
         open={createOpen}
         onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) setCreateError(null);
+          if (open) {
+            setCreateError(null);
+            setCreateOpen(true);
+          } else {
+            closeCreate();
+          }
         }}
         title="New contact"
         description="Add a person to your CRM workspace."
@@ -1840,7 +2001,7 @@ export function ContactsView({
               type="button"
               variant="outline"
               disabled={createSaving}
-              onClick={() => setCreateOpen(false)}
+              onClick={closeCreate}
             >
               Cancel
             </Button>

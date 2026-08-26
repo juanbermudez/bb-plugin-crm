@@ -41,6 +41,7 @@ import { SavedViewBar, type SavedViewsRpcClient } from "../saved-views/index.js"
 import { RecordFieldsEditor } from "../record-fields/index.js";
 import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
 import {
+  activityFacetOptions,
   customFieldFacets,
   facetOptionsFromCounts,
   ListControls,
@@ -57,8 +58,11 @@ const COMPANY_SORT_OPTIONS: readonly ListSortOption[] = [
   { value: "domain", label: "Domain" },
   { value: "industry", label: "Industry" },
   { value: "owner", label: "Owner" },
+  { value: "contacts", label: "Contacts" },
+  { value: "deals", label: "Open deals" },
   { value: "createdAt", label: "Created" },
   { value: "lastActivity", label: "Last activity" },
+  { value: "archivedAt", label: "Archived" },
 ];
 
 const COMPANY_STANDARD_FILTERS = [
@@ -118,15 +122,63 @@ function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat(undefined, {
+  const options: Intl.DateTimeFormatOptions = {
     month: "short",
     day: "numeric",
     year: "numeric",
+  };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) options.timeZone = "UTC";
+  return new Intl.DateTimeFormat(undefined, {
+    ...options,
   }).format(date);
 }
 
 function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
+}
+
+function ArchivedRelationshipBadge({
+  archivedAt,
+}: {
+  archivedAt: string | null | undefined;
+}) {
+  if (!archivedAt) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      Archived
+    </span>
+  );
+}
+
+const DEAL_STAGE_LABELS: Record<DealStage, string> = {
+  DEMO_BOOKED: "Demo booked",
+  QUALIFIED_TO_BUY: "Qualified to buy",
+  UNQUALIFIED_TO_BUY: "Unqualified to buy",
+  DECISION_MAKER_BOUGHT_IN: "Decision maker bought in",
+  CONTRACT_SENT: "Contract sent",
+  CLOSED_WON: "Closed won",
+  CLOSED_LOST: "Closed lost",
+};
+
+function stageLabel(stage: DealStage | null | undefined): string {
+  return stage === undefined || stage === null ? "—" : DEAL_STAGE_LABELS[stage];
+}
+
+function formatMinorAmount(
+  amountCents: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (amountCents === null || amountCents === undefined) return "—";
+  if (!currency) return `${amountCents.toLocaleString()} minor units`;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amountCents / 100);
+  } catch {
+    return `${amountCents.toLocaleString()} ${currency}`;
+  }
 }
 
 function customFieldDisplay(
@@ -236,6 +288,33 @@ function isDeal(value: unknown): value is Deal {
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function enrichmentResultMessage(result: unknown): string {
+  if (typeof result !== "object" || result === null) {
+    return "Company enrichment completed.";
+  }
+  const value = result as {
+    requested?: unknown;
+    succeeded?: unknown;
+    skipped?: unknown;
+    failed?: unknown;
+    message?: unknown;
+  };
+  const requested = typeof value.requested === "number" ? value.requested : 0;
+  const succeeded = typeof value.succeeded === "number" ? value.succeeded : 0;
+  const skipped = typeof value.skipped === "number" ? value.skipped : 0;
+  const failed = typeof value.failed === "number" ? value.failed : 0;
+  const message = typeof value.message === "string" && value.message.trim()
+    ? value.message.trim()
+    : null;
+  return [
+    `Company enrichment: requested ${requested}`,
+    `succeeded ${succeeded}`,
+    `skipped ${skipped}`,
+    `failed ${failed}`,
+    ...(message ? [message] : []),
+  ].join(" · ");
 }
 
 function listRpc(rpc: CompaniesRpcClient): CompanyBulkRpcClient {
@@ -595,6 +674,44 @@ function validExternalUrl(value: string | null | undefined): string | null {
   }
 }
 
+function companyInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part.charAt(0)).join("").toUpperCase() || "?";
+}
+
+function CompanyMark({
+  company,
+  className = "size-8",
+}: {
+  company: Pick<Company, "name" | "iconUrl" | "logoUrl">;
+  className?: string;
+}) {
+  const imageUrl = validExternalUrl(company.iconUrl) ?? validExternalUrl(company.logoUrl);
+  const [imageFailed, setImageFailed] = useState(false);
+  const classes = `flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted text-[10px] font-semibold text-muted-foreground ${className}`;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  if (imageUrl && !imageFailed) {
+    return (
+      <img
+        src={imageUrl}
+        alt=""
+        aria-hidden="true"
+        className={classes}
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+  return (
+    <span className={classes} aria-hidden="true">
+      {companyInitials(company.name)}
+    </span>
+  );
+}
+
 function CompanySocialLinks({ company }: { company: Company }) {
   const links = COMPANY_SOCIAL_FIELDS.flatMap(({ key, label }) => {
     const href = validExternalUrl(company[key]);
@@ -634,7 +751,7 @@ function CompanyOverview({
   onRestore,
   onPurge,
 }: CompanyOverviewProps) {
-  const primaryContact = company.contacts?.find(
+  const primaryContact = company.primaryContact ?? company.contacts?.find(
     (contact) => contact.id === company.primaryContactId,
   );
   return (
@@ -937,6 +1054,11 @@ function CompanyContacts({
           </Button>
         ) : null}
       </div>
+      <div className="hidden grid-cols-[auto_minmax(0,1.8fr)_minmax(8rem,0.8fr)] gap-2 px-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:grid">
+        <span aria-hidden="true" />
+        <span>Contact</span>
+        <span>Owner</span>
+      </div>
       <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company contacts list">
         {contacts.map((contact) => {
           const name = contactName(contact);
@@ -944,36 +1066,43 @@ function CompanyContacts({
           return (
             <li
               key={contact.id}
-              className="flex min-w-0 items-center gap-2 px-3 py-2.5"
+              className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 px-3 py-2.5 sm:grid-cols-[auto_minmax(0,1.8fr)_minmax(8rem,0.8fr)]"
             >
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              aria-label={
-                isPrimary
-                  ? `Clear primary contact: ${name}`
-                  : `Make ${name} primary contact`
-              }
-              aria-pressed={isPrimary}
-              disabled={busy || onSetPrimary === undefined}
-              onClick={() => onSetPrimary?.(isPrimary ? null : contact.id)}
-            >
-              <Icon name="Star" aria-hidden="true" className={isPrimary ? "fill-current" : undefined} />
-            </Button>
-            <button
-              type="button"
-              className="min-w-0 flex-1 rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
-              onClick={() => onOpenContact?.(contact.id)}
-              disabled={onOpenContact === undefined}
-              aria-label={`Open ${name}`}
-            >
-              <span className="block truncate text-sm font-medium">{name}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {displayValue(contact.title)} · {displayValue(contact.email)}
-              </span>
-            </button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                aria-label={
+                  isPrimary
+                    ? `Clear primary contact: ${name}`
+                    : `Make ${name} primary contact`
+                }
+                aria-pressed={isPrimary}
+                disabled={busy || onSetPrimary === undefined}
+                onClick={() => onSetPrimary?.(isPrimary ? null : contact.id)}
+              >
+                <Icon name="Star" aria-hidden="true" className={isPrimary ? "fill-current" : undefined} />
+              </Button>
+              <button
+                type="button"
+                className="min-w-0 rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
+                onClick={() => onOpenContact?.(contact.id)}
+                disabled={onOpenContact === undefined}
+                aria-label={`Open ${name}`}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium">{name}</span>
+                  <ArchivedRelationshipBadge archivedAt={contact.archivedAt} />
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {displayValue(contact.title)} · {displayValue(contact.email)}
+                </span>
+              </button>
+              <div className="col-span-2 min-w-0 px-1 sm:col-span-1 sm:px-0">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Owner</p>
+                <p className="truncate text-sm">{contact.owner?.name ?? displayValue(contact.ownerId)}</p>
+              </div>
             </li>
           );
         })}
@@ -1019,19 +1148,48 @@ function CompanyDeals({
           </Button>
         ) : null}
       </div>
+      <div className="hidden grid-cols-[minmax(0,1.8fr)_minmax(7rem,0.9fr)_minmax(7rem,0.8fr)_minmax(8rem,0.9fr)_minmax(8rem,0.9fr)] gap-3 px-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:grid">
+        <span>Deal</span>
+        <span>Stage</span>
+        <span>Value</span>
+        <span>Owner</span>
+        <span>Close date</span>
+      </div>
       <ul className="divide-y divide-border rounded-lg border border-border" aria-label="Company deals list">
         {deals.map((deal) => (
-          <li key={deal.id} className="px-3 py-2.5">
+          <li
+            key={deal.id}
+            className="grid min-w-0 gap-3 px-3 py-2.5 sm:grid-cols-[minmax(0,1.8fr)_minmax(7rem,0.9fr)_minmax(7rem,0.8fr)_minmax(8rem,0.9fr)_minmax(8rem,0.9fr)] sm:items-center"
+          >
             <button
               type="button"
-              className="w-full rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
+              className="min-w-0 rounded px-1 py-1 text-left outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
               onClick={() => onOpenDeal?.(deal.id)}
               disabled={onOpenDeal === undefined}
               aria-label={`Open ${deal.name}`}
             >
-              <span className="block truncate text-sm font-medium">{deal.name}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-sm font-medium">{deal.name}</span>
+                <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
+              </span>
               <span className="block truncate text-xs text-muted-foreground">{deal.id}</span>
             </button>
+            <div className="grid grid-cols-[minmax(7rem,auto),minmax(0,1fr)] gap-2 sm:block">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Stage</p>
+              <p className="truncate text-sm">{stageLabel(deal.stage)}</p>
+            </div>
+            <div className="grid grid-cols-[minmax(7rem,auto),minmax(0,1fr)] gap-2 sm:block">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Value</p>
+              <p className="truncate text-sm tabular-nums">{formatMinorAmount(deal.amountCents, deal.currency)}</p>
+            </div>
+            <div className="grid grid-cols-[minmax(7rem,auto),minmax(0,1fr)] gap-2 sm:block">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Owner</p>
+              <p className="truncate text-sm">{deal.owner?.name ?? displayValue(deal.ownerId)}</p>
+            </div>
+            <div className="grid grid-cols-[minmax(7rem,auto),minmax(0,1fr)] gap-2 sm:block">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Close date</p>
+              <p className="truncate text-sm">{formatDate(deal.expectedCloseDate)}</p>
+            </div>
           </li>
         ))}
       </ul>
@@ -1102,10 +1260,11 @@ function NestedCompanyRecordContent({
                 <li key={deal.id} className="px-3 py-2.5">
                   <button
                     type="button"
-                    className="w-full rounded px-1 py-1 text-left text-sm font-medium outline-none hover:bg-state-hover focus-visible:bg-state-hover"
+                    className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-sm font-medium outline-none hover:bg-state-hover focus-visible:bg-state-hover"
                     onClick={() => onOpenDeal(deal.id)}
                   >
-                    {deal.name}
+                    <span className="min-w-0 truncate">{deal.name}</span>
+                    <ArchivedRelationshipBadge archivedAt={deal.archivedAt} />
                   </button>
                 </li>
               ))}
@@ -1155,8 +1314,12 @@ export interface CompaniesViewProps {
   savedViewsRpcClient?: SavedViewsRpcClient;
   /** Record selected by the BB panel sub-path or browser history. */
   initialRecordId?: string | null;
+  /** Open the create-company drawer from a routed header action. */
+  initialCreate?: boolean;
   /** Reflects record drawer changes back into the BB panel sub-path. */
   onRecordIdChange?: (id: string | null) => void;
+  /** Clears a routed create action after the drawer closes or submits. */
+  onCreateChange?: (open: boolean) => void;
   /** Reflects the active record drawer tab back into the BB panel sub-path. */
   initialTab?: string | null;
   onTabChange?: (tab: CompanyTab, recordId: string) => void;
@@ -1166,7 +1329,9 @@ export function CompaniesView({
   rpcClient,
   savedViewsRpcClient,
   initialRecordId = null,
+  initialCreate = false,
   onRecordIdChange,
+  onCreateChange,
   initialTab,
   onTabChange,
 }: CompaniesViewProps) {
@@ -1202,7 +1367,7 @@ export function CompaniesView({
   const [nestedStack, setNestedStack] = useState<NestedCompanyRecord[]>([]);
   const [nestedLoading, setNestedLoading] = useState(false);
   const [nestedError, setNestedError] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(initialCreate);
   const [createValue, setCreateValue] = useState<CompanyCreateInput>({
     name: "",
     domain: undefined,
@@ -1331,6 +1496,11 @@ export function CompaniesView({
   }, [initialRecordId]);
 
   useEffect(() => {
+    setCreateError(null);
+    setCreateOpen(initialCreate);
+  }, [initialCreate]);
+
+  useEffect(() => {
     setRecordTab(companyTabFromRoute(initialTab));
   }, [initialTab, recordId]);
 
@@ -1415,6 +1585,12 @@ export function CompaniesView({
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
+
+  const closeCreate = useCallback(() => {
+    setCreateOpen(false);
+    setCreateError(null);
+    onCreateChange?.(false);
+  }, [onCreateChange]);
 
   const runRecordUpdate = useCallback(
     async (data: CompanyUpdateData, optimistic: Partial<Company>) => {
@@ -1554,7 +1730,7 @@ export function CompaniesView({
             : {}),
           ownerId: createValue.ownerId?.trim() || null,
         });
-        setCreateOpen(false);
+        closeCreate();
         setCreateValue({ name: "", domain: undefined, ownerId: null });
         setPage(1);
         setRefreshKey((value) => value + 1);
@@ -1564,7 +1740,7 @@ export function CompaniesView({
         setCreateSaving(false);
       }
     },
-    [createValue, rpc],
+    [closeCreate, createValue, rpc],
   );
 
   const openRecord = useCallback((id: string) => {
@@ -1596,9 +1772,9 @@ export function CompaniesView({
       setMutationBusy(true);
       setMutationError(null);
       try {
-        const result = await rpc.call("companies_update", {
-          id: record.id,
-          data: { primaryContactId: contactId },
+        const result = await rpc.call("companies_setPrimaryContact", {
+          companyId: record.id,
+          contactId,
         });
         setRecord(
           isCompany(result) ? result : { ...record, primaryContactId: contactId },
@@ -1614,14 +1790,20 @@ export function CompaniesView({
   );
 
   const runBulk = useCallback(
-    async (method: string, input: unknown, successMessage: string) => {
+    async (
+      method: string,
+      input: unknown,
+      successMessage: string | ((result: unknown) => string),
+    ) => {
       setBulkBusy(true);
       setBulkError(null);
       setBulkStatus(null);
       try {
-        await listRpc(rpc).call(method, input);
+        const result = await listRpc(rpc).call(method, input);
         setSelectedIds([]);
-        setBulkStatus(successMessage);
+        setBulkStatus(
+          typeof successMessage === "function" ? successMessage(result) : successMessage,
+        );
         setRefreshKey((value) => value + 1);
       } catch (cause) {
         setBulkError(errorMessage(cause));
@@ -1786,6 +1968,11 @@ export function CompaniesView({
           filters.source,
           facetValueLabel,
         ),
+      },
+      {
+        id: "activity",
+        label: "Activity",
+        options: activityFacetOptions(list.facetCounts, filters.activity),
       },
       ...customFieldFacets(filterDefinitions, list.facetCounts, filters),
     ],
@@ -1989,7 +2176,7 @@ export function CompaniesView({
                     void runBulk(
                       "companies_bulkEnrich",
                       { ids: selectedIds },
-                      `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} queued for enrichment.`,
+                      enrichmentResultMessage,
                     )
                   }
                 >
@@ -2142,7 +2329,12 @@ export function CompaniesView({
                           : "px-3 py-3 text-muted-foreground"
                   }
                 >
-                  {column.id === "last-activity" && company.lastActivityAt ? (
+                  {column.id === "company" ? (
+                    <div className="flex min-w-0 items-center gap-2">
+                      <CompanyMark company={company} />
+                      <span className="truncate">{companyColumnValue(company, column.id, tableDefinitions)}</span>
+                    </div>
+                  ) : column.id === "last-activity" && company.lastActivityAt ? (
                     <time dateTime={company.lastActivityAt}>
                       {companyColumnValue(company, column.id, tableDefinitions)}
                     </time>
@@ -2382,8 +2574,12 @@ export function CompaniesView({
       <RecordDrawer
         open={createOpen}
         onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) setCreateError(null);
+          if (open) {
+            setCreateError(null);
+            setCreateOpen(true);
+          } else {
+            closeCreate();
+          }
         }}
         title="New company"
         description="Add an organization to your CRM workspace."
@@ -2393,7 +2589,7 @@ export function CompaniesView({
               type="button"
               variant="outline"
               disabled={createSaving}
-              onClick={() => setCreateOpen(false)}
+              onClick={closeCreate}
             >
               Cancel
             </Button>

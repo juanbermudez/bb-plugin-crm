@@ -48,6 +48,16 @@ export {
   type GlobalSearchRpcClient,
 } from "./global-search.js";
 export {
+  GlobalActivityCreate,
+  type GlobalActivityCreateProps,
+  type GlobalActivityRpcClient,
+} from "./global-activity-create.js";
+export {
+  EnrichmentQueue,
+  type EnrichmentQueueProps,
+  type EnrichmentQueueRpcClient,
+} from "./enrichment-queue.js";
+export {
   WORKSPACE_CHECKLIST_ITEMS,
   WORKSPACE_CHECKLIST_STORAGE_KEY,
   WorkspaceChecklist,

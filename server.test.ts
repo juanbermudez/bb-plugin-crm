@@ -447,10 +447,21 @@ describe("CRM plugin foundation", () => {
     expect(acme).toMatchObject({
       name: "Acme",
       domain: "acme.example",
+      iconUrl: "https://acme.example/favicon.ico",
       ownerId: "owner_1",
       contactCount: 0,
       openDealCount: 0,
       fields: {},
+    });
+
+    const moved = await harness.behavior.callRpc("companies_update", {
+      id: (acme as { id: string }).id,
+      data: { domain: "new.acme.example" },
+    });
+    expect(moved).toMatchObject({
+      id: (acme as { id: string }).id,
+      domain: "new.acme.example",
+      iconUrl: "https://new.acme.example/favicon.ico",
     });
 
     const listed = await harness.behavior.callRpc("companies_list", {
@@ -477,6 +488,304 @@ describe("CRM plugin foundation", () => {
     );
 
     await harness.lifecycle.dispose();
+  });
+
+  it("keeps list activity, contextual facets, relation-name search, and count sorting aligned", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    try {
+      const recent = (await harness.behavior.callRpc("companies_create", {
+        name: "Acme Recent",
+        domain: "recent.acme.example",
+      })) as { id: string };
+      const stale = (await harness.behavior.callRpc("companies_create", {
+        name: "Acme Stale",
+        domain: "stale.acme.example",
+      })) as { id: string };
+      const other = (await harness.behavior.callRpc("companies_create", {
+        name: "Other Account",
+        domain: "other.example",
+      })) as { id: string };
+      const day = 24 * 60 * 60 * 1_000;
+      const recentAt = new Date(Date.now() - 2 * day).toISOString();
+      const staleAt = new Date(Date.now() - 45 * day).toISOString();
+      const db = bb.storage.database();
+      db.prepare("UPDATE companies SET last_activity_at = ? WHERE id = ?").run(recentAt, recent.id);
+      db.prepare("UPDATE companies SET last_activity_at = ? WHERE id = ?").run(staleAt, stale.id);
+
+      const recentContact = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Recent",
+        lastName: "Acme Contact",
+        companyId: recent.id,
+      })) as { id: string };
+      await harness.behavior.callRpc("contacts_create", {
+        firstName: "Second",
+        lastName: "Acme Contact",
+        companyId: recent.id,
+      });
+      const staleContact = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Stale",
+        lastName: "Acme Contact",
+        companyId: stale.id,
+      })) as { id: string };
+      db.prepare("UPDATE contacts SET last_activity_at = ? WHERE id = ?").run(recentAt, recentContact.id);
+      db.prepare("UPDATE contacts SET last_activity_at = ? WHERE id = ?").run(staleAt, staleContact.id);
+
+      const recentDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Recent Acme renewal",
+        companyId: recent.id,
+        ownerId: "owner_recent",
+      })) as { id: string };
+      const secondDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Recent Acme expansion",
+        companyId: recent.id,
+        ownerId: "owner_recent",
+      })) as { id: string };
+      const staleDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Stale Acme renewal",
+        companyId: stale.id,
+        ownerId: "owner_stale",
+      })) as { id: string };
+      db.prepare("UPDATE deals SET last_activity_at = ? WHERE id = ?").run(recentAt, recentDeal.id);
+      db.prepare("UPDATE deals SET last_activity_at = ? WHERE id = ?").run(staleAt, staleDeal.id);
+
+      const companyField = (await harness.behavior.callRpc("fields_create", {
+        entity: "COMPANY",
+        label: "Account tier",
+        type: "SELECT",
+        options: [{ label: "Enterprise" }],
+        showOnFilter: true,
+      })) as { key: string; options: Array<{ id: string }> };
+      const contactField = (await harness.behavior.callRpc("fields_create", {
+        entity: "CONTACT",
+        label: "Contact tier",
+        type: "SELECT",
+        options: [{ label: "Enterprise" }],
+        showOnFilter: true,
+      })) as { key: string; options: Array<{ id: string }> };
+      const dealField = (await harness.behavior.callRpc("fields_create", {
+        entity: "DEAL",
+        label: "Deal tier",
+        type: "SELECT",
+        options: [{ label: "Enterprise" }],
+        showOnFilter: true,
+      })) as { key: string; options: Array<{ id: string }> };
+      const companyOption = companyField.options[0]?.id;
+      const contactOption = contactField.options[0]?.id;
+      const dealOption = dealField.options[0]?.id;
+      expect(companyOption).toBeDefined();
+      expect(contactOption).toBeDefined();
+      expect(dealOption).toBeDefined();
+      await harness.behavior.callRpc("companies_update", {
+        id: recent.id,
+        data: { fields: { [companyField.key]: companyOption } },
+      });
+      await harness.behavior.callRpc("contacts_update", {
+        id: recentContact.id,
+        data: { fields: { [contactField.key]: contactOption } },
+      });
+      await harness.behavior.callRpc("deals_update", {
+        id: recentDeal.id,
+        data: { fields: { [dealField.key]: dealOption } },
+      });
+
+      const companies = (await harness.behavior.callRpc("companies_list", {
+        q: "Acme",
+        activity: ["7"],
+        sort: "contacts",
+        dir: "desc",
+      })) as {
+        rows: Array<{ id: string }>;
+        total: number;
+        facetCounts: Record<string, Record<string, number>>;
+      };
+      expect(companies.rows.map((row) => row.id)).toEqual([recent.id]);
+      expect(companies.total).toBe(1);
+      expect(companies.facetCounts.activity).toMatchObject({ "7": 1, "30": 1, "90": 2 });
+      expect(companies.facetCounts[`field:${companyField.key}`]).toEqual({ [companyOption as string]: 1 });
+
+      const contacts = (await harness.behavior.callRpc("contacts_list", {
+        q: "Acme",
+        activity: ["7"],
+      })) as {
+        rows: Array<{ id: string }>;
+        total: number;
+        facetCounts: Record<string, Record<string, number>>;
+      };
+      expect(contacts.rows.map((row) => row.id)).toEqual([recentContact.id]);
+      expect(contacts.total).toBe(1);
+      expect(contacts.facetCounts.activity).toMatchObject({ "7": 1, "90": 2 });
+      expect(contacts.facetCounts[`field:${contactField.key}`]).toEqual({ [contactOption as string]: 1 });
+
+      const deals = (await harness.behavior.callRpc("deals_list", {
+        q: "Acme",
+        sort: "company",
+        dir: "asc",
+      })) as {
+        rows: Array<{ id: string }>;
+        total: number;
+        facetCounts: Record<string, Record<string, number>>;
+      };
+      expect(deals.rows.map((row) => row.id)).toEqual([
+        secondDeal.id,
+        recentDeal.id,
+        staleDeal.id,
+      ]);
+      expect(deals.total).toBe(3);
+      expect(deals.facetCounts.status).toEqual({ open: 3, closed: 0 });
+      expect(deals.facetCounts.company).toEqual({ [recent.id]: 2, [stale.id]: 1 });
+      expect(deals.facetCounts.currency).toEqual({ USD: 3 });
+      expect(deals.facetCounts[`field:${dealField.key}`]).toEqual({ [dealOption as string]: 1 });
+
+      const sortedByDeals = (await harness.behavior.callRpc("companies_list", {
+        sort: "deals",
+        dir: "desc",
+      })) as { rows: Array<{ id: string }> };
+      expect(sortedByDeals.rows.slice(0, 3).map((row) => row.id)).toEqual([
+        recent.id,
+        stale.id,
+        other.id,
+      ]);
+    } finally {
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("keeps primary-contact and company relation detail semantics source-compatible", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    try {
+      const company = (await harness.behavior.callRpc("companies_create", {
+        name: "Detail Account",
+        domain: "detail.example",
+      })) as { id: string };
+      const otherCompany = (await harness.behavior.callRpc("companies_create", {
+        name: "Other Detail Account",
+        domain: "other-detail.example",
+      })) as { id: string };
+      const primary = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Zoe",
+        lastName: "Adams",
+        phone: "+1 555 0100",
+        email: "zoe@detail.example",
+        companyId: company.id,
+      })) as { id: string };
+      const second = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Amy",
+        lastName: "Baker",
+        email: "amy@detail.example",
+        companyId: company.id,
+      })) as { id: string };
+      const archivedContact = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Old",
+        lastName: "Contact",
+        email: "old@detail.example",
+        companyId: company.id,
+      })) as { id: string };
+      await harness.behavior.callRpc("contacts_archive", { id: archivedContact.id });
+      const foreign = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Foreign",
+        lastName: "Contact",
+        email: "foreign@other-detail.example",
+        companyId: otherCompany.id,
+      })) as { id: string };
+
+      await expect(
+        harness.behavior.callRpc("companies_update", {
+          id: company.id,
+          data: { primaryContactId: foreign.id },
+        }),
+      ).rejects.toThrow("That contact does not work at this company.");
+      await expect(
+        harness.behavior.callRpc("companies_setPrimaryContact", {
+          companyId: company.id,
+          contactId: "missing-contact",
+        }),
+      ).rejects.toThrow("No contact with id missing-contact.");
+      await expect(
+        harness.behavior.callRpc("companies_setPrimaryContact", {
+          companyId: company.id,
+          contactId: foreign.id,
+        }),
+      ).rejects.toThrow("That contact does not work at this company.");
+      await expect(
+        harness.behavior.callRpc("companies_setPrimaryContact", {
+          companyId: company.id,
+          contactId: primary.id,
+        }),
+      ).resolves.toEqual({ id: company.id, primaryContactId: primary.id });
+
+      const earlyDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Early detail deal",
+        companyId: company.id,
+        ownerId: "owner-detail",
+        stage: "DEMO_BOOKED",
+        amountCents: 10_000,
+        expectedCloseDate: "2026-12-01",
+      })) as { id: string };
+      const middleDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Middle detail deal",
+        companyId: company.id,
+        ownerId: "owner-detail",
+        stage: "QUALIFIED_TO_BUY",
+        amountCents: 20_000,
+        expectedCloseDate: "2026-11-01",
+      })) as { id: string };
+      const archivedOpenDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Archived detail deal",
+        companyId: company.id,
+        ownerId: "owner-detail",
+        stage: "UNQUALIFIED_TO_BUY",
+        amountCents: 30_000,
+        expectedCloseDate: "2026-10-01",
+      })) as { id: string };
+      await harness.behavior.callRpc("deals_archive", { id: archivedOpenDeal.id });
+      const lateDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Late detail deal",
+        companyId: company.id,
+        ownerId: "owner-detail",
+        stage: "CONTRACT_SENT",
+        amountCents: 40_000,
+        expectedCloseDate: "2026-09-01",
+      })) as { id: string };
+
+      const detail = (await harness.behavior.callRpc("companies_get", { id: company.id })) as {
+        primaryContact: { id: string; firstName: string; lastName: string | null; phone: string | null } | null;
+        contacts: Array<{ id: string }>;
+        deals: Array<{ id: string; baseAmountCents?: number | null }>;
+        contactCount: number;
+        openDealCount: number;
+      };
+      expect(detail.primaryContact).toEqual({
+        id: primary.id,
+        firstName: "Zoe",
+        lastName: "Adams",
+        email: "zoe@detail.example",
+        phone: "+1 555 0100",
+        title: null,
+      });
+      expect(detail.contacts.map((contact) => contact.id)).toEqual([
+        primary.id,
+        second.id,
+        archivedContact.id,
+      ]);
+      expect(detail.deals.map((deal) => deal.id)).toEqual([
+        earlyDeal.id,
+        middleDeal.id,
+        archivedOpenDeal.id,
+        lateDeal.id,
+      ]);
+      expect(detail.deals.map((deal) => deal.baseAmountCents)).toEqual([
+        10_000,
+        20_000,
+        30_000,
+        40_000,
+      ]);
+      expect(detail.contactCount).toBe(3);
+      expect(detail.openDealCount).toBe(4);
+    } finally {
+      await harness.lifecycle.dispose();
+    }
   });
 
   it("serves the agent definition, version, trigger, and run lifecycles", async () => {
@@ -643,6 +952,62 @@ describe("CRM plugin foundation", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("serves a shell-safe enrichment queue from persisted local runs and tasks", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Queue RPC Systems",
+    })) as { id: string; name: string };
+    const contact = (await harness.behavior.callRpc("contacts_create", {
+      firstName: "Grace",
+      lastName: "Hopper",
+      email: "grace@queue-rpc.example",
+      companyId: company.id,
+    })) as { id: string };
+    const task = await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      subject: "Review the queue account",
+      companyId: company.id,
+      createdById: "local_user",
+      dueAt: "2999-01-02T09:00:00.000Z",
+    }) as { id: string };
+    await seedLiveServerAgent(harness, "agent_queue_rpc", "version_queue_rpc");
+    await harness.behavior.callRpc("agents_runs_queue", {
+      agentId: "agent_queue_rpc",
+      id: "run_queue_rpc",
+      input: {
+        kind: "CRM_ENRICHMENT_REQUEST",
+        entity: "CONTACT",
+        recordId: contact.id,
+        operation: "research",
+      },
+      idempotencyKey: "queue-rpc-key",
+    });
+
+    const queue = await harness.behavior.callRpc("enrichment_queue", { limit: 25 }) as {
+      rows: Array<{ id: string; state: string; subject: { kind: string; id: string; name: string } }>;
+      total: number;
+      scheduled: Array<{ subject: { kind: string; id: string; name: string } }>;
+      scheduledTotal: number;
+    };
+    expect(queue).toMatchObject({
+      total: 1,
+      rows: [expect.objectContaining({
+        id: "run_queue_rpc",
+        state: "queued",
+        subject: expect.objectContaining({ kind: "contact", id: contact.id, name: "Grace Hopper" }),
+      })],
+      scheduledTotal: 1,
+    });
+    expect(queue.scheduled).toEqual([
+      expect.objectContaining({
+        subject: expect.objectContaining({ kind: "task", id: task.id, name: "Review the queue account" }),
+      }),
+    ]);
+    await harness.lifecycle.dispose();
+  });
+
   it("persists contact relationships and supports contact bulk operations", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
     await plugin(bb);
@@ -692,6 +1057,98 @@ describe("CRM plugin foundation", () => {
     });
 
     await harness.lifecycle.dispose();
+  });
+
+  it("hydrates company relationship refs and preserves archived children", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "USD" },
+    });
+    await plugin(bb);
+    try {
+      const company = (await harness.behavior.callRpc("companies_create", {
+        name: "Relationship payloads",
+      })) as { id: string };
+      const contact = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Ada",
+        lastName: "Lovelace",
+        email: "ada@payloads.example",
+        title: "Founder",
+        companyId: company.id,
+        ownerId: "owner_contact",
+      })) as { id: string };
+      const archivedContact = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "Archived",
+        lastName: "Contact",
+        companyId: company.id,
+      })) as { id: string };
+      const deal = (await harness.behavior.callRpc("deals_create", {
+        name: "Expansion",
+        companyId: company.id,
+        ownerId: "owner_deal",
+        stage: "CONTRACT_SENT",
+        amountCents: 125_000,
+        currency: "USD",
+        expectedCloseDate: "2026-10-31",
+      })) as { id: string };
+      const archivedDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "Archived expansion",
+        companyId: company.id,
+        ownerId: "owner_deal",
+      })) as { id: string };
+
+      const initial = (await harness.behavior.callRpc("companies_get", {
+        id: company.id,
+      })) as {
+        contacts: Array<Record<string, unknown>>;
+        deals: Array<Record<string, unknown>>;
+      };
+      expect(initial.contacts).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: contact.id,
+          ownerId: "owner_contact",
+          owner: {
+            id: "owner_contact",
+            name: "owner_contact",
+            email: "crm-user@bb.invalid",
+            image: null,
+          },
+        }),
+      ]));
+      expect(initial.deals).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: deal.id,
+          stage: "CONTRACT_SENT",
+          amountCents: 125_000,
+          currency: "USD",
+          ownerId: "owner_deal",
+          owner: {
+            id: "owner_deal",
+            name: "owner_deal",
+            email: "crm-user@bb.invalid",
+            image: null,
+          },
+          expectedCloseDate: "2026-10-31",
+        }),
+      ]));
+
+      await harness.behavior.callRpc("contacts_archive", { id: archivedContact.id });
+      await harness.behavior.callRpc("deals_archive", { id: archivedDeal.id });
+      const visible = (await harness.behavior.callRpc("companies_get", { id: company.id })) as {
+        contacts: Array<{ id: string; archivedAt: string | null }>;
+        deals: Array<{ id: string; archivedAt: string | null }>;
+      };
+      expect(visible.contacts).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: contact.id, archivedAt: null }),
+        expect.objectContaining({ id: archivedContact.id, archivedAt: expect.any(String) }),
+      ]));
+      expect(visible.deals).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: deal.id, archivedAt: null }),
+        expect.objectContaining({ id: archivedDeal.id, archivedAt: expect.any(String) }),
+      ]));
+    } finally {
+      await harness.lifecycle.dispose();
+    }
   });
 
   it("serves the contact evidence, brief, and work-history lifecycles", async () => {
@@ -1711,10 +2168,12 @@ describe("CRM plugin foundation", () => {
 
     const doctor = await harness.behavior.runCli(["doctor", "--json"]);
     expect(doctor.exitCode).toBe(0);
+    // Verification is evidence-backed: pruning the only observed PAGE_VIEW
+    // removes the evidence and must clear the site's verified status.
     expect(JSON.parse(doctor.stdout)).toMatchObject({
       integrations: {
         connections: { total: 1, enabled: 0, errors: 0 },
-        tracking: { sites: 1, activeSites: 1, verifiedSites: 1, activeTokens: 1 },
+        tracking: { sites: 1, activeSites: 1, verifiedSites: 0, activeTokens: 1 },
       },
     });
 

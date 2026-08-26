@@ -5,6 +5,8 @@ import {
   trackingEventBatchInputSchema,
   trackingEventInputSchema,
   trackingSiteCreateInputSchema,
+  trackingSiteUpdateInputSchema,
+  trackingTrafficSourceListInputSchema,
   trackingTokenProvisionInputSchema,
 } from "./connections.js";
 
@@ -39,6 +41,30 @@ describe("connections and tracking wire contracts", () => {
       allowedDomains: ["example.com"],
       unknown: true,
     }).success).toBe(false);
+    expect(trackingSiteCreateInputSchema.safeParse({
+      name: "Marketing",
+      allowedDomains: ["example.com"],
+      crossDomain: false,
+      limitToDomains: true,
+      cookieDays: 0,
+    }).success).toBe(true);
+    expect(trackingSiteUpdateInputSchema.safeParse({
+      id: "site_1",
+      honourDnt: false,
+      cookieDays: 180,
+    }).success).toBe(true);
+    expect(trackingSiteUpdateInputSchema.safeParse({
+      id: "site_1",
+      limitToDomains: true,
+      allowedDomains: [],
+    }).success).toBe(false);
+    expect(trackingSiteUpdateInputSchema.safeParse({
+      id: "site_1",
+      limitToDomains: false,
+      allowedDomains: [],
+    }).success).toBe(true);
+    expect(trackingSiteUpdateInputSchema.safeParse({ id: "site_1" }).success).toBe(false);
+    expect(trackingTrafficSourceListInputSchema.safeParse({ limit: 20, offset: 0 }).success).toBe(true);
     expect(trackingTokenProvisionInputSchema.safeParse({
       scope: "TRACKING",
       siteId: "site_1",
@@ -60,11 +86,14 @@ describe("connections and tracking wire contracts", () => {
       pageUrl: "https://www.example.com/pricing",
       visitorId: "visitor-1",
       properties: { plan: "pro", converted: true },
+      medium: "email",
     };
     expect(trackingEventInputSchema.safeParse(event).success).toBe(true);
     expect(trackingEventInputSchema.safeParse({ ...event, properties: { email: "ada@example.com" } }).success).toBe(false);
     expect(trackingEventInputSchema.safeParse({ ...event, properties: { campaign: "Reach ada@example.com" } }).success).toBe(false);
     expect(trackingEventInputSchema.safeParse({ ...event, properties: { checkout_reference: "4111 1111 1111 1111" } }).success).toBe(false);
+    expect(trackingEventInputSchema.safeParse({ ...event, source: "person@example.com" }).success).toBe(false);
+    expect(trackingEventInputSchema.safeParse({ ...event, medium: "4111 1111 1111 1111" }).success).toBe(false);
     expect(trackingEventInputSchema.safeParse({
       ...event,
       properties: { campaign: "spring", order_reference: "1234567890123456", seats: 4111 },

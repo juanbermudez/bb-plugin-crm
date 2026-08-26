@@ -219,6 +219,12 @@ describe("AgentsView", () => {
     expect(await screen.findByRole("dialog", { name: "New agent" })).toBeDefined();
   });
 
+  it("opens the create drawer for a routed header action", async () => {
+    render(<AgentsView rpcClient={makeRpc()} initialCreate />);
+
+    expect(await screen.findByRole("dialog", { name: "New agent" })).toBeDefined();
+  });
+
   it("validates and deploys a selected version", async () => {
     const rpc = makeRpc();
     render(<AgentsView rpcClient={rpc} initialRecordId={agent.id} />);

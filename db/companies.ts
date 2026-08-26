@@ -1,7 +1,18 @@
 import { createActivity } from "./activities.js";
-import { newRecordId, nowIso, nullableText, normalizeDomain, normalizeLimit, normalizeOffset, normalizeEmail, requiredText, RecordNotFoundError, type Db, type EnrichmentStatus, type ListOptions, type RecordSource, ENRICHMENT_STATUSES, RECORD_SOURCES } from "./types.js";
+import { activityFilterClause, domainFromEmail, isSqliteUniqueConstraint, newRecordId, nowIso, nullableText, normalizeDomain, normalizeLimit, normalizeOffset, normalizeEmail, RecordConflictError, requiredText, RecordNotFoundError, type Db, type EnrichmentStatus, type ListOptions, type RecordSource, ENRICHMENT_STATUSES, RECORD_SOURCES } from "./types.js";
 
 const SYSTEM_ACTIVITY_AUTHOR_ID = "local_user";
+
+/**
+ * Return the deterministic origin favicon URL for a normalized company domain.
+ *
+ * The plugin intentionally stores only the HTTPS source URL. It does not fetch,
+ * proxy, or mirror the remote image into BB storage.
+ */
+export function companyFaviconUrl(domain: string | null | undefined): string | null {
+  const normalized = normalizeDomain(domain);
+  return normalized ? `https://${normalized}/favicon.ico` : null;
+}
 
 export interface Company {
   id: string;
@@ -55,7 +66,7 @@ export interface CompanyListOptions extends ListOptions {
   enrichmentStatuses?: readonly EnrichmentStatus[];
   source?: RecordSource;
   enrichmentStatus?: EnrichmentStatus;
-  sortBy?: "name" | "domain" | "industry" | "owner" | "createdAt" | "lastActivity";
+  sortBy?: "name" | "domain" | "industry" | "owner" | "contacts" | "deals" | "createdAt" | "lastActivity" | "archivedAt";
   sortDirection?: "asc" | "desc";
 }
 
@@ -163,7 +174,10 @@ function normalizeCreate(input: CompanyCreateInput): Company {
     description: nullableText(input.description),
     logoUrl: nullableText(input.logoUrl),
     logoDarkUrl: nullableText(input.logoDarkUrl),
-    iconUrl: nullableText(input.iconUrl),
+    iconUrl:
+      input.iconUrl === undefined
+        ? companyFaviconUrl(domain)
+        : nullableText(input.iconUrl),
     iconDarkUrl: nullableText(input.iconDarkUrl),
     iconTone: nullableText(input.iconTone),
     brandColor: nullableText(input.brandColor),
@@ -232,6 +246,85 @@ function dbValues(value: Company): Record<string, string | null> {
   };
 }
 
+function activeCompanyForDomain(
+  db: Db,
+  domain: string,
+  excludeId?: string,
+): { id: string; name: string } | undefined {
+  const where = excludeId === undefined
+    ? "domain = ? COLLATE NOCASE AND archived_at IS NULL"
+    : "domain = ? COLLATE NOCASE AND archived_at IS NULL AND id <> ?";
+  const params = excludeId === undefined ? [domain] : [domain, excludeId];
+  return db.prepare(`SELECT id, name FROM companies WHERE ${where} LIMIT 1`).get(...params) as
+    | { id: string; name: string }
+    | undefined;
+}
+
+function assertCompanyDomainAvailable(db: Db, domain: string | null, excludeId?: string): void {
+  if (!domain) return;
+  const existing = activeCompanyForDomain(db, domain, excludeId);
+  if (existing) {
+    throw new RecordConflictError(
+      "company",
+      "domain",
+      domain,
+      `${existing.name} already uses the domain ${domain}.`,
+    );
+  }
+}
+
+function rethrowCompanyDomainConflict(error: unknown, domain: string | null): never {
+  if (domain && isSqliteUniqueConstraint(error, "companies", "domain")) {
+    throw new RecordConflictError(
+      "company",
+      "domain",
+      domain,
+      "Another company already uses that domain.",
+    );
+  }
+  throw error;
+}
+
+/**
+ * Keep the primary-contact relation scoped to the company that owns it.
+ * SQLite's foreign key only proves that the contact exists; it cannot express
+ * that the contact's company_id matches this company.
+ */
+function assertPrimaryContactForCompany(
+  db: Db,
+  companyId: string,
+  contactId: string | null,
+): void {
+  if (contactId === null) return;
+  const contact = db
+    .prepare("SELECT company_id AS companyId FROM contacts WHERE id = ?")
+    .get(contactId) as { companyId: string | null } | undefined;
+  if (!contact) throw new RecordNotFoundError("contact", contactId);
+  if (contact.companyId !== companyId) {
+    throw new Error("That contact does not work at this company.");
+  }
+}
+
+function insertCompany(db: Db, value: Company): void {
+  db.prepare(`
+    INSERT INTO companies (
+      id, name, domain, website, description, logo_url, logo_dark_url,
+      icon_url, icon_dark_url, icon_tone, brand_color, industry, sub_industry,
+      city, state_code, country, country_code, phone, email, linkedin_url,
+      twitter_url, github_url, pricing_url, careers_url, owner_id,
+      primary_contact_id, enrichment_status, enriched_at, enrichment_error,
+      source, last_activity_at, archived_at, created_at, updated_at
+    ) VALUES (
+      @id, @name, @domain, @website, @description, @logo_url, @logo_dark_url,
+      @icon_url, @icon_dark_url, @icon_tone, @brand_color, @industry,
+      @sub_industry, @city, @state_code, @country, @country_code, @phone,
+      @email, @linkedin_url, @twitter_url, @github_url, @pricing_url,
+      @careers_url, @owner_id, @primary_contact_id, @enrichment_status,
+      @enriched_at, @enrichment_error, @source, @last_activity_at,
+      @archived_at, @created_at, @updated_at
+    )`).run(dbValues(value));
+}
+
 export class CompanyStore {
   constructor(private readonly db: Db) {}
 
@@ -250,25 +343,14 @@ export class CompanyStore {
 
   create(input: CompanyCreateInput): Company {
     const value = normalizeCreate(input);
-    const insert = this.db.prepare(`
-      INSERT INTO companies (
-        id, name, domain, website, description, logo_url, logo_dark_url,
-        icon_url, icon_dark_url, icon_tone, brand_color, industry, sub_industry,
-        city, state_code, country, country_code, phone, email, linkedin_url,
-        twitter_url, github_url, pricing_url, careers_url, owner_id,
-        primary_contact_id, enrichment_status, enriched_at, enrichment_error,
-        source, last_activity_at, archived_at, created_at, updated_at
-      ) VALUES (
-        @id, @name, @domain, @website, @description, @logo_url, @logo_dark_url,
-        @icon_url, @icon_dark_url, @icon_tone, @brand_color, @industry,
-        @sub_industry, @city, @state_code, @country, @country_code, @phone,
-        @email, @linkedin_url, @twitter_url, @github_url, @pricing_url,
-        @careers_url, @owner_id, @primary_contact_id, @enrichment_status,
-        @enriched_at, @enrichment_error, @source, @last_activity_at,
-        @archived_at, @created_at, @updated_at
-      )`);
     return this.db.transaction(() => {
-      insert.run(dbValues(value));
+      assertPrimaryContactForCompany(this.db, value.id, value.primaryContactId);
+      assertCompanyDomainAvailable(this.db, value.domain);
+      try {
+        insertCompany(this.db, value);
+      } catch (error) {
+        rethrowCompanyDomainConflict(error, value.domain);
+      }
       return this.getRequired(value.id);
     })();
   }
@@ -281,14 +363,22 @@ export class CompanyStore {
       name: "name",
       domain: "domain",
       industry: "industry",
+      // BB exposes no current-user/RBAC table to the plugin, so owner IDs are
+      // the only stable local ordering available for this relation.
       owner: "owner_id",
+      contacts: "(SELECT COUNT(*) FROM contacts AS related_contacts WHERE related_contacts.company_id = companies.id)",
+      deals: "(SELECT COUNT(*) FROM deals AS related_deals WHERE related_deals.company_id = companies.id AND related_deals.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST'))",
       createdAt: "created_at",
       lastActivity: "last_activity_at",
+      archivedAt: "archived_at",
     };
     const sortColumn = sortColumns[options.sortBy ?? "name"];
     const direction = options.sortDirection === "desc" ? "DESC" : "ASC";
+    const nullLast = options.sortBy === "lastActivity" || options.sortBy === "archivedAt"
+      ? `${sortColumn} IS NULL ASC, `
+      : "";
     return this.db
-      .prepare(`${COMPANY_SELECT}${where} ORDER BY ${sortColumn} COLLATE NOCASE ${direction}, id ${direction} LIMIT @limit OFFSET @offset`)
+      .prepare(`${COMPANY_SELECT}${where} ORDER BY ${nullLast}${sortColumn} COLLATE NOCASE ${direction}, name COLLATE NOCASE ${direction}, id ${direction} LIMIT @limit OFFSET @offset`)
       .all(params)
       .map(row);
   }
@@ -374,6 +464,8 @@ export class CompanyStore {
       });
       clauses.push(`enrichment_status IN (${placeholders.join(", ")})`);
     }
+    const activity = activityFilterClause(options.activity, "last_activity_at", params);
+    if (activity) clauses.push(activity);
     const search = options.search?.trim();
     if (search) {
       clauses.push(`(
@@ -421,7 +513,10 @@ export class CompanyStore {
       if (has("pricingUrl")) next.pricingUrl = nullableText(input.pricingUrl);
       if (has("careersUrl")) next.careersUrl = nullableText(input.careersUrl);
       if (has("ownerId")) next.ownerId = nullableText(input.ownerId);
-      if (has("primaryContactId")) next.primaryContactId = nullableText(input.primaryContactId);
+      if (has("primaryContactId")) {
+        next.primaryContactId = nullableText(input.primaryContactId);
+        assertPrimaryContactForCompany(this.db, id, next.primaryContactId);
+      }
       if (has("enrichmentStatus")) {
         next.enrichmentStatus = assertEnum(input.enrichmentStatus as string, ENRICHMENT_STATUSES, "enrichment status");
         enrichmentStatusChanged = next.enrichmentStatus !== current.enrichmentStatus;
@@ -430,12 +525,25 @@ export class CompanyStore {
       if (has("enrichmentError")) next.enrichmentError = nullableText(input.enrichmentError);
       if (has("source")) next.source = assertEnum(input.source as string, RECORD_SOURCES, "source");
       if (has("lastActivityAt")) next.lastActivityAt = input.lastActivityAt ?? null;
+      const domainChanged = has("domain") && next.domain !== current.domain;
+      if (
+        domainChanged &&
+        !has("iconUrl") &&
+        (current.iconUrl === null || current.iconUrl === companyFaviconUrl(current.domain))
+      ) {
+        next.iconUrl = companyFaviconUrl(next.domain);
+      }
       next.updatedAt = nowIso();
       const values = dbValues(next);
       const changed: readonly CompanyColumn[] = COMPANY_COLUMNS;
-      this.db
-        .prepare(`UPDATE companies SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
-        .run(values);
+      assertCompanyDomainAvailable(this.db, next.domain, id);
+      try {
+        this.db
+          .prepare(`UPDATE companies SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
+          .run(values);
+      } catch (error) {
+        rethrowCompanyDomainConflict(error, next.domain);
+      }
       if (enrichmentStatusChanged) {
         const occurredAt = next.updatedAt;
         createActivity(
@@ -467,6 +575,11 @@ export class CompanyStore {
     })();
   }
 
+  setPrimaryContact(companyId: string, contactId: string | null): Company {
+    assertPrimaryContactForCompany(this.db, companyId, contactId);
+    return this.update(companyId, { primaryContactId: contactId });
+  }
+
   archive(id: string): Company {
     return this.setArchived(id, nowIso());
   }
@@ -477,12 +590,17 @@ export class CompanyStore {
 
   private setArchived(id: string, archivedAt: string | null): Company {
     return this.db.transaction(() => {
-      this.getRequired(id);
-      this.db.prepare("UPDATE companies SET archived_at = @archivedAt, updated_at = @updatedAt WHERE id = @id").run({
-        id,
-        archivedAt,
-        updatedAt: nowIso(),
-      });
+      const current = this.getRequired(id);
+      if (archivedAt === null) assertCompanyDomainAvailable(this.db, current.domain, id);
+      try {
+        this.db.prepare("UPDATE companies SET archived_at = @archivedAt, updated_at = @updatedAt WHERE id = @id").run({
+          id,
+          archivedAt,
+          updatedAt: nowIso(),
+        });
+      } catch (error) {
+        rethrowCompanyDomainConflict(error, current.domain);
+      }
       return this.getRequired(id);
     })();
   }
@@ -494,6 +612,46 @@ export class CompanyStore {
       return value;
     })();
   }
+}
+
+export interface CompanyForEmailOptions {
+  ownerId?: string | null;
+  source?: RecordSource;
+}
+
+/**
+ * Find or create the local company represented by a work email domain.
+ * Free-mail and machine-generated domains intentionally return no company.
+ */
+export function companyForEmail(
+  db: Db,
+  email: string | null | undefined,
+  options: CompanyForEmailOptions = {},
+): string | null {
+  const domain = domainFromEmail(email);
+  if (!domain) return null;
+
+  return db.transaction(() => {
+    const existing = activeCompanyForDomain(db, domain);
+    if (existing) return existing.id;
+
+    const value = normalizeCreate({
+      name: domain,
+      domain,
+      ownerId: options.ownerId,
+      source: options.source === "CALENDAR" ? "CALENDAR" : "EMAIL",
+    });
+    try {
+      insertCompany(db, value);
+    } catch (error) {
+      if (isSqliteUniqueConstraint(error, "companies", "domain")) {
+        const raced = activeCompanyForDomain(db, domain);
+        if (raced) return raced.id;
+      }
+      rethrowCompanyDomainConflict(error, domain);
+    }
+    return value.id;
+  })();
 }
 
 export function createCompanyStore(db: Db): CompanyStore {
@@ -514,6 +672,10 @@ export function listCompanies(db: Db, options?: CompanyListOptions): Company[] {
 
 export function updateCompany(db: Db, id: string, input: CompanyUpdateInput): Company {
   return new CompanyStore(db).update(id, input);
+}
+
+export function setPrimaryContact(db: Db, companyId: string, contactId: string | null): Company {
+  return new CompanyStore(db).setPrimaryContact(companyId, contactId);
 }
 
 export function archiveCompany(db: Db, id: string): Company {

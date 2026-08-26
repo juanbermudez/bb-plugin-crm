@@ -103,6 +103,7 @@ import {
   createActivityTaskDispatchStore,
   CRM_ACTIVITY_TASK_DISPATCH_MAX_BATCH,
 } from "./db/activity-task-dispatch.js";
+import { createEnrichmentQueueStore } from "./db/enrichment-queue.js";
 import {
   createSavedViewStore,
   type SavedView as StoredSavedView,
@@ -142,6 +143,7 @@ import {
   MIN_ARCHIVE_RETENTION_DAYS,
   pruneArchivedRecords,
 } from "./db/archive-retention.js";
+import { ACTIVITY_WINDOWS } from "./db/types.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
 
@@ -163,6 +165,7 @@ const DEAL_STAGES_REQUIRING_REASON = new Set<DealStage>([
 
 /** Public, fixed HTTP paths mounted below BB's plugin HTTP prefix. */
 export const CRM_TRACKING_LOADER_PATH = "/tracking/loader.js";
+export const CRM_TRACKING_CONFIG_PATH = "/tracking/config";
 export const CRM_TRACKING_COLLECTOR_PATH = "/tracking/collect";
 export const CRM_TRACKING_HTTP_MAX_BODY_BYTES = 2_000_000;
 export const CRM_AGENT_WEBHOOK_PATH = "/agents/webhook";
@@ -195,52 +198,204 @@ export const CRM_ARCHIVE_RETENTION_SERVICE_NAME = "crm-archive-retention";
 export const CRM_ARCHIVE_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 export const CRM_ARCHIVE_RETENTION_MAX_BATCH = DEFAULT_ARCHIVE_PRUNE_BATCH_SIZE;
 
+/**
+ * The loader is public and contains no site token.  It reads the public,
+ * non-secret site configuration first, then uses the administrator-supplied
+ * data-token only for the collector request.  The small cookie/linker layer is
+ * intentionally anonymous; no CRM identity is inferred in the browser.
+ */
 const TRACKING_LOADER_SOURCE = `(() => {
   const script = document.currentScript;
   if (!(script instanceof HTMLScriptElement)) return;
-  const siteKey = script.dataset.siteKey || new URL(script.src).searchParams.get("siteKey");
+  let scriptUrl;
+  try { scriptUrl = new URL(script.src); } catch { return; }
+  const siteKey = script.dataset.siteKey || scriptUrl.searchParams.get("siteKey");
   const token = script.dataset.token;
   if (!siteKey || !token) return;
-  const endpoint = new URL("./collect", script.src);
+  const endpoint = new URL("./collect", scriptUrl);
   endpoint.searchParams.set("siteKey", siteKey);
+  const configEndpoint = new URL("./config", scriptUrl);
+  configEndpoint.searchParams.set("siteKey", siteKey);
+  const defaults = {
+    siteKey,
+    allowedDomains: [],
+    crossDomain: true,
+    limitToDomains: true,
+    cookieSubdomains: false,
+    secureCookies: true,
+    honourDnt: true,
+    cookieDays: 395,
+    paused: false
+  };
+  const cookieName = "_crm_v";
+  const firstTouchCookie = "_crm_first_touch";
+  const linkerMaxAgeSeconds = 120;
   const path = () => window.location.pathname || "/";
-  const referrer = () => {
-    try {
-      return document.referrer ? new URL(document.referrer).pathname || "/" : null;
-    } catch {
-      return null;
-    }
+  const host = () => window.location.hostname.toLowerCase().replace(/\\.$/, "");
+  const allowed = (config, value) => {
+    if (!config.limitToDomains) return true;
+    return (config.allowedDomains || []).some((domain) => {
+      if (domain.indexOf("*.") === 0) {
+        const suffix = domain.slice(2);
+        return value !== suffix && value.slice(-(suffix.length + 1)) === "." + suffix;
+      }
+      return value === domain;
+    });
   };
-  const send = (eventType, properties, eventKey) => {
-    const body = {
-      siteKey,
-      token,
-      eventType,
-      origin: window.location.origin,
-      path: path(),
-      referrer: referrer(),
-      properties: properties || {},
-      eventKey: eventKey || undefined
+  // Collection limiting and link decoration have different scopes. An
+  // unrestricted collector may accept the current host, but the linker must
+  // still only carry an anonymous visitor id to explicitly configured hosts.
+  const allowedDestination = (config, value) => (config.allowedDomains || []).some((domain) => {
+    if (domain.indexOf("*.") === 0) {
+      const suffix = domain.slice(2);
+      return value !== suffix && value.slice(-(suffix.length + 1)) === "." + suffix;
+    }
+    return value === domain;
+  });
+  const decode = (value) => { try { return decodeURIComponent(value); } catch { return null; } };
+  const readCookie = (name) => {
+    const prefix = name + "=";
+    const part = document.cookie.split("; ").find((value) => value.indexOf(prefix) === 0);
+    return part ? decode(part.slice(prefix.length)) : null;
+  };
+  const domainForCookie = (config) => {
+    if (config.cookieSubdomains) return null;
+    const currentHost = host();
+    for (const domain of config.allowedDomains || []) {
+      if (domain.indexOf("*.") !== 0) continue;
+      const suffix = domain.slice(2);
+      if (currentHost === suffix || currentHost.slice(-(suffix.length + 1)) === "." + suffix) return "." + suffix;
+    }
+    return null;
+  };
+  const writeCookie = (config, name, value) => {
+    let text = name + "=" + encodeURIComponent(value) + "; path=/; samesite=lax";
+    if (config.cookieDays > 0) text += "; max-age=" + Math.floor(config.cookieDays * 86400);
+    if (config.secureCookies && window.location.protocol === "https:") text += "; secure";
+    const domain = domainForCookie(config);
+    if (domain) text += "; domain=" + domain;
+    document.cookie = text;
+  };
+  const mint = () => {
+    try { if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID().replace(/-/g, ""); } catch {}
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  };
+  const parameter = (name) => {
+    try {
+      const value = new URLSearchParams(window.location.search).get(name);
+      return value ? value.slice(0, 128) : null;
+    } catch { return null; }
+  };
+  // Keep attribution values anonymous before they enter cookies or a request.
+  // This mirrors lib/tracking-privacy.ts (email and Luhn-valid card shapes).
+  const EMAIL_VALUE_PATTERN = /[-A-Z0-9.!#$%&'*+\\/?^_{}|~]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+/iu;
+  const PAYMENT_CARD_CANDIDATE_PATTERN = /(?<!\\d)(?:\\d[ -]?){13,19}(?!\\d)/g;
+  const isLuhnValid = (digits) => {
+    if (digits.length < 13 || digits.length > 19 || /^(\\d)\\1+$/u.test(digits)) return false;
+    let sum = 0;
+    let shouldDouble = false;
+    for (let index = digits.length - 1; index >= 0; index -= 1) {
+      let digit = Number(digits[index]);
+      if (shouldDouble) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      shouldDouble = !shouldDouble;
+    }
+    return sum % 10 === 0;
+  };
+  const isSensitiveAttribution = (value) => {
+    if (typeof value !== "string" && typeof value !== "number") return false;
+    const text = String(value).trim();
+    if (!text || EMAIL_VALUE_PATTERN.test(text)) return Boolean(text);
+    return Array.from(text.matchAll(PAYMENT_CARD_CANDIDATE_PATTERN)).some(([candidate]) =>
+      isLuhnValid(candidate.replace(/[ -]/g, ""))
+    );
+  };
+  const safeAttribution = (value) => {
+    if (typeof value !== "string") return null;
+    const text = value.trim().slice(0, 128);
+    return text && !isSensitiveAttribution(text) ? text : null;
+  };
+  const touch = () => {
+    const result = { landing: path() };
+    const source = safeAttribution(parameter("utm_source"));
+    const medium = safeAttribution(parameter("utm_medium"));
+    const campaign = parameter("utm_campaign");
+    if (source) result.source = source;
+    if (medium) result.medium = medium;
+    if (campaign) result.campaign = campaign;
+    if (!result.source && document.referrer) {
+      try {
+        const ref = new URL(document.referrer);
+        if (ref.hostname.toLowerCase() !== host()) {
+          result.source = ref.hostname.slice(0, 128);
+          result.medium = "referral";
+        }
+      } catch {}
+    }
+    return result;
+  };
+  const start = (config) => {
+    config = Object.assign({}, defaults, config || {});
+    if (config.paused || !allowed(config, host())) return;
+    if (config.honourDnt && (navigator.doNotTrack === "1" || window.doNotTrack === "1" || navigator.globalPrivacyControl)) return;
+    const hash = window.location.hash.match(/(?:^|[#&])_crm=([A-Za-z0-9_-]{8,64})\\.(\\d{10})/);
+    let visitorId = readCookie(cookieName);
+    if (config.crossDomain && hash && !visitorId) {
+      const age = Math.floor(Date.now() / 1000) - Number(hash[2]);
+      if (age >= 0 && age <= linkerMaxAgeSeconds) visitorId = hash[1];
+      try { history.replaceState(null, "", window.location.href.replace(/[#&]_crm=[A-Za-z0-9_.-]+/, "")); } catch {}
+    }
+    visitorId = visitorId || mint();
+    writeCookie(config, cookieName, visitorId);
+    const lastTouch = touch();
+    const firstTouch = readCookie(firstTouchCookie) ? (() => { try { return JSON.parse(readCookie(firstTouchCookie)); } catch { return null; } })() : null;
+    if (!firstTouch) writeCookie(config, firstTouchCookie, JSON.stringify(lastTouch));
+    const send = (eventType, properties, eventKey) => {
+      const body = {
+        siteKey,
+        token,
+        eventType,
+        origin: window.location.origin,
+        path: path(),
+        referrer: document.referrer || null,
+        visitorId,
+        source: lastTouch.source || null,
+        medium: lastTouch.medium || null,
+        properties: properties || {},
+        eventKey: eventKey || undefined
+      };
+      void fetch(endpoint.toString(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "omit",
+        keepalive: true
+      }).catch(() => undefined);
     };
-    void fetch(endpoint.toString(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      credentials: "omit",
-      keepalive: true
-    }).catch(() => undefined);
+    const eventKey = () => {
+      try { return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : undefined; } catch { return undefined; }
+    };
+    const decorate = () => {
+      if (!config.crossDomain) return;
+      document.addEventListener("mousedown", (event) => {
+        let element = event.target;
+        while (element && element.tagName !== "A") element = element.parentElement;
+        if (!element || !element.href) return;
+        let target;
+        try { target = new URL(element.href); } catch { return; }
+        if (target.hostname.toLowerCase() === host() || !allowedDestination(config, target.hostname.toLowerCase())) return;
+        target.hash = (target.hash ? target.hash.replace(/[#&]?_crm=[A-Za-z0-9_.-]+/, "") + "&" : "#") + "_crm=" + visitorId + "." + Math.floor(Date.now() / 1000);
+        element.href = target.toString();
+      }, true);
+    };
+    send("PAGE_VIEW", {}, eventKey());
+    window.crmTrack = (properties, key) => send("CUSTOM", properties, key);
+    decorate();
   };
-  const eventKey = () => {
-    try {
-      return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  send("PAGE_VIEW", {}, eventKey());
-  window.crmTrack = (properties, key) => send("CUSTOM", properties, key);
+  void fetch(configEndpoint.toString(), { credentials: "omit" }).then((response) => response.ok ? response.json() : defaults).then(start).catch(() => start(defaults));
 })();`;
 
 const AGENT_SELECTOR_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
@@ -687,6 +842,7 @@ export default async function plugin(bb: BbPluginApi) {
   const currency = createCurrencyStore(db);
   const activities = createActivityStore(db);
   const activityTaskDispatch = createActivityTaskDispatchStore(db);
+  const enrichmentQueue = createEnrichmentQueueStore(db);
   const savedViews = createSavedViewStore(db);
   const customFields = createCustomFieldStore(db);
   const evidenceStore = createEvidenceStore(db);
@@ -782,6 +938,148 @@ export default async function plugin(bb: BbPluginApi) {
     return [...(matches ?? new Set<string>())];
   }
 
+  type FacetEntity = "COMPANY" | "CONTACT" | "DEAL";
+  type FacetScope = {
+    from: string;
+    where: string;
+    params: Record<string, string | number>;
+  };
+
+  /**
+   * Facets intentionally use only the current search and archive scope. This
+   * mirrors the source lists: selecting a facet does not make the remaining
+   * facet counts collapse to the selected subset.
+   */
+  function facetScope(
+    entity: FacetEntity,
+    query: string,
+    archived: boolean,
+  ): FacetScope {
+    const from = entity === "COMPANY"
+      ? "companies AS r"
+      : entity === "CONTACT"
+        ? "contacts AS r LEFT JOIN companies AS company ON company.id = r.company_id"
+        : "deals AS r INNER JOIN companies AS company ON company.id = r.company_id";
+    const clauses = [archived ? "r.archived_at IS NOT NULL" : "r.archived_at IS NULL"];
+    const params: Record<string, string | number> = {};
+    const term = query.trim();
+    if (term) {
+      const searchColumns = entity === "COMPANY"
+        ? ["r.name", "r.domain", "r.email", "r.industry"]
+        : entity === "CONTACT"
+          ? ["r.first_name", "r.last_name", "r.email", "r.title", "company.name"]
+          : ["r.name", "r.description", "r.currency", "company.name"];
+      clauses.push(`(${searchColumns.map((column) => `${column} LIKE @facetSearch COLLATE NOCASE`).join(" OR ")})`);
+      params.facetSearch = `%${term}%`;
+    }
+    return { from, where: clauses.join(" AND "), params };
+  }
+
+  function countFacet(
+    scope: FacetScope,
+    expression: string,
+  ): Record<string, number> {
+    const rows = db
+      .prepare(`
+        SELECT ${expression} AS value, COUNT(*) AS count
+        FROM ${scope.from}
+        WHERE ${scope.where} AND ${expression} IS NOT NULL
+        GROUP BY ${expression}
+      `)
+      .all(scope.params) as Array<{ value: string; count: number }>;
+    return Object.fromEntries(rows.map((row) => [row.value, Number(row.count)]));
+  }
+
+  function activityFacetCounts(scope: FacetScope): Record<string, number> {
+    return Object.fromEntries(
+      ACTIVITY_WINDOWS.map((days) => {
+        const params = {
+          ...scope.params,
+          activityCutoff: new Date(
+            Date.now() - Number(days) * 24 * 60 * 60 * 1_000,
+          ).toISOString(),
+        };
+        const result = db
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM ${scope.from}
+            WHERE ${scope.where} AND r.last_activity_at >= @activityCutoff
+          `)
+          .get(params) as { count: number };
+        return [days, Number(result.count)] as const;
+      }),
+    );
+  }
+
+  function customFieldFacetCounts(
+    entity: FacetEntity,
+    scope: FacetScope,
+  ): Record<string, Record<string, number>> {
+    const definitions = customFields.filterable(entity);
+    if (definitions.length === 0) return {};
+    const recordColumn = entity === "COMPANY"
+      ? "company_id"
+      : entity === "CONTACT"
+        ? "contact_id"
+        : "deal_id";
+    const recordJoin = entity === "COMPANY"
+      ? "companies AS r ON r.id = v.company_id"
+      : entity === "CONTACT"
+        ? "contacts AS r ON r.id = v.contact_id LEFT JOIN companies AS company ON company.id = r.company_id"
+        : "deals AS r ON r.id = v.deal_id INNER JOIN companies AS company ON company.id = r.company_id";
+    const facets: Record<string, Record<string, number>> = {};
+    for (const definition of definitions) {
+      const valueColumn = definition.type === "USER" ? "user_id" : "option_id";
+      const rows = db
+        .prepare(`
+          SELECT v.${valueColumn} AS value, COUNT(*) AS count
+          FROM field_values AS v
+          INNER JOIN ${recordJoin}
+          WHERE v.field_id = @fieldId
+            AND v.${valueColumn} IS NOT NULL
+            AND ${scope.where}
+          GROUP BY v.${valueColumn}
+        `)
+        .all({ ...scope.params, fieldId: definition.id }) as Array<{
+          value: string;
+          count: number;
+        }>;
+      facets[`field:${definition.key}`] = Object.fromEntries(
+        rows.map((row) => [row.value, Number(row.count)]),
+      );
+    }
+    return facets;
+  }
+
+  function closingFacetCounts(scope: FacetScope): Record<string, number> {
+    const now = new Date();
+    const isoDate = (value: Date) => value.toISOString().slice(0, 10);
+    const year = now.getUTCFullYear();
+    const month = now.getUTCMonth();
+    const params = {
+      ...scope.params,
+      today: isoDate(now),
+      thisStart: isoDate(new Date(Date.UTC(year, month, 1))),
+      nextStart: isoDate(new Date(Date.UTC(year, month + 1, 1))),
+      laterStart: isoDate(new Date(Date.UTC(year, month + 2, 1))),
+    };
+    const expressions: Record<string, string> = {
+      overdue: "(r.expected_close_date < @today AND r.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST'))",
+      "this-month": "(r.expected_close_date >= @thisStart AND r.expected_close_date < @nextStart)",
+      "next-month": "(r.expected_close_date >= @nextStart AND r.expected_close_date < @laterStart)",
+      later: "r.expected_close_date >= @laterStart",
+      none: "r.expected_close_date IS NULL",
+    };
+    return Object.fromEntries(
+      Object.entries(expressions).map(([name, expression]) => {
+        const result = db
+          .prepare(`SELECT COUNT(*) AS count FROM ${scope.from} WHERE ${scope.where} AND ${expression}`)
+          .get(params) as { count: number };
+        return [name, Number(result.count)] as const;
+      }),
+    );
+  }
+
   function companyOutput(
     company: StoredCompany,
     includeRelations = false,
@@ -790,28 +1088,81 @@ export default async function plugin(bb: BbPluginApi) {
       .prepare(`
         SELECT
           (SELECT COUNT(*) FROM contacts
-            WHERE company_id = @id AND archived_at IS NULL) AS contactCount,
+            WHERE company_id = @id) AS contactCount,
           (SELECT COUNT(*) FROM deals
-            WHERE company_id = @id AND archived_at IS NULL
+            WHERE company_id = @id
               AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')) AS openDealCount
       `)
       .get({ id: company.id }) as { contactCount: number; openDealCount: number };
-    const relatedContacts = includeRelations
-      ? db.prepare(`
+    const primaryContact = includeRelations && company.primaryContactId !== null
+      ? (db.prepare(`
           SELECT id, first_name AS firstName, last_name AS lastName,
-            email, title, image_url AS imageUrl
+            email, phone, title
           FROM contacts
-          WHERE company_id = ? AND archived_at IS NULL
-          ORDER BY first_name, last_name, id
-        `).all(company.id) as NonNullable<CompanyOutput["contacts"]>
+          WHERE id = ?
+        `).get(company.primaryContactId) as {
+          id: string;
+          firstName: string;
+          lastName: string | null;
+          email: string | null;
+          phone: string | null;
+          title: string | null;
+        } | undefined) ?? null
+      : undefined;
+    const relatedContacts = includeRelations
+      ? (db.prepare(`
+          SELECT id, first_name AS firstName, last_name AS lastName,
+            email, title, image_url AS imageUrl, owner_id AS ownerId,
+            archived_at AS archivedAt
+          FROM contacts
+          WHERE company_id = ?
+          ORDER BY last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ASC, id ASC
+        `).all(company.id) as Array<{
+          id: string;
+          firstName: string;
+          lastName: string | null;
+          email: string | null;
+          title: string | null;
+          imageUrl: string | null;
+          ownerId: string | null;
+          archivedAt: string | null;
+        }>).map((contact) => ({
+          ...contact,
+          owner: contact.ownerId === null ? null : localOwner(contact.ownerId),
+        })) as NonNullable<CompanyOutput["contacts"]>
       : undefined;
     const relatedDeals = includeRelations
-      ? db.prepare(`
-          SELECT id, name
+      ? (db.prepare(`
+          SELECT id, name, stage, amount_cents AS amountCents,
+            base_amount_cents AS baseAmountCents, currency,
+            owner_id AS ownerId, expected_close_date AS expectedCloseDate,
+            archived_at AS archivedAt
           FROM deals
-          WHERE company_id = ? AND archived_at IS NULL
-          ORDER BY created_at DESC, id DESC
-        `).all(company.id) as NonNullable<CompanyOutput["deals"]>
+          WHERE company_id = ?
+          ORDER BY CASE stage
+            WHEN 'DEMO_BOOKED' THEN 0
+            WHEN 'QUALIFIED_TO_BUY' THEN 1
+            WHEN 'UNQUALIFIED_TO_BUY' THEN 2
+            WHEN 'DECISION_MAKER_BOUGHT_IN' THEN 3
+            WHEN 'CONTRACT_SENT' THEN 4
+            WHEN 'CLOSED_WON' THEN 5
+            WHEN 'CLOSED_LOST' THEN 6
+            ELSE 7
+          END ASC, expected_close_date ASC, id ASC
+        `).all(company.id) as Array<{
+          id: string;
+          name: string;
+          stage: DealOutput["stage"];
+          amountCents: number | null;
+          baseAmountCents: number | null;
+          currency: string;
+          ownerId: string | null;
+          expectedCloseDate: string | null;
+          archivedAt: string | null;
+        }>).map((deal) => ({
+          ...deal,
+          owner: deal.ownerId === null ? null : localOwner(deal.ownerId),
+        })) as NonNullable<CompanyOutput["deals"]>
       : undefined;
     const output: CompanyOutput = {
       ...company,
@@ -820,13 +1171,22 @@ export default async function plugin(bb: BbPluginApi) {
       openDealCount: counts.openDealCount,
     };
     return includeRelations
-      ? { ...output, contacts: relatedContacts ?? [], deals: relatedDeals ?? [] }
+      ? {
+          ...output,
+          primaryContact: primaryContact ?? null,
+          contacts: relatedContacts ?? [],
+          deals: relatedDeals ?? [],
+        }
       : output;
   }
 
   function companyListOptions(input: CompanyListInput): CompanyListOptions {
     const sortBy =
-      input.sort === "createdAt" || input.sort === "lastActivity"
+      input.sort === "contacts" ||
+      input.sort === "deals" ||
+      input.sort === "createdAt" ||
+      input.sort === "lastActivity" ||
+      input.sort === "archivedAt"
         ? input.sort
         : input.sort === "domain" || input.sort === "industry" || input.sort === "owner"
           ? input.sort
@@ -838,6 +1198,7 @@ export default async function plugin(bb: BbPluginApi) {
       industries: input.industry,
       sources: input.source,
       enrichmentStatuses: input.enrichment,
+      activity: input.activity,
       recordIds: customFieldRecordIds("COMPANY", input.fields),
       sortBy,
       sortDirection: input.dir,
@@ -846,21 +1207,16 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  function facetCounts(): Record<string, Record<string, number>> {
-    const facets: Record<string, Record<string, number>> = {};
-    const definitions = [
-      ["owner", "COALESCE(owner_id, 'unassigned')"],
-      ["industry", "industry"],
-      ["enrichment", "enrichment_status"],
-      ["source", "source"],
-    ] as const;
-    for (const [name, expression] of definitions) {
-      const rows = db
-        .prepare(`SELECT ${expression} AS value, COUNT(*) AS count FROM companies WHERE archived_at IS NULL AND ${expression} IS NOT NULL GROUP BY ${expression}`)
-        .all() as Array<{ value: string; count: number }>;
-      facets[name] = Object.fromEntries(rows.map((row) => [row.value, row.count]));
-    }
-    return facets;
+  function companyFacetCounts(input: CompanyListInput): Record<string, Record<string, number>> {
+    const scope = facetScope("COMPANY", input.q, input.archived);
+    return {
+      owner: countFacet(scope, "COALESCE(r.owner_id, 'unassigned')"),
+      industry: countFacet(scope, "r.industry"),
+      enrichment: countFacet(scope, "r.enrichment_status"),
+      source: countFacet(scope, "r.source"),
+      activity: activityFacetCounts(scope),
+      ...customFieldFacetCounts("COMPANY", scope),
+    };
   }
 
   function changed(
@@ -1040,13 +1396,20 @@ export default async function plugin(bb: BbPluginApi) {
     });
   }
 
+  function trackingSiteHostAllowed(
+    site: { allowedDomains: readonly string[]; limitToDomains?: boolean },
+    host: string,
+  ): boolean {
+    return site.limitToDomains === false || trackingHostAllowed(host, site.allowedDomains);
+  }
+
   function trackingCorsHeaders(
-    site: { allowedDomains: readonly string[] } | null,
+    site: { allowedDomains: readonly string[]; limitToDomains?: boolean } | null,
     requestOrigin: string | undefined,
   ): Record<string, string> {
     if (!site || requestOrigin === undefined) return {};
     const parsed = trackingHttpOrigin(requestOrigin);
-    if (!parsed || !trackingHostAllowed(parsed.host, site.allowedDomains)) return {};
+    if (!parsed || !trackingSiteHostAllowed(site, parsed.host)) return {};
     return {
       "access-control-allow-origin": parsed.origin,
       vary: "Origin",
@@ -1056,7 +1419,7 @@ export default async function plugin(bb: BbPluginApi) {
   function trackingHttpJson(
     body: Record<string, unknown>,
     status: number,
-    site: { allowedDomains: readonly string[] } | null = null,
+    site: { allowedDomains: readonly string[]; limitToDomains?: boolean } | null = null,
     requestOrigin?: string,
   ): Response {
     const headers = new Headers({
@@ -1087,7 +1450,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   function trackingHttpInvalid(
     status = 400,
-    site: { allowedDomains: readonly string[] } | null = null,
+    site: { allowedDomains: readonly string[]; limitToDomains?: boolean } | null = null,
     requestOrigin?: string,
   ): Response {
     return trackingHttpJson({ ok: false, error: "invalid tracking request" }, status, site, requestOrigin);
@@ -1113,6 +1476,25 @@ export default async function plugin(bb: BbPluginApi) {
     });
   };
 
+  const trackingConfigHandler: PluginHttpHandler = (context) => {
+    if (context.req.query("token") !== undefined) return trackingHttpInvalid(400);
+    const querySiteKey = context.req.query("siteKey");
+    const site = querySiteKey === undefined ? null : trackingSiteForKey(querySiteKey);
+    if (querySiteKey === undefined || site === null) return trackingHttpInvalid(404);
+    const config = {
+      siteKey: site.siteKey,
+      allowedDomains: site.allowedDomains,
+      crossDomain: site.crossDomain ?? true,
+      limitToDomains: site.limitToDomains ?? true,
+      cookieSubdomains: site.cookieSubdomains ?? false,
+      secureCookies: site.secureCookies ?? true,
+      honourDnt: site.honourDnt ?? true,
+      cookieDays: site.cookieDays ?? 395,
+      paused: site.status !== "ACTIVE",
+    };
+    return trackingHttpJson(config, 200, site, context.req.header("origin"));
+  };
+
   const trackingCollectorOptionsHandler: PluginHttpHandler = (context) => {
     const querySiteKey = context.req.query("siteKey");
     const site = querySiteKey === undefined ? null : trackingSiteForKey(querySiteKey);
@@ -1123,7 +1505,7 @@ export default async function plugin(bb: BbPluginApi) {
       querySiteKey === undefined ||
       site === null ||
       parsedOrigin === null ||
-      !trackingHostAllowed(parsedOrigin.host, site.allowedDomains)
+      !trackingSiteHostAllowed(site, parsedOrigin.host)
     ) {
       return trackingHttpInvalid(403);
     }
@@ -1229,7 +1611,7 @@ export default async function plugin(bb: BbPluginApi) {
     const responseSite = sites.find((site) => site !== null) ?? querySite;
     if (parsedOrigin !== null) {
       if (
-        sites.some((site) => site === null || !trackingHostAllowed(parsedOrigin.host, site.allowedDomains)) ||
+        sites.some((site) => site === null || !trackingSiteHostAllowed(site, parsedOrigin.host)) ||
         parsedInputs.some((event) => trackingHttpOrigin(event.origin)?.origin !== parsedOrigin.origin)
       ) {
         return trackingHttpInvalid(403, responseSite, requestOrigin);
@@ -1256,6 +1638,7 @@ export default async function plugin(bb: BbPluginApi) {
   };
 
   bb.http.route("GET", CRM_TRACKING_LOADER_PATH, trackingLoaderHandler, { auth: "none" });
+  bb.http.route("GET", CRM_TRACKING_CONFIG_PATH, trackingConfigHandler, { auth: "none" });
   bb.http.route("OPTIONS", CRM_TRACKING_COLLECTOR_PATH, trackingCollectorOptionsHandler, { auth: "none" });
   bb.http.route("POST", CRM_TRACKING_COLLECTOR_PATH, trackingCollectorHandler, { auth: "none" });
 
@@ -2558,17 +2941,31 @@ export default async function plugin(bb: BbPluginApi) {
             }
           | undefined)
       : undefined;
-    const deals = db.prepare(`
+    const deals = (db.prepare(`
       SELECT deals.id, deals.name, deals.stage, deals.currency,
         deals.amount_cents AS amountCents,
         deals.expected_close_date AS expectedCloseDate,
         deals.owner_id AS ownerId,
-        deal_contacts.role
+        deal_contacts.role,
+        deals.archived_at AS archivedAt
       FROM deals
       INNER JOIN deal_contacts ON deal_contacts.deal_id = deals.id
-      WHERE deal_contacts.contact_id = ? AND deals.archived_at IS NULL
+      WHERE deal_contacts.contact_id = ?
       ORDER BY deals.created_at DESC
-    `).all(contact.id) as NonNullable<ContactOutput["deals"]>;
+    `).all(contact.id) as Array<{
+      id: string;
+      name: string;
+      stage: DealOutput["stage"];
+      currency: string;
+      amountCents: number | null;
+      expectedCloseDate: string | null;
+      ownerId: string | null;
+      role: string | null;
+      archivedAt: string | null;
+    }>).map((deal) => ({
+      ...deal,
+      owner: deal.ownerId === null ? null : localOwner(deal.ownerId),
+    })) as NonNullable<ContactOutput["deals"]>;
     const isPrimaryContact =
       db.prepare("SELECT 1 FROM companies WHERE primary_contact_id = ? LIMIT 1").get(contact.id) !==
       undefined;
@@ -2591,7 +2988,8 @@ export default async function plugin(bb: BbPluginApi) {
       input.sort === "company" ||
       input.sort === "owner" ||
       input.sort === "createdAt" ||
-      input.sort === "lastActivity"
+      input.sort === "lastActivity" ||
+      input.sort === "archivedAt"
         ? input.sort
         : "name";
     return {
@@ -2603,6 +3001,7 @@ export default async function plugin(bb: BbPluginApi) {
       titles: input.title,
       seniorities: input.seniority,
       functions: input.persona,
+      activity: input.activity,
       recordIds: customFieldRecordIds("CONTACT", input.fields),
       sortBy,
       sortDirection: input.dir,
@@ -2611,23 +3010,18 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  function contactFacetCounts(): Record<string, Record<string, number>> {
-    const facets: Record<string, Record<string, number>> = {};
-    const definitions = [
-      ["owner", "COALESCE(owner_id, 'unassigned')"],
-      ["company", "COALESCE(company_id, 'unassigned')"],
-      ["title", "title"],
-      ["seniority", "seniority"],
-      ["persona", "function"],
-      ["source", "source"],
-    ] as const;
-    for (const [name, expression] of definitions) {
-      const rows = db
-        .prepare(`SELECT ${expression} AS value, COUNT(*) AS count FROM contacts WHERE archived_at IS NULL AND ${expression} IS NOT NULL GROUP BY ${expression}`)
-        .all() as Array<{ value: string; count: number }>;
-      facets[name] = Object.fromEntries(rows.map((row) => [row.value, row.count]));
-    }
-    return facets;
+  function contactFacetCounts(input: ContactListInput): Record<string, Record<string, number>> {
+    const scope = facetScope("CONTACT", input.q, input.archived);
+    return {
+      owner: countFacet(scope, "COALESCE(r.owner_id, 'unassigned')"),
+      company: countFacet(scope, "COALESCE(r.company_id, 'unassigned')"),
+      title: countFacet(scope, "r.title"),
+      seniority: countFacet(scope, "r.seniority"),
+      persona: countFacet(scope, "r.function"),
+      source: countFacet(scope, "r.source"),
+      activity: activityFacetCounts(scope),
+      ...customFieldFacetCounts("CONTACT", scope),
+    };
   }
 
   function dealOutput(deal: StoredDeal): DealOutput {
@@ -2647,10 +3041,11 @@ export default async function plugin(bb: BbPluginApi) {
     const relatedContacts = db.prepare(`
       SELECT contacts.id, contacts.first_name AS firstName,
         contacts.last_name AS lastName, contacts.email, contacts.title,
-        contacts.image_url AS imageUrl, deal_contacts.role
+        contacts.image_url AS imageUrl, deal_contacts.role,
+        contacts.archived_at AS archivedAt
       FROM deal_contacts
       INNER JOIN contacts ON contacts.id = deal_contacts.contact_id
-      WHERE deal_contacts.deal_id = ? AND contacts.archived_at IS NULL
+      WHERE deal_contacts.deal_id = ?
       ORDER BY contacts.last_name COLLATE NOCASE, contacts.first_name COLLATE NOCASE
     `).all(deal.id) as DealOutput["contacts"];
     return {
@@ -2666,13 +3061,15 @@ export default async function plugin(bb: BbPluginApi) {
 
   function dealListOptions(input: DealListInput): DealListOptions {
     const sortBy =
+      input.sort === "name" ||
       input.sort === "company" ||
       input.sort === "owner" ||
       input.sort === "stage" ||
       input.sort === "amount" ||
       input.sort === "expectedClose" ||
       input.sort === "createdAt" ||
-      input.sort === "lastActivity"
+      input.sort === "lastActivity" ||
+      input.sort === "archivedAt"
         ? input.sort
         : "createdAt";
     return {
@@ -2690,21 +3087,24 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  function dealFacetCounts(): Record<string, Record<string, number>> {
-    const facets: Record<string, Record<string, number>> = {};
-    const definitions = [
-      ["owner", "owner_id"],
-      ["company", "company_id"],
-      ["stage", "stage"],
-      ["currency", "currency"],
-    ] as const;
-    for (const [name, expression] of definitions) {
-      const rows = db
-        .prepare(`SELECT ${expression} AS value, COUNT(*) AS count FROM deals WHERE archived_at IS NULL GROUP BY ${expression}`)
-        .all() as Array<{ value: string; count: number }>;
-      facets[name] = Object.fromEntries(rows.map((row) => [row.value, row.count]));
-    }
-    return facets;
+  function dealFacetCounts(input: DealListInput): Record<string, Record<string, number>> {
+    const scope = facetScope("DEAL", input.q, input.archived);
+    const stage = countFacet(scope, "r.stage");
+    const open = ["DEMO_BOOKED", "QUALIFIED_TO_BUY", "UNQUALIFIED_TO_BUY", "DECISION_MAKER_BOUGHT_IN", "CONTRACT_SENT"]
+      .reduce((total, value) => total + (stage[value] ?? 0), 0);
+    const closed = ["CLOSED_WON", "CLOSED_LOST"]
+      .reduce((total, value) => total + (stage[value] ?? 0), 0);
+    return {
+      status: { open, closed },
+      owner: countFacet(scope, "COALESCE(r.owner_id, 'unassigned')"),
+      // Keep the plugin's pre-existing deal facets available to callers even
+      // though the source filter bar currently renders owner/stage/closing.
+      company: countFacet(scope, "r.company_id"),
+      stage,
+      currency: countFacet(scope, "r.currency"),
+      closing: closingFacetCounts(scope),
+      ...customFieldFacetCounts("DEAL", scope),
+    };
   }
 
   function activityOutput(activity: StoredActivity): ActivityOutput {
@@ -3265,6 +3665,9 @@ export default async function plugin(bb: BbPluginApi) {
         reportingCurrency,
       };
     },
+    enrichment_queue(input) {
+      return enrichmentQueue.list(input.limit);
+    },
     connections_list(input) {
       return connections.list(input);
     },
@@ -3327,6 +3730,11 @@ export default async function plugin(bb: BbPluginApi) {
     tracking_sites_create(input) {
       const site = trackingSites.create(input);
       changed("tracking-site", "created", site.id);
+      return site;
+    },
+    tracking_sites_update(input) {
+      const site = trackingSites.update(input);
+      changed("tracking-site", "updated", site.id);
       return site;
     },
     tracking_sites_verify({ id, ...input }) {
@@ -3394,6 +3802,9 @@ export default async function plugin(bb: BbPluginApi) {
       changed("tracking-aggregate", "pruned", input.siteId ?? "*");
       changed("tracking-event", "pruned", input.siteId ?? "*");
       return result;
+    },
+    tracking_traffic_sources_list(input) {
+      return tracking.listTrafficSources(input);
     },
     async archive_retention_get() {
       const values = await settings.get();
@@ -3901,7 +4312,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {
         rows: companies.list(options).map((company) => companyOutput(company)),
         total: companies.count(options),
-        facetCounts: facetCounts(),
+        facetCounts: companyFacetCounts(input),
       };
     },
     companies_get({ id }) {
@@ -3921,6 +4332,14 @@ export default async function plugin(bb: BbPluginApi) {
       })();
       changed("company", "updated", company.id);
       return companyOutput(company);
+    },
+    companies_setPrimaryContact({ companyId, contactId }) {
+      const company = companies.setPrimaryContact(companyId, contactId);
+      changed("company", "updated", company.id);
+      return {
+        id: company.id,
+        primaryContactId: company.primaryContactId,
+      };
     },
     companies_archive({ id }) {
       const company = companies.archive(id);
@@ -3975,7 +4394,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {
         rows: contacts.list(options).map((contact) => contactOutput(contact)),
         total: contacts.count(options),
-        facetCounts: contactFacetCounts(),
+        facetCounts: contactFacetCounts(input),
       };
     },
     contacts_get({ id }) {
@@ -4151,7 +4570,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {
         rows,
         total: deals.count(options),
-        facetCounts: dealFacetCounts(),
+        facetCounts: dealFacetCounts(input),
         openValueCents: openValue.value,
         reportingCurrency,
         unconverted: {
@@ -5137,7 +5556,7 @@ export default async function plugin(bb: BbPluginApi) {
       const result = {
         rows: companies.list(options).map((row) => companyOutput(row)),
         total: companies.count(options),
-        facetCounts: facetCounts(),
+        facetCounts: companyFacetCounts(input),
       };
       return {
         exitCode: 0,
@@ -5163,7 +5582,7 @@ export default async function plugin(bb: BbPluginApi) {
       const result = {
         rows: contacts.list(options).map((row) => contactOutput(row)),
         total: contacts.count(options),
-        facetCounts: contactFacetCounts(),
+        facetCounts: contactFacetCounts(input),
       };
       return {
         exitCode: 0,
@@ -5188,7 +5607,7 @@ export default async function plugin(bb: BbPluginApi) {
     const result = {
       rows: deals.list(options).map((row) => dealOutput(row)),
       total: deals.count(options),
-      facetCounts: dealFacetCounts(),
+      facetCounts: dealFacetCounts(input),
       openValueCents: (db.prepare(`
         SELECT COALESCE(SUM(base_amount_cents), 0) AS value
         FROM deals

@@ -7,9 +7,10 @@ into BB. It preserves the source product's table-first company, contact, deal,
 activity, enrichment, integration, and agent workflows. The interface uses BB
 theme tokens and version-matched vendored components.
 
-The core CRM workspace is implemented; source parity and release validation
-remain tracked explicitly. The full parity contract and phased task breakdown
-live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md). Track exact source
+The core CRM workspace is implemented against the locked CRM release baseline;
+the current append-only storage schema is version 10. Source parity and release
+validation remain tracked explicitly. The full parity contract and phased task
+breakdown live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md). Track exact source
 capabilities in [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and checks that
 have actually run in [docs/QA.md](docs/QA.md).
 
@@ -19,17 +20,30 @@ Currently working end to end:
   owner)/Everyone scope,
   pipeline, performance, six-month trend, closing totals, overdue work, and
   recent activity
-- append-only SQLite storage for companies, contacts, deals, activities,
-  saved views, custom fields, agent lifecycles, connection health, and tracking
-  sites/events
+- append-only SQLite storage (schema 10) for companies, contacts, deals,
+  activities, saved views, custom fields, agent lifecycles, connection health,
+  tracking sites/events, and daily traffic-source rollups
 - company, contact, and deal tables with search, pagination, sorting and
   direction, standard/custom facets, saved-view restore/defaults, row
   selection, and bulk owner/company/stage/archive/restore/purge operations
   where applicable, plus persistent column visibility/order, deep-linked wide
-  drawers, nested relationship navigation, primary-contact assignment, and
-  realtime invalidation
+  drawers, nested relationship navigation, primary-contact assignment with a
+  same-company invariant, source-shaped related-record payloads including
+  archived relationships, deterministic favicon URLs, and realtime invalidation
+- contextual facet counts scoped to the current search/archive view (including
+  7/30/90-day activity windows and `field:<key>` custom-field facets),
+  associated-company search for contacts/deals, and company contact/open-deal
+  count sorting; owner sorting remains stable local owner-ID sorting because BB
+  exposes no plugin identity directory
+- work-email auto-company resolution for eligible domains and normalized
+  contact-email suppression tombstones on purge, cleared only by explicit
+  recreation
 - persisted first-open onboarding, CRM header actions, and cross-record global
-  search for companies, contacts, and deals
+  search for companies, contacts, and deals; a keyboard-accessible global New
+  menu for company/contact/deal/agent plus record-attached note/task creation
+- a shell-level enrichment queue for persisted local agent runs, field
+  backfills, due tasks, and scheduled work, with record context and explicit
+  local-status wording rather than provider-delivery claims
 - shared record timelines with note/call/email/meeting/task composition,
   sticky day groups, automatic cursor pagination, readable stage/enrichment
   transitions, task completion/reopen, and opt-in leased dispatch of due tasks
@@ -53,22 +67,28 @@ Currently working end to end:
 - evidence review for proposed facts/work history, immutable background brief
   versions, approval resolution, auditable run retry, and linked-thread cancel
 - connection health/diagnostics boundaries for Google, Microsoft, and Slack;
-  tracking-site operator confirmation, pause/rotate/revoke, a fixed loader and public
-  domain/token/privacy-validated collector, daily rollups, archive/event
-  retention services, and one-time token display
+  tracking-site allowed-domain and cross-domain configuration, cookie controls,
+  privacy rules, observed-page-view verification evidence, pause/rotate/revoke,
+  a fixed loader and public domain/token/privacy-validated collector, daily
+  source/medium rollups with visitor-days, archive/event retention services,
+  and one-time token display
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
 
-The current BB SDK does not provide plugin RBAC/current-user identity or a
-plugin blob API. Contact portraits therefore retain an HTTPS source URL rather
-than copying remote bytes into plugin storage. Provider OAuth, provider
-authorization, and live mail/calendar/Slack sync require externally supplied
-provider/agent-tool credentials and host authorization; none is bundled.
-Connections remain metadata/health boundaries until that flow is configured.
-Agent thread cancellation can remain pending while BB reports a thread as
-stopping. External webhook triggers require a producer, and a public share
-relay is not included. General-purpose API keys are not issued
-because BB exposes no safe current-user/RBAC authority for them. These limits
-and the remaining source gaps are recorded in
+The current BB SDK does not provide plugin RBAC/current-user identity, a plugin
+identity directory, or a plugin blob API. CRM owner facets and sorting therefore
+use stable installation-local owner IDs; roles, per-user authorization, and
+general-purpose API keys are not issued. Contact portraits and company favicons
+retain validated HTTPS source URLs rather than copying remote bytes into plugin
+storage. Provider OAuth, provider authorization, and live mail/calendar/Slack
+sync require externally supplied provider/agent-tool credentials and host
+authorization; none is bundled, so those connections remain metadata/health
+boundaries until configured. Agent thread cancellation can remain pending while
+BB reports a thread as stopping. External webhook triggers require a producer,
+and a public builder-share relay plus unrelated global BB thread-panel/mention
+surfaces are not included. Tracking reports anonymous site/path/source/medium
+aggregates and visitor-days; without a verified identity contract it does not
+attribute anonymous visitors to CRM records or claim source-level Website
+Activity. These limits and the remaining source boundaries are recorded in
 [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md).
 
 ## CLI

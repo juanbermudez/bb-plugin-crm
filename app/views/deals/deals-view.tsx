@@ -77,6 +77,7 @@ import {
 const PAGE_SIZE = 25;
 
 const DEAL_SORT_OPTIONS: readonly ListSortOption[] = [
+  { value: "name", label: "Deal" },
   { value: "createdAt", label: "Created" },
   { value: "company", label: "Company" },
   { value: "stage", label: "Stage" },
@@ -84,6 +85,7 @@ const DEAL_SORT_OPTIONS: readonly ListSortOption[] = [
   { value: "amount", label: "Amount" },
   { value: "expectedClose", label: "Close date" },
   { value: "lastActivity", label: "Last activity" },
+  { value: "archivedAt", label: "Archived" },
 ];
 
 const DEAL_STANDARD_FILTERS = ["owner", "stage", "closing"] as const;
@@ -155,6 +157,19 @@ const EMPTY_LIST: DealListOutput = {
   reportingCurrency: "USD",
   unconverted: { count: 0, currencies: [] },
 };
+
+function ArchivedRelationshipBadge({
+  archivedAt,
+}: {
+  archivedAt: string | null | undefined;
+}) {
+  if (!archivedAt) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      Archived
+    </span>
+  );
+}
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -1025,10 +1040,12 @@ function DealContacts({
   deal,
   rpc,
   onChanged,
+  onOpenContact,
 }: {
   deal: Deal;
   rpc: DealsRpcClient;
   onChanged: () => void;
+  onOpenContact?: (id: string) => void;
 }) {
   const contacts = deal.contacts ?? [];
   const [addOpen, setAddOpen] = useState(false);
@@ -1225,7 +1242,23 @@ function DealContacts({
             return (
               <li key={contact.id} className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,0.8fr)_auto] sm:items-center">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{name}</p>
+                  {onOpenContact ? (
+                    <button
+                      type="button"
+                      className="truncate rounded text-left text-sm font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      onClick={() => onOpenContact(contact.id)}
+                    >
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="truncate">{name}</span>
+                        <ArchivedRelationshipBadge archivedAt={contact.archivedAt} />
+                      </span>
+                    </button>
+                  ) : (
+                    <p className="flex min-w-0 items-center gap-2 truncate text-sm font-medium">
+                      <span className="truncate">{name}</span>
+                      <ArchivedRelationshipBadge archivedAt={contact.archivedAt} />
+                    </p>
+                  )}
                   <p className="truncate text-xs text-muted-foreground">
                     {[contact.title, contact.email].filter(Boolean).join(" · ") || contact.id}
                   </p>
@@ -1279,8 +1312,14 @@ export interface DealsViewProps {
   rpcClient?: DealsRpcClient;
   /** Record selected by the BB panel sub-path or browser history. */
   initialRecordId?: string | null;
+  /** Open the create-deal drawer from a routed header action. */
+  initialCreate?: boolean;
   /** Reflects record drawer changes back into the BB panel sub-path. */
   onRecordIdChange?: (id: string | null) => void;
+  /** Opens a linked company or contact through the owning BB route. */
+  onOpenRelatedRecord?: (kind: "company" | "contact", id: string) => void;
+  /** Clears a routed create action after the drawer closes or submits. */
+  onCreateChange?: (open: boolean) => void;
   /** Reflects the active record drawer tab back into the BB panel sub-path. */
   initialTab?: string | null;
   onTabChange?: (tab: DealTab, recordId: string) => void;
@@ -1289,7 +1328,10 @@ export interface DealsViewProps {
 export function DealsView({
   rpcClient,
   initialRecordId = null,
+  initialCreate = false,
   onRecordIdChange,
+  onOpenRelatedRecord,
+  onCreateChange,
   initialTab,
   onTabChange,
 }: DealsViewProps) {
@@ -1332,7 +1374,7 @@ export function DealsView({
   const [stageBusyId, setStageBusyId] = useState<string | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [bulkConfirm, setBulkConfirm] = useState<"archive" | "purge" | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(initialCreate);
   const [createValue, setCreateValue] = useState<DealCreateFormValue>({
     name: "",
     companyId: "",
@@ -1466,6 +1508,11 @@ export function DealsView({
   }, [initialRecordId]);
 
   useEffect(() => {
+    setCreateError(null);
+    setCreateOpen(initialCreate);
+  }, [initialCreate]);
+
+  useEffect(() => {
     setRecordTab(dealTabFromRoute(initialTab));
   }, [initialTab, recordId]);
 
@@ -1498,6 +1545,12 @@ export function DealsView({
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
+
+  const closeCreate = useCallback(() => {
+    setCreateOpen(false);
+    setCreateError(null);
+    onCreateChange?.(false);
+  }, [onCreateChange]);
 
   const runRecordUpdate = useCallback(
     async (data: DealUpdateData, optimistic: Partial<Deal>) => {
@@ -1729,7 +1782,7 @@ export function DealsView({
           currency: createValue.currency,
           expectedCloseDate: createValue.expectedCloseDate || null,
         });
-        setCreateOpen(false);
+        closeCreate();
         setCreateValue({
           name: "",
           companyId: "",
@@ -1747,7 +1800,7 @@ export function DealsView({
         setCreateSaving(false);
       }
     },
-    [createValue, rpc],
+    [closeCreate, createValue, rpc],
   );
 
   const openRecord = useCallback(
@@ -1942,7 +1995,7 @@ export function DealsView({
                 setQuery("");
                 setPage(1);
               }}
-              placeholder="Search deals…"
+              placeholder="Search deals by name or company…"
               containerClassName="w-full sm:w-80"
             />
             <ColumnPreferences preference={columnPreferences} />
@@ -2446,6 +2499,11 @@ export function DealsView({
               <DealContacts
                 deal={record}
                 rpc={rpc}
+                onOpenContact={
+                  onOpenRelatedRecord === undefined
+                    ? undefined
+                    : (id) => onOpenRelatedRecord("contact", id)
+                }
                 onChanged={() => {
                   setRecordRefreshKey((value) => value + 1);
                   setRefreshKey((value) => value + 1);
@@ -2472,8 +2530,12 @@ export function DealsView({
       <RecordDrawer
         open={createOpen}
         onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) setCreateError(null);
+          if (open) {
+            setCreateError(null);
+            setCreateOpen(true);
+          } else {
+            closeCreate();
+          }
         }}
         title="New deal"
         description="Add a pipeline opportunity with explicit source-money semantics."
@@ -2483,7 +2545,7 @@ export function DealsView({
               type="button"
               variant="outline"
               disabled={createSaving}
-              onClick={() => setCreateOpen(false)}
+              onClick={closeCreate}
             >
               Cancel
             </Button>

@@ -116,7 +116,13 @@ function makeRpc(
 describe("DealsView", () => {
   it("loads status-filtered deal rows and opens the related contacts tab", async () => {
     const rpc = makeRpc();
-    render(<DealsView rpcClient={rpc} />);
+    const onOpenRelatedRecord = vi.fn();
+    render(
+      <DealsView
+        rpcClient={rpc}
+        onOpenRelatedRecord={onOpenRelatedRecord}
+      />,
+    );
 
     expect(await screen.findByText("Acme Expansion")).toBeDefined();
     expect(screen.getByRole("columnheader", { name: "Deal" })).toBeDefined();
@@ -160,7 +166,37 @@ describe("DealsView", () => {
     expect(screen.getByRole("list", { name: "Deal contacts" })).toBeDefined();
     expect(screen.getByText("Ada Lovelace")).toBeDefined();
     expect(screen.getByText("Champion")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Ada Lovelace" }));
+    expect(onOpenRelatedRecord).toHaveBeenCalledWith("contact", "con_ada");
     expect(rpc.call).toHaveBeenCalledWith("deals_get", { id: "deal_acme_expand" });
+  });
+
+  it("marks archived related contacts while keeping them visible", async () => {
+    const relatedDeal: Deal = {
+      ...deal,
+      contacts: [{
+        id: "con_archived",
+        firstName: "Archived",
+        lastName: "Contact",
+        email: "archived@example.com",
+        title: "Former buyer",
+        imageUrl: null,
+        role: null,
+        archivedAt: "2026-08-25T00:00:00.000Z",
+      }],
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "deals_list") return listResult([relatedDeal]);
+      if (method === "deals_get") return relatedDeal;
+      return relatedDeal;
+    });
+    render(<DealsView rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Acme Expansion/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Acme Expansion" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Contacts" }));
+    const contacts = within(drawer).getByRole("list", { name: "Deal contacts" });
+    expect(within(contacts).getByText("Archived")).toBeDefined();
   });
 
   it("restores a deep-linked drawer tab and reports tab changes", async () => {
@@ -351,6 +387,12 @@ describe("DealsView", () => {
     );
   });
 
+  it("opens the create drawer for a routed header action", async () => {
+    render(<DealsView rpcClient={makeRpc()} initialCreate />);
+
+    expect(await screen.findByRole("dialog", { name: "New deal" })).toBeDefined();
+  });
+
   it("sets a stage with a lost reason and archives/restores a deep-linked deal", async () => {
     let current = deal;
     const onRecordIdChange = vi.fn();
@@ -390,16 +432,16 @@ describe("DealsView", () => {
         onRecordIdChange={onRecordIdChange}
       />,
     );
-    await screen.findByRole("dialog", { name: "Acme Expansion" });
+    const drawer = await screen.findByRole("dialog", { name: "Acme Expansion" });
 
-    fireEvent.change(screen.getByLabelText("Stage"), {
+    fireEvent.change(within(drawer).getByLabelText("Stage"), {
       target: { value: "UNQUALIFIED_TO_BUY" },
     });
-    expect(screen.getByLabelText(/Qualification reason/).hasAttribute("required")).toBe(true);
-    fireEvent.change(screen.getByLabelText(/Qualification reason/), {
+    expect(within(drawer).getByLabelText(/Qualification reason/).hasAttribute("required")).toBe(true);
+    fireEvent.change(within(drawer).getByLabelText(/Qualification reason/), {
       target: { value: "No current need" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save stage" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Save stage" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
         id: "deal_acme_expand",
@@ -409,22 +451,22 @@ describe("DealsView", () => {
     );
     await waitFor(() =>
       expect(
-        (screen.getByRole("button", { name: "Save stage" }) as HTMLButtonElement)
+        (within(drawer).getByRole("button", { name: "Save stage" }) as HTMLButtonElement)
           .disabled,
       ).toBe(false),
     );
 
-    fireEvent.change(screen.getByLabelText("Stage"), {
+    fireEvent.change(within(drawer).getByLabelText("Stage"), {
       target: { value: "CLOSED_LOST" },
     });
-    expect(screen.getByLabelText(/Close reason/).hasAttribute("required")).toBe(true);
+    expect(within(drawer).getByLabelText(/Close reason/).hasAttribute("required")).toBe(true);
     expect(
-      (screen.getByRole("button", { name: "Save stage" }) as HTMLButtonElement).disabled,
+      (within(drawer).getByRole("button", { name: "Save stage" }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    fireEvent.change(screen.getByLabelText(/Close reason/), {
+    fireEvent.change(within(drawer).getByLabelText(/Close reason/), {
       target: { value: "Budget" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save stage" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Save stage" }));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith("deals_setStage", {
         id: "deal_acme_expand",
@@ -436,12 +478,12 @@ describe("DealsView", () => {
       expect(screen.getAllByText("Closed lost").length).toBeGreaterThan(0),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Archive deal" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Archive deal" }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Restore deal" })).toBeDefined(),
+      expect(within(drawer).getByRole("button", { name: "Restore deal" })).toBeDefined(),
     );
     expect(rpc.call).toHaveBeenCalledWith("deals_archive", { id: "deal_acme_expand" });
-    fireEvent.click(screen.getByRole("button", { name: "Close record drawer" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Close record drawer" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Acme Expansion" })).toBeNull(),
     );
@@ -453,10 +495,10 @@ describe("DealsView", () => {
       ),
     );
     fireEvent.click(screen.getByRole("row", { name: /Open Acme Expansion/ }));
-    await screen.findByRole("dialog", { name: "Acme Expansion" });
-    fireEvent.click(screen.getByRole("button", { name: "Restore deal" }));
+    const restoredDrawer = await screen.findByRole("dialog", { name: "Acme Expansion" });
+    fireEvent.click(within(restoredDrawer).getByRole("button", { name: "Restore deal" }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Archive deal" })).toBeDefined(),
+      expect(within(restoredDrawer).getByRole("button", { name: "Archive deal" })).toBeDefined(),
     );
     expect(rpc.call).toHaveBeenCalledWith("deals_restore", { id: "deal_acme_expand" });
     expect(onRecordIdChange).toHaveBeenCalledWith("deal_acme_expand");

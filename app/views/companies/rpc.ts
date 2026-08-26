@@ -5,6 +5,7 @@ import type {
   CompanyCreateInput,
   CompanyListInput,
   CompanyListOutput,
+  CompanySetPrimaryContactInput,
   CompanyUpdateInput,
   Contact,
   ContactCreateInput,
@@ -24,6 +25,10 @@ export interface CompaniesRpcClient {
   call(method: "companies_get", input: { id: Id }): Promise<Company>;
   call(method: "companies_create", input: CompanyCreateInput): Promise<Company>;
   call(method: "companies_update", input: CompanyUpdateInput): Promise<Company>;
+  call(
+    method: "companies_setPrimaryContact",
+    input: CompanySetPrimaryContactInput,
+  ): Promise<{ id: Id; primaryContactId: Id | null }>;
   call(method: "companies_archive", input: { id: Id }): Promise<Company>;
   call(method: "companies_restore", input: { id: Id }): Promise<Company>;
   call(method: "companies_purge", input: { id: Id }): Promise<Company>;

@@ -30,6 +30,12 @@ export interface ListFacet {
 
 export type ListFilters = Record<string, string[]>;
 
+export const ACTIVITY_FACET_OPTIONS: readonly ListFacetOption[] = [
+  { value: "7", label: "Active within 7 days" },
+  { value: "30", label: "Active within 30 days" },
+  { value: "90", label: "Active within 90 days" },
+];
+
 const SELECT_CLASS =
   "flex h-9 min-w-0 rounded-md border border-input bg-background px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -321,6 +327,24 @@ export function facetOptionsFromCounts(
     }));
 }
 
+export function activityFacetOptions(
+  facetCounts: Record<string, Record<string, number>> | undefined,
+  selected: readonly string[] = [],
+): ListFacetOption[] {
+  const counts = facetCounts?.activity ?? {};
+  const values = new Set(
+    ACTIVITY_FACET_OPTIONS
+      .filter((option) => (counts[option.value] ?? 0) > 0)
+      .map((option) => option.value),
+  );
+  for (const value of selected) values.add(value);
+  return [...values].map((value) => ({
+    value,
+    label: ACTIVITY_FACET_OPTIONS.find((option) => option.value === value)?.label ?? value,
+    count: counts[value],
+  }));
+}
+
 /** Turns `fields_filters` definitions into facets while retaining saved values. */
 export function customFieldFacets(
   definitions: readonly FieldDefinition[],
@@ -335,7 +359,7 @@ export function customFieldFacets(
         if (option.archived || option.archivedAt) continue;
         optionsByValue.set(option.id, { value: option.id, label: option.label });
       }
-      const counts = facetCounts?.[definition.key] ?? {};
+      const counts = facetCounts?.[`field:${definition.key}`] ?? {};
       for (const value of Object.keys(counts)) {
         const existing = optionsByValue.get(value);
         optionsByValue.set(value, {

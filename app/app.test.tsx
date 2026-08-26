@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent } from "@testing-library/react";
+import { fireEvent, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
@@ -57,6 +57,29 @@ describe("CRM nav panel", () => {
             overdueTasks: [],
             recentActivity: [],
           }),
+          enrichment_queue: () => ({
+            rows: [{
+              id: "run_shell_queue",
+              state: "running",
+              line: "Research running in Queue researcher",
+              createdAt: "2026-08-26T12:00:00.000Z",
+              startedAt: "2026-08-26T12:01:00.000Z",
+              finishedAt: null,
+              subject: {
+                kind: "company",
+                id: "company_shell_queue",
+                name: "Shell Queue Systems",
+                iconUrl: null,
+                iconDarkUrl: null,
+                iconTone: null,
+              },
+              agentName: "Queue researcher",
+              errorMessage: null,
+            }],
+            total: 1,
+            scheduled: [],
+            scheduledTotal: 0,
+          }),
         },
       },
     );
@@ -64,6 +87,14 @@ describe("CRM nav panel", () => {
     await slot.findByText("Open pipeline");
     expect(slot.getByText("Your dashboard is clear")).toBeDefined();
     expect(slot.getByText(/0 open deals · EUR/)).toBeDefined();
+    expect(slot.getByRole("button", { name: /Enrichment queue/ })).toBeDefined();
+    fireEvent.click(slot.getByRole("button", { name: /Enrichment queue/ }));
+    fireEvent.click(await slot.findByRole("button", { name: "Open company Shell Queue Systems" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "crm",
+      options: { subPath: "companies/company_shell_queue" },
+    });
     expect(slot.inspection.rpcCalls).toContainEqual({
       method: "dashboard_summary",
       input: { scope: "me" },
@@ -74,6 +105,30 @@ describe("CRM nav panel", () => {
       method: "toPluginPanel",
       path: "crm",
       options: { subPath: "companies" },
+    });
+
+    fireEvent.click(slot.getByRole("button", { name: "New" }));
+    const createMenu = slot.getByRole("menu", { name: "Create CRM record" });
+    const menuItems = within(createMenu).getAllByRole("menuitem");
+    expect(menuItems).toHaveLength(6);
+    expect(document.activeElement).toBe(menuItems[0]);
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(menuItems[1]);
+    expect(within(createMenu).getByRole("menuitem", { name: "New note" })).toBeDefined();
+    expect(within(createMenu).getByRole("menuitem", { name: "New task" })).toBeDefined();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(slot.queryByRole("menu", { name: "Create CRM record" })).toBeNull();
+    expect(document.activeElement).toBe(slot.getByRole("button", { name: "New" }));
+    fireEvent.click(slot.getByRole("button", { name: "New" }));
+    fireEvent.mouseDown(document.body);
+    expect(slot.queryByRole("menu", { name: "Create CRM record" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "New" }));
+    const reopenedMenu = slot.getByRole("menu", { name: "Create CRM record" });
+    fireEvent.click(within(reopenedMenu).getByRole("menuitem", { name: "New company" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "crm",
+      options: { subPath: "companies?create=company" },
     });
 
     slot.lifecycle.unmount();

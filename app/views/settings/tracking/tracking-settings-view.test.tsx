@@ -58,6 +58,7 @@ const aggregate: TrackingAggregate = {
   source: "newsletter",
   eventCount: 4,
   uniqueVisitors: 3,
+  visitorDays: 3,
   firstSeenAt: "2026-08-25T10:00:00.000Z",
   lastSeenAt: "2026-08-25T11:00:00.000Z",
   rolledUpAt: "2026-08-25T12:00:00.000Z",
@@ -156,5 +157,21 @@ describe("TrackingSettingsView", () => {
     });
     expect(await screen.findByText(/Rolled up 4 events/)).toBeDefined();
     expect(await screen.findByText(/Pruned 1 events/)).toBeDefined();
+  });
+
+  it("does not allow domain limiting to be enabled without an allowlist", async () => {
+    const emptySite = { ...site, id: "site_unrestricted", name: "Unrestricted site", allowedDomains: [], limitToDomains: false };
+    const rpc = makeRpc(async (method) => {
+      if (method === "tracking_sites_list") return [emptySite];
+      return emptySite;
+    });
+    render(<TrackingSettingsView rpcClient={rpc} />);
+    await screen.findByText("Unrestricted site");
+
+    fireEvent.click(screen.getByText("Install snippet and tracking rules"));
+    const toggle = screen.getByRole("checkbox", { name: "Limit tracking to the domains below" });
+    expect((toggle as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText("Add an allowed domain before enabling domain-limited tracking.")).toBeDefined();
+    expect(rpc.call).not.toHaveBeenCalledWith("tracking_sites_update", expect.objectContaining({ limitToDomains: true }));
   });
 });

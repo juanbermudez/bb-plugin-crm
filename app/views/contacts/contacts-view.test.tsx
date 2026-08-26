@@ -133,7 +133,13 @@ describe("ContactsView", () => {
 
   it("loads a searchable contact table and opens the related deals tab", async () => {
     const rpc = makeRpc();
-    render(<ContactsView rpcClient={rpc} />);
+    const onOpenRelatedRecord = vi.fn();
+    render(
+      <ContactsView
+        rpcClient={rpc}
+        onOpenRelatedRecord={onOpenRelatedRecord}
+      />,
+    );
 
     expect(await screen.findByText("Ada Lovelace")).toBeDefined();
     expect(screen.getByRole("columnheader", { name: "Contact" })).toBeDefined();
@@ -170,7 +176,66 @@ describe("ContactsView", () => {
     expect(screen.getByRole("list", { name: "Contact deals" })).toBeDefined();
     expect(screen.getByText("Expansion")).toBeDefined();
     expect(screen.getByText("deal_1")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Expansion" }));
+    expect(onOpenRelatedRecord).toHaveBeenCalledWith("deal", "deal_1");
     expect(rpc.call).toHaveBeenCalledWith("contacts_get", { id: "con_ada" });
+  });
+
+  it("renders the computed We Know Them relationship summary", async () => {
+    const relatedContact: Contact = {
+      ...contact,
+      relationship: {
+        emails: 3,
+        threads: 2,
+        lastReplyAt: "2026-08-20T12:00:00.000Z",
+        meetings: 1,
+        nextMeeting: {
+          title: "Planning session",
+          startsAt: "2099-01-01T12:00:00.000Z",
+        },
+        colleagues: [
+          { id: "con_grace", name: "Grace Hopper", title: "Compiler Engineer" },
+        ],
+      },
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "contacts_list") return listResult([relatedContact]);
+      if (method === "contacts_get") return relatedContact;
+      return relatedContact;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Ada Lovelace/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    const summary = within(drawer).getByRole("region", { name: "We Know Them" });
+    expect(within(summary).getByText("3")).toBeDefined();
+    expect(within(summary).getByText("2")).toBeDefined();
+    expect(within(summary).getByText("Planning session · Jan 1, 2099")).toBeDefined();
+    expect(within(summary).getByText("Grace Hopper")).toBeDefined();
+    expect(within(summary).getByText("Compiler Engineer")).toBeDefined();
+  });
+
+  it("marks archived related deals while keeping them visible", async () => {
+    const relatedContact: Contact = {
+      ...contact,
+      deals: [{
+        id: "deal_archived",
+        name: "Archived expansion",
+        archivedAt: "2026-08-25T00:00:00.000Z",
+      }],
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "contacts_list") return listResult([relatedContact]);
+      if (method === "contacts_get") return relatedContact;
+      return relatedContact;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Ada Lovelace/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
+    const deals = within(drawer).getByRole("list", { name: "Contact deals" });
+    expect(within(deals).getByText("Archived")).toBeDefined();
   });
 
   it("restores a deep-linked drawer tab and reports tab changes", async () => {
@@ -396,6 +461,40 @@ describe("ContactsView", () => {
         ids: ["con_ada"],
         companyId: "cmp_beta",
       }),
+    );
+  });
+
+  it("opens the create drawer for a routed header action", async () => {
+    render(<ContactsView rpcClient={makeRpc()} initialCreate />);
+
+    expect(await screen.findByRole("dialog", { name: "New contact" })).toBeDefined();
+  });
+
+  it("reports skipped and failed enrichment counts from the bulk RPC", async () => {
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "contacts_list") return listResult();
+      if (method === "contacts_bulkEnrich") {
+        expect(input).toEqual({ ids: [contact.id] });
+        return {
+          requested: 1,
+          succeeded: 0,
+          skipped: 1,
+          failed: 0,
+          message: "No research agent is configured.",
+        };
+      }
+      return contact;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    await screen.findByText("Ada Lovelace");
+    fireEvent.click(screen.getByLabelText("Select Ada Lovelace"));
+    fireEvent.click(screen.getByRole("button", { name: "Enrich selected" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Contact enrichment: requested 1/).textContent).toContain(
+        "Contact enrichment: requested 1 · succeeded 0 · skipped 1 · failed 0 · No research agent is configured.",
+      ),
     );
   });
 

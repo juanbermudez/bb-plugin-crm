@@ -2,9 +2,9 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 8;
+export const CRM_SCHEMA_VERSION = 10;
 
-const MIGRATIONS: string[] = [
+export const CRM_SCHEMA_MIGRATIONS: string[] = [
   `
     CREATE TABLE IF NOT EXISTS crm_metadata (
       key TEXT PRIMARY KEY,
@@ -1150,9 +1150,86 @@ const MIGRATIONS: string[] = [
       value = excluded.value,
       updated_at = excluded.updated_at;
   `,
+  `
+    -- Purging a contact leaves a durable, normalized tombstone so provider
+    -- matching can ignore that address until an explicit write recreates it.
+    CREATE TABLE IF NOT EXISTS suppressed_contacts (
+      email TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
+      reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS suppressed_contacts_created_idx
+      ON suppressed_contacts(created_at);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '9', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    -- Tracking configuration is site-scoped.  The original tracking tables
+    -- predate the cookie/rule controls and source rollups, so keep the
+    -- migration additive for already-installed plugin databases.
+    ALTER TABLE tracking_sites ADD COLUMN cross_domain INTEGER NOT NULL DEFAULT 1
+      CHECK (cross_domain IN (0, 1));
+    ALTER TABLE tracking_sites ADD COLUMN limit_to_domains INTEGER NOT NULL DEFAULT 1
+      CHECK (limit_to_domains IN (0, 1));
+    ALTER TABLE tracking_sites ADD COLUMN cookie_subdomains INTEGER NOT NULL DEFAULT 0
+      CHECK (cookie_subdomains IN (0, 1));
+    ALTER TABLE tracking_sites ADD COLUMN secure_cookies INTEGER NOT NULL DEFAULT 1
+      CHECK (secure_cookies IN (0, 1));
+    ALTER TABLE tracking_sites ADD COLUMN honour_dnt INTEGER NOT NULL DEFAULT 1
+      CHECK (honour_dnt IN (0, 1));
+    ALTER TABLE tracking_sites ADD COLUMN cookie_days INTEGER NOT NULL DEFAULT 395
+      CHECK (cookie_days BETWEEN 0 AND 400);
+    ALTER TABLE tracking_sites ADD COLUMN verification_event_id TEXT
+      REFERENCES tracking_events(id) ON DELETE SET NULL;
+    ALTER TABLE tracking_sites ADD COLUMN verification_domain TEXT;
+
+    ALTER TABLE tracking_events ADD COLUMN medium TEXT
+      CHECK (medium IS NULL OR length(medium) BETWEEN 1 AND 128);
+
+    CREATE TABLE IF NOT EXISTS tracking_daily_traffic_sources (
+      site_id TEXT NOT NULL REFERENCES tracking_sites(id) ON DELETE CASCADE,
+      day TEXT NOT NULL CHECK (length(day) = 10),
+      source TEXT NOT NULL CHECK (length(source) BETWEEN 1 AND 128),
+      medium TEXT NOT NULL DEFAULT '',
+      event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+      unique_visitors INTEGER NOT NULL DEFAULT 0 CHECK (unique_visitors >= 0),
+      first_seen_at TEXT,
+      last_seen_at TEXT,
+      rolled_up_at TEXT NOT NULL,
+      PRIMARY KEY (site_id, day, source, medium)
+    );
+
+    CREATE INDEX IF NOT EXISTS tracking_daily_traffic_sources_site_day_idx
+      ON tracking_daily_traffic_sources(site_id, day DESC, source, medium);
+
+    CREATE TRIGGER IF NOT EXISTS tracking_verification_evidence_deleted
+    BEFORE DELETE ON tracking_events
+    WHEN EXISTS (
+      SELECT 1 FROM tracking_sites
+      WHERE verification_event_id = OLD.id
+    )
+    BEGIN
+      UPDATE tracking_sites
+      SET verification_status = 'PENDING', verified_at = NULL,
+          verification_event_id = NULL, verification_domain = NULL,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE verification_event_id = OLD.id;
+    END;
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '10', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
 ];
 
 export function initializeSchema(bb: BbPluginApi, db: PluginDatabase): void {
   db.pragma("foreign_keys = ON");
-  bb.storage.migrate(db, MIGRATIONS);
+  bb.storage.migrate(db, CRM_SCHEMA_MIGRATIONS);
 }

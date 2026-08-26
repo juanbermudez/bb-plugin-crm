@@ -27,6 +27,7 @@ describe("archive retention", () => {
       const oldContact = contacts.create({
         id: "contact-old",
         firstName: "Old",
+        email: "old@retention.example",
         companyId: oldCompany.id,
       });
       const oldDeal = deals.create({
@@ -84,6 +85,9 @@ describe("archive retention", () => {
         batchSize: 1,
       });
       expect(second).toMatchObject({ contactsDeleted: 1, totalDeleted: 1, hasMore: true });
+      expect(db.prepare("SELECT reason FROM suppressed_contacts WHERE email = ?").pluck().get("old@retention.example")).toBe(
+        "Deleted from the CRM (Old)",
+      );
 
       const third = pruneArchivedRecords(db, {
         retentionDays: 30,

@@ -5,6 +5,7 @@ describe("CRM RPC contract", () => {
   it("uses deterministic flat method names for all implemented surfaces", () => {
     expect(Object.keys(rpcContract)).toEqual([
       "status",
+      "enrichment_queue",
       "connections_list",
       "connections_get",
       "connections_health",
@@ -18,6 +19,7 @@ describe("CRM RPC contract", () => {
       "tracking_sites_list",
       "tracking_sites_get",
       "tracking_sites_create",
+      "tracking_sites_update",
       "tracking_sites_verify",
       "tracking_sites_pause",
       "tracking_sites_rotate",
@@ -32,12 +34,14 @@ describe("CRM RPC contract", () => {
       "tracking_aggregates_list",
       "tracking_aggregates_rollup",
       "tracking_aggregates_prune",
+      "tracking_traffic_sources_list",
       "archive_retention_get",
       "archive_retention_prune",
       "companies_list",
       "companies_get",
       "companies_create",
       "companies_update",
+      "companies_setPrimaryContact",
       "companies_archive",
       "companies_restore",
       "companies_purge",
@@ -273,6 +277,19 @@ describe("CRM RPC contract", () => {
       rpcContract.companies_list.input.safeParse({
         page: 1,
         pageSize: 25,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.companies_setPrimaryContact.input.safeParse({
+        companyId: "company-1",
+        contactId: "contact-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.companies_setPrimaryContact.input.safeParse({
+        companyId: "company-1",
+        contactId: "contact-1",
         unexpected: true,
       }).success,
     ).toBe(false);

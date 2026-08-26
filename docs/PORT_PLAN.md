@@ -20,19 +20,25 @@ Phases 0–6 core records, responsive BB-native views, inline editing,
 saved/dynamic columns, unified activity, enrichment, CRM-event/webhook
 automation, leased due-task dispatch, clarification prompts, bounded BB
 project attachments, agent definition/run lifecycle, and the BB-native
-natural-language builder conversation surface are implemented. Public builder
-sharing and unrelated global BB thread-panel/mention surfaces are not claimed.
-Phase 7 is implemented for
-privacy-safe tracking plus
-integration health boundaries; provider OAuth and live Google, Microsoft, and
-Slack sync require externally supplied provider/agent-tool credentials and
-host authorization and are not bundled. Phase 8 is implemented except for
-general API keys and per-user roles, which cannot be issued safely without a
-public BB current-user/RBAC authority. Phase 9 has automated coverage and a
-focused packaged-browser smoke; Electron, complete keyboard, and full
-light/custom-theme passes remain open. Phase 10 is prepared through the public
-repository and marketplace draft, while the immutable tag and marketplace PR
-remain release-gated.
+natural-language builder conversation surface are implemented. The current
+append-only storage schema is version 10. The post-baseline audit closeout also
+covers contextual facets and activity windows, relation-aware search and count
+sorting, suppression/auto-company behavior, an aggregate enrichment queue,
+source-shaped related-record payloads, primary-contact validation, tracking
+cookies/rules/evidence/traffic visitor-days, global create routes, and favicon
+URLs. Public builder sharing and unrelated global BB thread-panel/mention
+surfaces are not claimed.
+
+Phase 7 is implemented for privacy-safe tracking plus integration health
+boundaries; provider OAuth and live Google, Microsoft, and Slack sync require
+externally supplied provider/agent-tool credentials and host authorization and
+are not bundled. Phase 8 is implemented except for general API keys and
+per-user roles, which cannot be issued safely without a public BB
+current-user/RBAC authority or identity directory. Phase 9 has automated
+coverage and a focused packaged-browser smoke; Electron, complete keyboard,
+and full light/custom-theme passes remain open. Phase 10 is prepared through
+the public repository and marketplace draft, while the immutable tag and
+marketplace PR remain release-gated.
 
 ## Product and interaction thesis
 
@@ -66,15 +72,15 @@ that BB already owns.
 | Landing page and sign-in | Marketplace detail, README, and BB plugin install flow |
 | Standalone onboarding | First-open checklist and plugin settings status |
 | App organization slug | One installed plugin database per BB installation |
-| Better Auth sessions | BB's authenticated local application session; CRM scope uses an installation-local owner because the public SDK exposes no current-user identity API |
-| Members and invitations | BB user/host context; CRM uses an installation-local owner and does not implement plugin RBAC because the public SDK exposes no current-user/RBAC API |
+| Better Auth sessions | BB's authenticated local application session; CRM scope uses an installation-local owner because the public SDK exposes no current-user identity API or plugin identity directory |
+| Members and invitations | BB user/host context; CRM uses an installation-local owner, and owner facets/sorting use stable local owner IDs because the public SDK exposes no current-user/RBAC API or identity directory |
 | SSO provider management | BB authentication settings; CRM stores no second identity system |
 | Next.js routing | One BB `navPanel` with `subPath` routing |
 | Nest tRPC | BB plugin `defineRpcContract` and `useRpc` |
 | Postgres and Prisma | Plugin-owned SQLite with append-only migrations |
 | Eve sessions | BB hidden and visible threads with CRM agent tools and skills |
 | Vercel cron | `bb.background.schedule` and abort-aware services |
-| Vercel Blob | Validated HTTPS source references for portraits; bounded BB project attachments for agent inputs |
+| Vercel Blob | Validated HTTPS source references for portraits and deterministic company favicon URLs; bounded BB project attachments for agent inputs |
 | URL query state | Encoded BB panel `subPath` plus client preferences |
 | Next.js record routes | Persistent, stack-aware BB responsive drawers |
 
@@ -102,6 +108,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - One `navPanel` named CRM owns `/plugins/crm/crm/*`.
 - One settings section shows data, integration, and migration health.
+- The CRM header exposes a keyboard-accessible New menu for company, contact,
+  deal, note, task, and agent creation. Notes and tasks first select an
+  existing company, contact, or deal and then create the activity through the
+  same typed RPC as record drawers.
 - Record Agent tabs render plugin-spawned linked BB threads through host
   `ThreadChat`; the builder uses a scoped `ThreadChat` assistant-message action
   for explicit draft transfer, but no global BB thread-panel/message-action
@@ -116,12 +126,18 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - UUID-like text IDs keep record types recognizable.
 - Foreign keys remain enabled.
+- `CRM_SCHEMA_VERSION` is 10. Migration 10 adds site-scoped cookie/rule
+  controls, observed tracking verification evidence, event medium storage, and
+  daily source/medium rollups without rewriting migrations 0–9.
 - Soft archive fields preserve CRM restore and suppression behavior.
 - Money stores decimal minor-unit integers plus currency and frozen base values.
 - Custom field values use typed columns and strict boundary schemas.
 - Every migration is append-only and transactionally recorded.
 - Imports run inside bounded transactions and report row-level errors.
 - Export uses versioned JSON and CSV formats.
+- Related company records preserve archived contact/deal rows for detail views;
+  company counts include all contacts and all non-closed deals, including
+  archived relations. Primary contacts must exist and belong to the company.
 
 ## View inventory and port mapping
 
@@ -130,7 +146,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Compact CRM mark and inner navigation rail.
 - Dashboard, companies, contacts, deals, agents, and settings destinations.
 - Global search and quick switcher.
-- Create menu for company, contact, deal, note, task, and agent.
+- Keyboard-accessible global New menu for company, contact, deal, note, task,
+  and agent. Record-attached notes/tasks use a global picker and the existing
+  activity contract rather than inventing an unscoped activity.
 - Responsive compact navigation.
 - Loading, empty, disconnected, and migration-error states.
 
@@ -149,32 +167,53 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 - Searchable, sortable, paginated table.
 - Saved views and column preferences.
-- Standard and custom field columns.
+- Standard and custom field columns, with contextual facet counts and 7/30/90-day
+  activity facets; custom-field facet keys are `field:<key>`.
 - Bulk selection, owner change, archive, enrichment, and export.
 - Create-company drawer.
 - Company record drawer with details, contacts, deals, activity,
   website history, enrichment, fields, and Agent tab.
-- Primary contact, owner, social links, source, and enrichment status.
+- Primary contact, owner, social links, source, enrichment status, and a
+  deterministic `https://<normalized-domain>/favicon.ico` URL when a domain is
+  present. Company contact/open-deal count sorting uses source relation-count
+  semantics, including archived contacts and archived non-closed deals; owner
+  sorting uses stable local IDs.
+- Related contacts include archived rows ordered by last name/first name; related
+  deals include archived rows ordered by source stage then expected close date,
+  with source and frozen base amounts in the payload. The primary-contact
+  object is returned with the source contact fields and cannot point to another
+  company.
 
 ### Contacts
 
 - Searchable, sortable, paginated table.
-- Saved views, facets, standard fields, custom fields, and bulk actions.
+- Saved views, contextual facets, standard fields, custom fields, and bulk
+  actions. Activity facets use 7/30/90-day recency windows and custom-field
+  keys use `field:<key>`.
 - Create-contact drawer.
 - Contact record drawer with identity, company, owner, facts, brief,
   deals, activity, website history, enrichment, and Agent tab.
 - Fact review supports applied, proposed, dismissed, and superseded states.
 - Social lookup, image, work history, and scheduled recheck controls.
+- A work email can reuse or create an active company for its non-free,
+  non-machine-generated domain when no explicit company is supplied. Purging a
+  contact records a normalized email suppression tombstone until an explicit
+  contact creation clears it. Contact/deal search includes associated company
+  name, and owner sorting remains local owner-ID sorting.
 
 ### Deals
 
 - Searchable, sortable, paginated table.
-- Stage, owner, company, contact, currency, close-date, and value facets.
+- Stage, owner, company, contact, currency, close-date, and value facets;
+  deal search includes associated company name and custom-field facets use
+  `field:<key>`.
 - Saved views, custom fields, bulk stage/owner/archive/export actions.
 - Create-deal drawer.
 - Deal record drawer with amount, frozen base amount, stage stepper,
   contacts, company, owner, activity, closing window, and Agent tab.
-- Eleven supported currencies and missing-rate disclosure.
+- Eleven supported currencies, source/frozen `baseAmountCents`, missing-rate
+  disclosure, source stage/expected-close ordering in company relations, and
+  archived relation visibility.
 
 ### Shared record drawer
 
@@ -185,6 +224,9 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Timeline merges activities, email threads, meetings, enrichment, and web activity.
 - Archive, restore, delete, copy link, and related-record actions.
 - Agent conversation remains mounted while switching record tabs.
+- Related-record counts and payloads follow the source archive behavior; the
+  detail response includes the primary-contact object and explicit empty
+  relation arrays when relations are requested.
 
 ### Custom fields and saved views
 
@@ -229,8 +271,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
   disconnect; live sync requires external provider/agent-tool credentials and
   host authorization.
 - Source-compatible unavailable intake state and connection instructions.
-- Tracking site status, allowed domains, script, cookies, rules,
-  traffic sources, operator domain confirmation, pause, and site-id rotation.
+- Tracking site status, allowed domains, script, cross-domain/cookie rules,
+  privacy sanitization, observed-page-view verification evidence, traffic
+  source/medium visitor-day reporting, retention, pause, token revoke, and
+  site-id rotation. Anonymous traffic remains aggregate-only.
 - General-purpose API keys are not issued because BB exposes no safe plugin
   current-user/RBAC authority boundary.
 - Compatibility information for members and SSO that BB owns.
@@ -240,9 +284,35 @@ CRM records, workflows, integrations, automation, or agent behavior.
 ### Core records
 
 - Company, contact, deal, deal-contact, activity, archive, and search services.
-- Duplicate detection and suppression for email and company domains.
+- Duplicate detection and suppression for email and company domains. Purged
+  contact emails remain suppressed until an explicit recreation, while a
+  contact work email can reuse or auto-create a company for an eligible domain.
 - Dashboard aggregates and closing-window calculations.
-- Full-text-style normalized search across core records and activities.
+- Full-text-style normalized search across core records and activities,
+  including associated company names for contacts and deals.
+
+### List context and relation semantics
+
+- Facet counts are calculated in the current query and active/archived scope;
+  selecting one facet does not collapse the counts of the other facets.
+- Activity facets use the source-compatible 7, 30, and 90-day windows, taking
+  the widest selected window. Typed custom-field facets are returned under
+  `field:<key>`.
+- Company contact and open-deal count sorts use SQL relation counts. Counts
+  include archived contacts and archived non-closed deals, matching the source
+  detail semantics. Null-last ordering is explicit for activity/archive dates.
+- Company/contact/deal owner values are installation-local IDs. There is no BB
+  identity directory, so owner sorting is ID-based rather than display-name
+  based.
+
+### Aggregate enrichment queue
+
+- The shell queue projects persisted local agent runs, field backfills, due CRM
+  tasks, and scheduled work into typed rows with record context, status, and
+  links back to the relevant drawer.
+- Queue status describes local persistence (`queued`, `running`, `failed`)
+  and deliberately does not claim that an external provider delivered or
+  verified a result.
 
 ### Dynamic fields
 
@@ -282,12 +352,21 @@ authorization are available; no live Slack sync is bundled.
 ### Tracking
 
 - Serve a small loader and per-site tracker through plugin HTTP routes.
+- Site settings control cross-domain linking, domain limits, cookie scope,
+  secure-cookie behavior, Do Not Track honoring, and bounded cookie lifetime.
 - Validate origin, site ID, visitor ID, event shape, batch size, and rate.
-- Remove query strings, sensitive fields, card-shaped values, files, and passwords.
+- Reject query strings/fragments in page paths, attribution values, and URL-like
+  properties; remove or reject sensitive fields, card-shaped values, files,
+  and passwords.
 - Keep form submissions aggregate-only unless a future first-party signed
   identity contract supplies an exact CRM filing target; never infer identity
   from anonymous visitor properties.
-- Aggregate daily page views before bounded event retention.
+- Verification succeeds only when an allowed PAGE_VIEW is observed and stored;
+  the evidence event/domain is retained, caller timestamps cannot manufacture
+  success, and deleting evidence returns the site to pending.
+- Aggregate daily page views and source/medium traffic before bounded event
+  retention. Traffic reports expose event counts and the sum of per-day
+  distinct visitors (`visitorDays`), not unique people across the whole range.
 - Make pause and site-id rotation effective within the documented cache window.
 
 ### Agents
@@ -322,7 +401,8 @@ Exit criteria:
 Tasks:
 
 - Finalize manifest, icon, license, repository metadata, and engine ranges.
-- Build append-only migration runner and initial schema.
+- Build append-only migration runner and initial schema; current migrations
+  advance through schema 10 without rewriting earlier versions.
 - Build route parser, shell, navigation rail, BB header actions, and error boundary.
 - Add shared query cache, realtime invalidation, and mutation error handling.
 - Vendor required BB table, drawer, tabs, select, menu, badge, skeleton,
@@ -341,9 +421,11 @@ Exit criteria:
 Tasks:
 
 - Implement company schema, store, contracts, RPC, CLI, and realtime events.
-- Implement company list query, search, sort, page, columns, saved view, and bulk selection.
+- Implement company list query, search, sort, page, columns, saved view, and bulk selection,
+  including contextual activity/custom facets and relation count sorting.
 - Implement create, edit, archive, restore, delete, enrich, and export.
-- Implement wide company record drawer with related contacts, deals, and timeline.
+- Implement wide company record drawer with source-shaped related contacts/deals,
+  archived relation visibility, primary-contact invariant, favicon URL, and timeline.
 
 Exit criteria:
 
@@ -355,9 +437,12 @@ Exit criteria:
 Tasks:
 
 - Implement contact schema, store, contracts, RPC, CLI, and UI.
-- Implement contact list, facets, saved views, bulk actions, and record drawer.
+- Implement contact list, associated-company search, contextual facets, saved
+  views, bulk actions, and record drawer.
 - Implement fact ledger, brief, suggestions, dismissal, supersession, and citations.
-- Implement contact-to-company links, social links, work history, photos, and enrichment state.
+- Implement contact-to-company links, eligible-domain auto-company creation,
+  purge suppression tombstones, social links, work history, photos, and
+  enrichment state.
 
 Exit criteria:
 
@@ -368,7 +453,8 @@ Exit criteria:
 
 Tasks:
 
-- Implement deals, stages, deal contacts, activities, and closing-window logic.
+- Implement deals, stages, deal contacts, activities, associated-company search,
+  source relation ordering, and closing-window logic.
 - Implement currency rates, frozen conversion, unconverted disclosures, and re-rate controls.
 - Implement deal list, bulk actions, create/edit drawer, and stage stepper.
 - Implement dashboard aggregates, trends, stage charts, and recent work.
@@ -383,8 +469,10 @@ Exit criteria:
 Tasks:
 
 - Complete dynamic fields and custom table columns.
-- Complete saved views and filter serialization.
-- Complete unified timeline and activity composer.
+- Complete saved views and filter serialization, including `field:<key>` facet
+  keys and contextual counts.
+- Complete unified timeline and activity composer, including global record-
+  attached note/task creation from the CRM header.
 - Complete global search and quick switcher.
 - Complete CSV import/export and versioned JSON backup/restore.
 
@@ -400,6 +488,8 @@ Tasks:
 - Port CRM agent knowledge into `skills/crm/SKILL.md` and focused references.
 - Register native CRM tools with strict schemas and auditable presentations.
 - Implement task leasing, schedules, run state, actions, audit events, and cancellation.
+- Surface persisted agent/field-backfill/task work in the aggregate shell
+  enrichment queue without claiming provider completion.
 - Implement record Agent tab using linked BB threads.
 - Implement agent definitions, versions, triggers, approvals, run history,
   deletion lifecycle, and natural-language builder chat. Keep public sharing
@@ -424,14 +514,17 @@ Tasks:
   authorization are available.
 - Preserve the source's unavailable intake state; do not issue an unused
   credential until a real, authenticated intake contract exists.
-- Implement tracking loader, tracker config, event collector, filing, operator confirmation,
-  daily aggregation, retention, pause, and site-id rotation.
+- Implement tracking loader, tracker config, cookie/cross-domain rules, privacy
+  sanitizer, observed-page-view verification evidence, event collector, filing,
+  daily source/medium aggregation with visitor-days, retention, pause, and
+  site-id/token rotation.
 - Add integration diagnostics to `bb crm doctor`.
 
 Exit criteria:
 
 - Integration pages lead with liveness and actionable failures.
-- Tracking respects origin, privacy, limits, pause, and retention contracts.
+- Tracking respects origin, privacy, cookie/rule limits, observed verification,
+  pause, retention, and aggregate-only identity boundaries.
 
 ### Phase 8: administration and hardening
 
@@ -485,6 +578,62 @@ Exit criteria:
 
 - A new user installs the extension from the Git URL and completes first-run setup.
 - Marketplace metadata points to the verified public release.
+
+## Post-baseline audit closeout
+
+The following implementation slices were added or verified after the locked
+source comparison. They are part of the current parity target; they are not
+future work hidden behind the phase headings above.
+
+- Schema 10 is an append-only tracking migration: site cookie/cross-domain
+  rules, domain limits, observed verification evidence, event medium, and
+  daily source/medium rollups are persisted for existing installs.
+- Company, contact, and deal list queries now use contextual facet counts
+  (current search plus active/archived scope), 7/30/90-day activity windows,
+  and `field:<key>` custom-field keys. Contacts and deals search associated
+  company names; company contact/open-deal count sorting and null-last date
+  ordering are deterministic.
+- Contact purge suppression and eligible work-email auto-company resolution are
+  persisted in SQLite. Explicit contact recreation clears the suppression
+  tombstone; free-mail and machine-generated domains do not create companies.
+- The shell enrichment queue aggregates persisted agent runs, field backfills,
+  due tasks, and scheduled work with record context and local-status wording.
+- Company detail returns a source-shaped primary-contact object, archived
+  related contacts/deals, source stage/expected-close ordering, and frozen
+  `baseAmountCents`; primary contacts are required to exist and belong to the
+  company. Company domains yield deterministic HTTPS favicon URLs unless an
+  explicit icon URL has been supplied.
+- Tracking settings and collector behavior include cookie controls,
+  cross-domain/domain rules, privacy rejection/sanitization, evidence-backed
+  verification, and aggregate traffic source/medium reporting as visitor-days.
+  Anonymous visitors are never heuristically attached to CRM records.
+- The CRM header's global New menu routes company/contact/deal/agent creation
+  and record-attached note/task creation through the typed views and RPCs.
+
+Implementation anchors for this closeout are `db/schema.ts`, `db/types.ts`,
+`db/companies.ts`, `db/contacts.ts`, `db/connections.ts`,
+`db/enrichment-queue.ts`, `server.ts`, `app/shell.tsx`,
+`app/components/enrichment-queue.tsx`, and the corresponding focused tests in
+`db/`, `server.test.ts`, `app/app.test.tsx`, and `app/components/`.
+
+## Remaining true boundaries
+
+These are deliberate limits or release gates, not stale parity omissions:
+
+| Boundary | Current behavior and fallback |
+| --- | --- |
+| BB current-user identity, identity directory, and plugin RBAC | CRM uses an installation-local owner. Owner facets and sorting use stable owner IDs, not display-name order. Per-user roles, authorization, and general-purpose API keys are not exposed. |
+| Google/Microsoft/Slack authorization and live sync | Connection health, metadata, and diagnostics are implemented; OAuth/device authorization and mailbox/calendar/Slack sync require externally supplied provider/agent-tool credentials and host authorization. |
+| Email/meeting relationship details | Timeline and relation summaries remain provider-gated until the corresponding mailbox/calendar sync is available. |
+| Anonymous Website Activity attribution | Tracking stores privacy-filtered site/path/source/medium aggregates and visitor-days only. No anonymous visitor is attributed to a company/contact/deal without a verified first-party identity contract. |
+| Plugin blob storage | Portraits and favicons remain validated HTTPS source URLs; arbitrary remote bytes are not fetched or mirrored into plugin storage. |
+| Public builder sharing and unrelated global BB thread surfaces | Linked plugin-spawned threads and host `ThreadChat` are supported. Public share relay, global thread-panel/message-action slots, and mention providers require BB Connect, an external relay, or future BB APIs. |
+| Thread cancellation lifecycle | The plugin requests cancellation and records the run; a BB thread reported as `stopping` may remain pending until BB emits an unambiguous terminal state. |
+| Webhook producer | The trigger-scoped HMAC/replay boundary is implemented, but an external producer is required; the plugin does not invent one. |
+| Host-visible task and assignee semantics | Due-task dispatch is opt-in and CRM-local; it leases timeline TASK rows for one configured live agent and does not create a host-visible BB Task or infer an activity author as assignee. |
+| Agent attachment scope | Attachments are bounded bytes resolved through BB project-relative paths; arbitrary filesystem paths, traversal, oversized payloads, and unscoped projects are rejected. |
+| Linking pre-existing BB threads | Plugin records link atomically to threads the plugin spawns; the SDK does not expose a callback for attaching an arbitrary user-composed thread. |
+| Release-client QA and distribution | Automated coverage and focused packaged-browser smoke exist. Electron, complete keyboard, full light/custom-theme passes, immutable release tag, and marketplace PR remain release-gated. |
 
 ## Commit and push slices
 

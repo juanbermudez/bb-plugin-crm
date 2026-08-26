@@ -6,10 +6,24 @@ Baseline: `trycompai/crm` release commit
 Status meanings:
 
 - `done`: implemented and covered by an automated or live check.
+- `adapted`: the source outcome is implemented, with an explicit privacy or
+  host boundary that prevents a one-for-one claim.
 - `building`: active implementation exists but the source workflow is incomplete.
 - `planned`: mapped to a phase and not implemented.
 - `host-owned`: BB supplies the equivalent application responsibility.
 - `gap`: BB lacks a required public surface. The row includes the chosen fallback.
+
+## Storage and query semantics
+
+| Source capability | BB extension target | Status | Phase |
+| --- | --- | --- | --- |
+| Append-only schema evolution | SQLite migrations through `CRM_SCHEMA_VERSION = 10`; migration 10 adds tracking cookie/rule fields, observed verification evidence, event medium, and daily traffic-source rollups | done | 1/7 |
+| Contextual facet counts | Counts use the current search and active/archived scope; selecting one facet does not collapse the other facet counts | done | 5 |
+| Activity facets | 7/30/90-day recency windows; multiple windows use the widest selected window | done | 5 |
+| Custom-field facet identity | Strict `field:<key>` keys shared by server output and list controls | done | 5 |
+| Relation count sorting | Company contact and open-deal counts use SQL relation counts; archived contacts and archived non-closed deals remain countable | done | 2/4 |
+| Null-last list ordering | Activity and archive date sorts put nulls last with deterministic name/ID ties | done | 2–4 |
+| Owner relation sorting | Stable installation-local owner-ID sorting; BB exposes no plugin identity directory for display-name sorting | adapted | 2–5 |
 
 ## Host and shell
 
@@ -17,7 +31,7 @@ Status meanings:
 | --- | --- | --- | --- |
 | Marketing landing | GitHub README and marketplace detail | host-owned | 10 |
 | Sign-in | BB application session | host-owned | 0 |
-| Grant mailbox access | CRM connection authorization boundary | building | 7 |
+| Grant mailbox access | Connection health/metadata boundary; provider authorization requires external credentials and host authorization | building | 7 |
 | Workspace onboarding | Persisted first-open CRM checklist | done | 8 |
 | Research onboarding | Explicit live/deployed BB research-agent selection; provider credentials stay with that agent's tools | done | 8 |
 | Organization slug routing | Installed CRM plugin identity | host-owned | 0 |
@@ -25,6 +39,7 @@ Status meanings:
 | Mobile navigation | Compact CRM navigation row | done | 1 |
 | Global app header | BB host title bar | host-owned | 1 |
 | CRM header actions | BB nav-panel header content | done | 1 |
+| Global create menu | Keyboard-accessible routes for company, contact, deal, agent, note, and task creation; notes/tasks require an existing CRM record | done | 5 |
 | Quick switcher | Cross-record CRM search and deep links | done | 5 |
 | Deep links | BB `subPath` routes | done | 1 |
 | Browser back/forward | `useBbNavigate` panel history | done | 1 |
@@ -55,9 +70,9 @@ Status meanings:
 | --- | --- | --- | --- |
 | Company list | Paginated CRM table | done | 2 |
 | Search name/domain | Typed list query | done | 2 |
-| Sort and pagination | Typed list state | done | 2 |
+| Sort and pagination | Typed list state with deterministic null-last date ordering and relation count sorting | done | 2 |
 | Owner, industry, enrichment facets | Filter bar | done | 2 |
-| Activity and custom-field facets | Filter bar | done | 5 |
+| Activity and custom-field facets | Contextual filter-bar counts in current search/archive scope; 7/30/90-day activity windows and `field:<key>` custom-field keys | done | 5 |
 | Saved views | Saved-view rows and installation default | done | 5 |
 | Column preferences | Persisted standard/custom table columns and ordering | done | 5 |
 | Row selection | Table selection | done | 2 |
@@ -65,13 +80,15 @@ Status meanings:
 | Bulk enrichment | Provider-gated bulk RPC and list action | done | 2/6 |
 | Bulk archive/restore/purge | Bulk RPC and CLI | done | 2 |
 | Create company | Wide responsive drawer | done | 2 |
+| Company favicon | Deterministic `https://<normalized-domain>/favicon.ico` URL, retained as a remote reference because BB has no blob API | done | 2 |
 | Company record header | Shared record drawer | done | 2 |
 | Company overview | Record tab | done | 2 |
-| Related contacts | Record tab | done | 2 |
-| Related deals | Record tab | done | 2 |
+| Related contacts | Source-shaped contact objects including archived rows, ordered by last name/first name | done | 2 |
+| Related deals | Source-shaped deal objects including archived rows, stage/expected-close ordering, amount and frozen `baseAmountCents` | done | 2/4 |
 | Company activity | Record tab | done | 5 |
 | Company Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
-| Primary contact | Company relation operation | done | 2 |
+| Primary contact | Dedicated relation mutation and source-shaped `primaryContact` object; contact must exist and belong to the company on create/update | done | 2 |
+| Company relation counts | Detail counts include all contacts and all non-closed deals, including archived relations; list count sorting uses the same semantics | done | 2/4 |
 | Company enrichment/research | Provider-gated BB agent run, sourced update tool, and explicit skipped state | done | 3/6 |
 
 ## Contacts and evidence
@@ -79,13 +96,15 @@ Status meanings:
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
 | Contact list | Paginated CRM table | done | 3 |
-| Search identity fields | Typed list query | done | 3 |
-| Company/owner/title facets | Filter bar | done | 3 |
-| Seniority/persona/activity facets | Filter bar | done | 3 |
-| Dynamic-field facets | Filter bar | done | 5 |
+| Search identity and company fields | Typed list query includes associated company name | done | 3 |
+| Company/owner/title facets | Contextual filter-bar counts in current search/archive scope | done | 3 |
+| Seniority/persona/activity facets | Activity recency windows are 7/30/90 days; counts remain contextual | done | 3 |
+| Dynamic-field facets | Filter bar using strict `field:<key>` facet keys | done | 5 |
 | Bulk owner/company/enrich | Bulk owner/company RPC plus provider-gated enrichment action | done | 3/6 |
 | Bulk archive/restore/purge | Bulk RPC and CLI | done | 3 |
 | Create contact | Wide responsive drawer | done | 3 |
+| Work-email auto-company | Reuse or create an active company for eligible non-free, non-machine-generated domains when no company is supplied | done | 3 |
+| Contact suppression | Purge writes a normalized email tombstone; explicit recreation clears it before insertion | done | 3/8 |
 | Contact overview | Record tab | done | 3 |
 | Attached deals and roles | Record tab | done | 3/4 |
 | Contact activity | Record tab | done | 5 |
@@ -94,7 +113,7 @@ Status meanings:
 | Proposed fact decision | Accept/dismiss review actions | done | 3 |
 | Dismiss/supersede | Evidence state transitions | done | 3 |
 | Background brief | Versioned brief display/create/history | done | 3 |
-| Email/meeting relationship summary | Timeline aggregate | planned | 7 |
+| Email/meeting relationship summary | Provider-gated timeline relationship summary; local activity rows remain available | planned | 7 |
 | Social lookup and work history | Provider-gated research runs plus evidence-backed fact/work-history tools | done | 3/6 |
 | Contact portrait | HTTPS source portrait in list/drawer, inline URL editing, and initials/error fallback | done | 3 |
 
@@ -109,14 +128,15 @@ the server.
 | --- | --- | --- | --- |
 | Deal list | Paginated CRM table | done | 4 |
 | Open/closed tabs | List scope control | done | 4 |
-| Owner/stage/closing facets | Filter bar | done | 4 |
+| Search and sort | Typed list query includes associated company search, source stage/expected-close order, and explicit null-last dates | done | 4 |
+| Owner/stage/closing facets | Contextual filter-bar counts; custom fields use `field:<key>` | done | 4/5 |
 | Inline stage change | Table and record controls | done | 4 |
 | Close-reason dialog | Responsive confirmation dialog | done | 4 |
 | Bulk owner/stage/archive | Bulk RPC and CLI | done | 4 |
 | Create deal | Wide responsive drawer | done | 4 |
 | Deal overview and stats | Record tab | done | 4 |
 | Stage stepper | BB-tokenized accessible stage control | done | 4 |
-| Attached contacts and roles | Record tab | done | 4 |
+| Attached contacts and roles | Record tab with archived relationship visibility and deterministic contact ordering | done | 4 |
 | Deal activity | Record tab | done | 5 |
 | Deal Agent tab | Plugin-spawned linked BB thread and `ThreadChat` | done | 6 |
 | Source amount/currency | Integer minor units and code | done | 4 |
@@ -140,6 +160,7 @@ the server.
 | Agent-filled field instructions | Field agent metadata | done | 5/6 |
 | Field coverage and fill-rest | Bounded missing-record query and idempotent evidence-only research runs | done | 5/6 |
 | Saved filter/sort/columns | Versioned saved-view JSON, including ordered/hidden dynamic columns | done | 5 |
+| Contextual list facets | Search/archive-scoped standard, activity, and `field:<key>` custom-field counts | done | 5 |
 | Timeline All/Notes/Email/Meetings | Unified timeline | done | 5/7 |
 | Timeline Upcoming/Done | Task filters | done | 5 |
 | Note/call/email/meeting/task composer | Activity composer | done | 5 |
@@ -149,7 +170,7 @@ the server.
 | Stage/enrichment rows | Transactional stage/enrichment activity rows | done | 4/5 |
 | Email thread expansion | Integration-backed row | planned | 7 |
 | Meeting attendee and join details | Integration-backed row | planned | 7 |
-| Website activity | Tracking aggregate without unsafe record attribution | gap | 7 |
+| Website activity | Privacy-filtered site/path/source/medium aggregates and visitor-days; no anonymous CRM-record attribution | adapted | 7 |
 
 ## Agent workspace
 
@@ -159,6 +180,7 @@ the server.
 | Search/read/update native tools | `bb.agents.registerTool` | done | 6 |
 | Evidence and identity rules | Skill references and tool validation | done | 6 |
 | Due-task leasing | Opt-in CRM-local CAS leases, bounded retries, and one explicit live-agent policy | done | 6 |
+| Aggregate enrichment queue | Shell queue for persisted local agent runs, field backfills, due tasks, and scheduled work with record context and local-status wording | done | 6 |
 | Durable worker | Hidden BB thread and `crm-agent-dispatcher` service | done | 6 |
 | Record conversation | Idempotent plugin-spawned linked BB thread | done | 6 |
 | Transcript and tools | Host `ThreadChat` for linked record threads | done | 6 |
@@ -200,18 +222,18 @@ publicly reachable share requires BB Connect or an external relay.
 | Intake endpoint | Source route explicitly says unavailable; no endpoint or unused intake credential is exposed | host-owned | 7 |
 | Tracking loader and script | Fixed `GET /tracking/loader.js` route | done | 7 |
 | Anonymous tracking collector | Domain/token/privacy-validated HTTP collector | done | 7 |
-| Tracking privacy rules | Boundary sanitizer and tests | done | 7 |
-| Allowed domains and scopes | Tracking settings | done | 7 |
-| Site confirm/pause/rotate | Operator-confirmed allowed domain plus token-and-Origin authorization | done | 7 |
-| Attribution and sources | Tracking aggregates | done | 7 |
+| Tracking privacy rules | Boundary sanitizer rejects query strings/fragments and sensitive/card-shaped properties; raw identifiers are hashed | done | 7 |
+| Allowed domains and scopes | Tracking settings with cross-domain linking, domain limits, cookie scope/secure/DNT controls, and bounded cookie lifetime | done | 7 |
+| Site confirm/pause/rotate | Observed allowed PAGE_VIEW evidence plus token-and-Origin authorization; deleting evidence returns verification to pending | done | 7 |
+| Attribution and sources | Daily anonymous source/medium rollups with event counts and per-day distinct-visitor `visitorDays` | adapted | 7 |
 | Retention rollup | Bounded rollup/prune RPCs | done | 7 |
 | Workspace name | Plugin setting | done | 1 |
 | Reporting currency | Plugin setting | done | 1 |
 | Research agent | Optional live/deployed BB agent selector; provider credentials remain in that agent's tools | done | 1/6 |
 | Archive retention | Bounded setting, prune RPC, and background service | done | 8 |
 | Agent model | Strict provider/model/reasoning settings forwarded to BB | done | 8 |
-| API keys | Scoped user tokens | gap | 8 |
-| Members and role changes | BB user identity | gap | 8 |
+| API keys | No general-purpose keys are issued; BB exposes no safe current-user/RBAC authority | gap | 8 |
+| Members and role changes | Installation-local owner IDs; no BB identity directory or plugin RBAC API | gap | 8 |
 | SSO providers | BB authentication settings | host-owned | 8 |
 | Backup/export/import | Versioned JSON and CSV CLI | done | 5/8 |
 | Diagnostics | `bb crm status` and doctor | done | 1/8 |
@@ -222,20 +244,25 @@ provisioned site token; an administrator supplies the one-time site token as a
 script data attribute on the authorized site.
 
 Fallback for API keys: no general-purpose key is issued. BB SDK `0.4.8` exposes
-the installation plugin token but no current-user/RBAC authority surface, so
-delegating that token would grant unsafe installation-wide authority.
+the installation plugin token but no current-user/RBAC authority or identity
+directory, so delegating that token would grant unsafe installation-wide
+authority. Owner facets and sorting therefore use stable local owner IDs rather
+than a BB display-name directory.
 
 Fallback for members: the first marketplace release operates as one
-installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity or RBAC
-API, so role changes and per-user authorization are not implemented. Dashboard
-“Me” therefore filters by that installation-local owner rather than a BB user
-identity.
+installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity, identity
+directory, or RBAC API, so role changes and per-user authorization are not
+implemented. Dashboard “Me” therefore filters by that installation-local owner
+rather than a BB user identity.
+
+### Remaining true boundaries
 
 The following boundaries are intentional and remain release notes rather than
 parity claims:
 
-- BB SDK `0.4.8` has no plugin blob API; portraits and other binary assets are
-  not claimed as a hosted plugin capability.
+- BB SDK `0.4.8` has no plugin blob API; portraits and favicons are retained as
+  validated HTTPS source URLs and other binary assets are not claimed as a
+  hosted plugin capability.
 - Provider connection cards and health/metadata persistence are implemented,
   but provider OAuth, authorization, and live mailbox/calendar/Slack sync are
   not bundled. They require externally supplied provider/agent-tool credentials
@@ -247,9 +274,13 @@ parity claims:
 - CRM domain-event triggers are emitted transactionally for supported company,
   contact, and deal writes. Webhook triggers expose a strict HMAC boundary but
   still require an external producer; the plugin does not invent one.
-- Tracking events intentionally remain site/path aggregates. The public intake
-  contract has no verified CRM record identifier, so website events are not
-  attributed to a company/contact/deal by heuristic.
+- Tracking events intentionally remain privacy-filtered site/path/source/medium
+  aggregates. Traffic reports expose event counts and per-day distinct visitor
+  sums (`visitorDays`); the public intake contract has no verified CRM record
+  identifier, so website events are not attributed to a company/contact/deal by
+  heuristic.
+- Email/meeting relationship summaries and attendee/join details remain
+  provider-gated until mailbox/calendar authorization and sync are available.
 - CRM due-task dispatch is opt-in and installation-local. It leases ordinary
   CRM timeline TASK rows and starts a manual hidden agent run for one explicitly
   configured live/deployed agent; it never infers the activity author as an

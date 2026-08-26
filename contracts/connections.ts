@@ -45,6 +45,14 @@ export const TRACKING_VERIFICATION_STATUSES = trackingVerificationStatuses;
 export const trackingVerificationStatusSchema = z.enum(trackingVerificationStatuses);
 export type TrackingVerificationStatus = z.infer<typeof trackingVerificationStatusSchema>;
 
+/** The intentionally small set of browser cookie lifetimes exposed by the UI. */
+export const trackingCookieLifetimes = [
+  { days: 395, label: "13 months" },
+  { days: 180, label: "6 months" },
+  { days: 0, label: "Session only" },
+] as const;
+export const TRACKING_COOKIE_LIFETIMES = trackingCookieLifetimes;
+
 export const trackingLimits = {
   maxBatchSize: 100,
   maxEventBytes: 16_384,
@@ -328,12 +336,21 @@ export const trackingSiteSchema = z
     id: boundedId,
     siteKey: siteKeySchema,
     name: text(200),
-    allowedDomains: z.array(allowedDomainSchema).min(1).max(32),
+    allowedDomains: z.array(allowedDomainSchema).max(32),
     status: trackingSiteStatusSchema,
     verificationStatus: trackingVerificationStatusSchema,
     verifiedAt: nullableTimestamp,
+    /** The observed event that made verification truthful; never operator-only. */
+    verificationEventId: optionalNullableText(256),
+    verificationDomain: optionalNullableText(253),
     pausedAt: nullableTimestamp,
     rotatedAt: nullableTimestamp,
+    crossDomain: z.boolean().optional(),
+    limitToDomains: z.boolean().optional(),
+    cookieSubdomains: z.boolean().optional(),
+    secureCookies: z.boolean().optional(),
+    honourDnt: z.boolean().optional(),
+    cookieDays: z.number().int().min(0).max(400).optional(),
     retention: trackingRetentionSchema,
     createdAt: connectionTimestampSchema,
     updatedAt: connectionTimestampSchema,
@@ -346,15 +363,26 @@ export const trackingSiteCreateInputSchema = z
     id: boundedId.optional(),
     siteKey: siteKeySchema.optional(),
     name: text(200),
-    allowedDomains: z.array(allowedDomainSchema).min(1).max(32).optional(),
-    domains: z.array(allowedDomainSchema).min(1).max(32).optional(),
+    allowedDomains: z.array(allowedDomainSchema).max(32).optional(),
+    domains: z.array(allowedDomainSchema).max(32).optional(),
     eventRetentionDays: boundedRetentionDays.optional(),
     aggregateRetentionDays: boundedRetentionDays.optional(),
+    crossDomain: z.boolean().optional(),
+    limitToDomains: z.boolean().optional(),
+    cookieSubdomains: z.boolean().optional(),
+    secureCookies: z.boolean().optional(),
+    honourDnt: z.boolean().optional(),
+    cookieDays: z.number().int().min(0).max(400).optional(),
   })
   .strict()
   .refine(
-    (value) => value.allowedDomains !== undefined || value.domains !== undefined,
-    "At least one allowed domain is required.",
+    (value) => {
+      const domains = value.allowedDomains ?? value.domains;
+      return value.limitToDomains === false
+        ? true
+        : domains !== undefined && domains.length > 0;
+    },
+    "At least one allowed domain is required while domain limiting is enabled.",
   )
   .refine(
     (value) => value.allowedDomains === undefined || value.domains === undefined ||
@@ -362,6 +390,32 @@ export const trackingSiteCreateInputSchema = z
     "Use either allowedDomains or domains, or provide the same values in both.",
   );
 export type TrackingSiteCreateInput = z.infer<typeof trackingSiteCreateInputSchema>;
+
+export const trackingSiteUpdateInputSchema = z
+  .object({
+    id: boundedId,
+    name: text(200).optional(),
+    allowedDomains: z.array(allowedDomainSchema).max(32).optional(),
+    crossDomain: z.boolean().optional(),
+    limitToDomains: z.boolean().optional(),
+    cookieSubdomains: z.boolean().optional(),
+    secureCookies: z.boolean().optional(),
+    honourDnt: z.boolean().optional(),
+    cookieDays: z.number().int().min(0).max(400).optional(),
+    eventRetentionDays: boundedRetentionDays.optional(),
+    aggregateRetentionDays: boundedRetentionDays.optional(),
+    at: optionalNullableTimestamp,
+  })
+  .strict()
+  .refine(
+    (value) => Object.keys(value).some((key) => key !== "id" && key !== "at"),
+    "At least one tracking site setting must change.",
+  )
+  .refine(
+    (value) => value.limitToDomains !== true || value.allowedDomains === undefined || value.allowedDomains.length > 0,
+    "At least one allowed domain is required while domain limiting is enabled.",
+  );
+export type TrackingSiteUpdateInput = z.infer<typeof trackingSiteUpdateInputSchema>;
 
 export const trackingSiteListInputSchema = z
   .object({
@@ -376,6 +430,7 @@ export const trackingSiteVerifyInputSchema = z
   .object({
     id: boundedId,
     domain: allowedDomainSchema.optional(),
+    observedEventId: boundedId.optional(),
     verifiedAt: optionalNullableTimestamp,
   })
   .strict();
@@ -579,6 +634,7 @@ export const trackingEventInputSchema = z
     visitorId: optionalNullableText(256),
     sessionId: optionalNullableText(256),
     source: optionalNullableText(trackingLimits.maxSourceLength),
+    medium: optionalNullableText(trackingLimits.maxSourceLength),
     properties: trackingPropertiesSchema.nullable().optional(),
     eventKey: optionalNullableText(128),
     occurredAt: optionalNullableTimestamp,
@@ -596,9 +652,17 @@ export const trackingEventInputSchema = z
     return supplied.length <= 1;
   }, "Provide only one of path, pageUrl, or url.")
   .refine((value) => {
-    const source = value.source;
-    return source === undefined || source === null || !/[?#]/u.test(source);
-  }, "Tracking source must not contain a query string or fragment.");
+    const attributionValues = [value.source, value.medium];
+    return attributionValues.every((attribution) =>
+      attribution === undefined || attribution === null || !/[?#]/u.test(attribution),
+    );
+  }, "Tracking source and medium must not contain a query string or fragment.")
+  .refine((value) => {
+    const attributionValues = [value.source, value.medium];
+    return attributionValues.every((attribution) =>
+      attribution === undefined || attribution === null || !isSensitiveTrackingValue(attribution),
+    );
+  }, "Tracking source and medium must not contain sensitive values.");
 export type TrackingEventInput = z.infer<typeof trackingEventInputSchema>;
 
 export const sanitizedTrackingEventSchema = z
@@ -613,6 +677,7 @@ export const sanitizedTrackingEventSchema = z
     visitorHash: z.string().regex(/^[a-f0-9]{64}$/i).nullable(),
     sessionHash: z.string().regex(/^[a-f0-9]{64}$/i).nullable(),
     source: optionalNullableText(trackingLimits.maxSourceLength),
+    medium: optionalNullableText(trackingLimits.maxSourceLength),
     properties: trackingPropertiesSchema,
     eventKey: nullableText(128),
     receivedAt: connectionTimestampSchema,
@@ -760,3 +825,35 @@ export const trackingTokenListOutputSchema = trackingTokenListSchema;
 export const trackingEventListOutputSchema = trackingEventListSchema;
 export const trackingAggregateListOutputSchema = trackingAggregateListSchema;
 export const trackingEventsBatchInputSchema = trackingEventBatchInputSchema;
+
+/**
+ * Aggregate traffic-source reporting intentionally contains no contact count:
+ * anonymous visitor ids are not evidence of a CRM identity.
+ */
+export const trackingTrafficSourceSchema = z
+  .object({
+    siteId: boundedId,
+    source: text(trackingLimits.maxSourceLength),
+    medium: nullableText(trackingLimits.maxSourceLength),
+    eventCount: finiteNonNegativeInteger,
+    visitorDays: finiteNonNegativeInteger,
+    firstSeenAt: nullableTimestamp,
+    lastSeenAt: nullableTimestamp,
+  })
+  .strict();
+export type TrackingTrafficSource = z.infer<typeof trackingTrafficSourceSchema>;
+
+export const trackingTrafficSourceListInputSchema = z
+  .object({
+    siteId: boundedId.optional(),
+    source: optionalText(trackingLimits.maxSourceLength),
+    medium: optionalNullableText(trackingLimits.maxSourceLength),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).optional(),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).optional(),
+    limit: boundedLimit,
+    offset: boundedOffset,
+  })
+  .strict()
+  .refine((value) => value.from === undefined || value.to === undefined || value.from <= value.to, "from must be on or before to.");
+export const trackingTrafficSourceListSchema = z.array(trackingTrafficSourceSchema);
+export const trackingTrafficSourceListOutputSchema = trackingTrafficSourceListSchema;

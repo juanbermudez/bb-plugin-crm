@@ -805,6 +805,22 @@ export const companyUpdateInputSchema = z
   .strict();
 export type CompanyUpdateInput = z.infer<typeof companyUpdateInputSchema>;
 
+export const companySetPrimaryContactInputSchema = z
+  .object({
+    companyId: idSchema,
+    contactId: idSchema.nullable(),
+  })
+  .strict();
+export type CompanySetPrimaryContactInput = z.infer<typeof companySetPrimaryContactInputSchema>;
+
+export const companySetPrimaryContactOutputSchema = z
+  .object({
+    id: idSchema,
+    primaryContactId: idSchema.nullable(),
+  })
+  .strict();
+export type CompanySetPrimaryContactOutput = z.infer<typeof companySetPrimaryContactOutputSchema>;
+
 const contactCreateShape = {
   firstName: nonEmptyText,
   lastName: optionalText,
@@ -1031,6 +1047,9 @@ const contactRefSchema = z
     email: nullableText,
     title: nullableText,
     imageUrl: nullableText,
+    ownerId: idSchema.nullable().optional(),
+    owner: ownerRefSchema.nullable().optional(),
+    archivedAt: timestampSchema.nullable().optional(),
   })
   .strict();
 
@@ -1042,9 +1061,23 @@ const dealRefSchema = z
     stage: dealStageSchema.optional(),
     currency: currencyCodeSchema.optional(),
     amountCents: minorAmount.nullable().optional(),
+    baseAmountCents: minorAmount.nullable().optional(),
     expectedCloseDate: dateValueSchema.nullable().optional(),
     ownerId: idSchema.nullable().optional(),
+    owner: ownerRefSchema.nullable().optional(),
     role: nullableText.optional(),
+    archivedAt: timestampSchema.nullable().optional(),
+  })
+  .strict();
+
+const companyPrimaryContactSchema = z
+  .object({
+    id: idSchema,
+    firstName: nonEmptyText,
+    lastName: nullableText,
+    email: nullableText,
+    phone: nullableText,
+    title: nullableText,
   })
   .strict();
 
@@ -1077,6 +1110,7 @@ export const companySchema = z
     ownerId: idSchema.nullable().optional(),
     owner: ownerRefSchema.nullable().optional(),
     primaryContactId: idSchema.nullable().optional(),
+    primaryContact: companyPrimaryContactSchema.nullable().optional(),
     source: recordSourceSchema.optional(),
     enrichmentStatus: enrichmentStatusSchema.optional(),
     enrichmentError: optionalNullableText,
@@ -1484,6 +1518,7 @@ export const dealContactSchema = z
     title: nullableText,
     imageUrl: nullableText,
     role: nullableText,
+    archivedAt: timestampSchema.nullable().optional(),
   })
   .strict();
 export type DealContact = z.infer<typeof dealContactSchema>;

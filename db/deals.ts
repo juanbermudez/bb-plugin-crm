@@ -1,6 +1,7 @@
 import { createActivity } from "./activities.js";
 import {
   DEAL_STAGES,
+  activityFilterClause,
   isClosedStage,
   newRecordId,
   normalizeCurrency,
@@ -74,7 +75,7 @@ export interface DealListOptions extends ListOptions {
   stages?: readonly DealStage[];
   status?: "all" | "open" | "closed";
   closings?: readonly ("overdue" | "this-month" | "next-month" | "later" | "none")[];
-  sortBy?: "name" | "company" | "owner" | "stage" | "amount" | "expectedClose" | "createdAt" | "lastActivity";
+  sortBy?: "name" | "company" | "owner" | "stage" | "amount" | "expectedClose" | "createdAt" | "lastActivity" | "archivedAt";
   sortDirection?: "asc" | "desc";
 }
 
@@ -237,18 +238,25 @@ export class DealStore {
     params.offset = normalizeOffset(options.offset);
     const sortColumns: Record<NonNullable<DealListOptions["sortBy"]>, string> = {
       name: "name",
-      company: "company_id",
+      company: "(SELECT name FROM companies WHERE companies.id = deals.company_id)",
       owner: "owner_id",
       stage: "stage",
       amount: "base_amount_cents",
       expectedClose: "expected_close_date",
       createdAt: "created_at",
       lastActivity: "last_activity_at",
+      archivedAt: "archived_at",
     };
     const sortColumn = sortColumns[options.sortBy ?? "createdAt"];
     const direction = options.sortDirection === "asc" ? "ASC" : "DESC";
+    const nullLast = options.sortBy === "amount" || options.sortBy === "lastActivity" || options.sortBy === "archivedAt"
+      ? `${sortColumn} IS NULL ASC, `
+      : "";
+    const secondarySort = options.sortBy === "stage"
+      ? `expected_close_date ASC, name COLLATE NOCASE ASC, id ${direction}`
+      : `name COLLATE NOCASE ASC, id ${direction}`;
     return this.db
-      .prepare(`${DEAL_SELECT}${where} ORDER BY ${sortColumn} ${direction}, id ${direction} LIMIT @limit OFFSET @offset`)
+      .prepare(`${DEAL_SELECT}${where} ORDER BY ${nullLast}${sortColumn} COLLATE NOCASE ${direction}, ${secondarySort} LIMIT @limit OFFSET @offset`)
       .all(params)
       .map(row);
   }
@@ -340,10 +348,16 @@ export class DealStore {
       clauses.push(`(
         name LIKE @search COLLATE NOCASE OR
         description LIKE @search COLLATE NOCASE OR
-        currency LIKE @search COLLATE NOCASE
+        currency LIKE @search COLLATE NOCASE OR
+        company_id IN (
+          SELECT id FROM companies
+          WHERE name LIKE @search COLLATE NOCASE
+        )
       )`);
       params.search = `%${search}%`;
     }
+    const activity = activityFilterClause(options.activity, "last_activity_at", params);
+    if (activity) clauses.push(activity);
     return {
       where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
       params,

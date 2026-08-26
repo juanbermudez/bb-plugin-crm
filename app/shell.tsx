@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useBbNavigate,
   type PluginNavPanelProps,
@@ -6,14 +6,17 @@ import {
 import { Button } from "../components/ui/button.js";
 import { Icon, type IconName } from "../components/ui/icon.js";
 import {
+  EnrichmentQueue,
   GlobalSearch,
   WorkspaceChecklist,
   readWorkspaceChecklistState,
   type GlobalSearchResult,
 } from "./components/index.js";
+import type { EnrichmentQueueSubject } from "../contracts/enrichment-queue.js";
 import {
   crmRouteToSubPath,
   parseCrmRoute,
+  type CrmCreateAction,
   type CrmRouteKind,
 } from "./routes.js";
 import { CompaniesView } from "./views/companies/index.js";
@@ -22,6 +25,7 @@ import { DealsView } from "./views/deals/index.js";
 import { DashboardView } from "./views/dashboard/index.js";
 import { SettingsView, type SettingsSection } from "./views/settings/index.js";
 import { AgentsView } from "./views/agents/index.js";
+import { GlobalActivityCreate } from "./components/global-activity-create.js";
 
 const NAV_ITEMS: ReadonlyArray<{
   kind: CrmRouteKind;
@@ -34,6 +38,15 @@ const NAV_ITEMS: ReadonlyArray<{
   { kind: "deals", label: "Deals", icon: "Target" },
   { kind: "agents", label: "Agents", icon: "Brain" },
   { kind: "settings", label: "Settings", icon: "Settings" },
+];
+
+const CREATE_ITEMS: ReadonlyArray<{ action: CrmCreateAction; label: string }> = [
+  { action: "company", label: "New company" },
+  { action: "contact", label: "New contact" },
+  { action: "deal", label: "New deal" },
+  { action: "note", label: "New note" },
+  { action: "task", label: "New task" },
+  { action: "agent", label: "New agent" },
 ];
 
 function PendingView({ kind }: { kind: Exclude<CrmRouteKind, "dashboard"> }) {
@@ -52,13 +65,87 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
   const route = parseCrmRoute(subPath);
   const navigate = useBbNavigate();
   const [createOpen, setCreateOpen] = useState(false);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
+  const createMenuRef = useRef<HTMLDivElement>(null);
   const [checklistOpen, setChecklistOpen] = useState(
     () => !readWorkspaceChecklistState().dismissed,
   );
+
+  useEffect(() => {
+    if (!createOpen) return;
+    const firstItem = createMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    firstItem?.focus();
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (createMenuRef.current?.contains(target) || createButtonRef.current?.contains(target)) return;
+      setCreateOpen(false);
+      createButtonRef.current?.focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setCreateOpen(false);
+        createButtonRef.current?.focus();
+        return;
+      }
+      if (event.key === "Tab") {
+        setCreateOpen(false);
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
+      const items = Array.from(createMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+      if (items.length === 0) return;
+      event.preventDefault();
+      const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+      const nextIndex = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : (currentIndex + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[nextIndex]?.focus();
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [createOpen]);
   const go = useMemo(
     () => (kind: CrmRouteKind) => {
       navigate.toPluginPanel("crm", {
         subPath: crmRouteToSubPath({ kind, recordId: null }),
+      });
+    },
+    [navigate],
+  );
+  const clearCreateRoute = useMemo(
+    () => () => {
+      navigate.toPluginPanel("crm", {
+        subPath: crmRouteToSubPath({
+          kind: route.kind,
+          recordId: route.recordId,
+          ...(route.tab === undefined ? {} : { tab: route.tab }),
+        }),
+      });
+    },
+    [navigate, route.kind, route.recordId, route.tab],
+  );
+  const openCreate = useMemo(
+    () => (action: CrmCreateAction) => {
+      const kind =
+        action === "company"
+          ? "companies"
+          : action === "contact"
+            ? "contacts"
+            : action === "deal"
+              ? "deals"
+              : action === "agent"
+                ? "agents"
+                : "dashboard";
+      navigate.toPluginPanel("crm", {
+        subPath: crmRouteToSubPath({ kind, recordId: null, create: action }),
       });
     },
     [navigate],
@@ -77,6 +164,34 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       }),
     });
   };
+
+  const openQueueSubject = useMemo(
+    () => (subject: EnrichmentQueueSubject) => {
+      const target =
+        subject.kind === "contact"
+          ? { kind: "contacts" as const, recordId: subject.id }
+          : subject.kind === "company"
+            ? { kind: "companies" as const, recordId: subject.id }
+            : subject.kind === "deal"
+              ? { kind: "deals" as const, recordId: subject.id }
+            : subject.kind === "agent"
+              ? { kind: "agents" as const, recordId: subject.id }
+              : subject.related === null
+                ? null
+                : {
+                    kind:
+                      subject.related.kind === "contact"
+                        ? ("contacts" as const)
+                        : subject.related.kind === "company"
+                          ? ("companies" as const)
+                          : ("deals" as const),
+                    recordId: subject.related.id,
+                  };
+      if (target === null) return;
+      navigate.toPluginPanel("crm", { subPath: crmRouteToSubPath(target) });
+    },
+    [navigate],
+  );
 
   const dismissChecklist = () => {
     setChecklistOpen(false);
@@ -113,6 +228,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:flex-none">
             <GlobalSearch onOpen={openSearchResult} className="order-3 w-full sm:order-none sm:w-72" />
+            <EnrichmentQueue onOpen={openQueueSubject} />
             <Button
               type="button"
               variant="ghost"
@@ -130,6 +246,8 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                 size="sm"
                 aria-expanded={createOpen}
                 aria-haspopup="menu"
+                aria-controls="crm-create-menu"
+                ref={createButtonRef}
                 onClick={() => setCreateOpen((open) => !open)}
               >
                 <Icon name="Plus" aria-hidden="true" />
@@ -137,15 +255,23 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
               </Button>
               {createOpen ? (
                 <div
+                  id="crm-create-menu"
+                  ref={createMenuRef}
                   className="absolute right-0 z-40 mt-2 w-44 rounded-lg border border-border bg-background p-1 shadow-lg"
                   role="menu"
                   aria-label="Create CRM record"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setCreateOpen(false);
+                      createButtonRef.current?.focus();
+                    }
+                  }}
                 >
-                  {(["companies", "contacts", "deals"] as const).map((kind) => {
-                    const label = kind === "companies" ? "New company" : kind === "contacts" ? "New contact" : "New deal";
+                  {CREATE_ITEMS.map(({ action, label }) => {
                     return (
                       <Button
-                        key={kind}
+                        key={action}
                         type="button"
                         variant="ghost"
                         size="sm"
@@ -153,7 +279,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
                         role="menuitem"
                         onClick={() => {
                           setCreateOpen(false);
-                          go(kind);
+                          openCreate(action);
                         }}
                       >
                         {label}
@@ -174,7 +300,9 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "companies" ? (
           <CompaniesView
             initialRecordId={route.recordId}
+            initialCreate={route.create === "company"}
             initialTab={route.tab}
+            onCreateChange={route.create === "company" ? clearCreateRoute : undefined}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "companies", recordId }),
@@ -193,7 +321,17 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "contacts" ? (
           <ContactsView
             initialRecordId={route.recordId}
+            initialCreate={route.create === "contact"}
             initialTab={route.tab}
+            onCreateChange={route.create === "contact" ? clearCreateRoute : undefined}
+            onOpenRelatedRecord={(kind, id) => {
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({
+                  kind: kind === "deal" ? "deals" : "companies",
+                  recordId: id,
+                }),
+              });
+            }}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "contacts", recordId }),
@@ -212,7 +350,17 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "deals" ? (
           <DealsView
             initialRecordId={route.recordId}
+            initialCreate={route.create === "deal"}
             initialTab={route.tab}
+            onCreateChange={route.create === "deal" ? clearCreateRoute : undefined}
+            onOpenRelatedRecord={(kind, id) => {
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({
+                  kind: kind === "contact" ? "contacts" : "companies",
+                  recordId: id,
+                }),
+              });
+            }}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "deals", recordId }),
@@ -248,7 +396,9 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "agents" ? (
           <AgentsView
             initialRecordId={route.recordId}
+            initialCreate={route.create === "agent"}
             initialTab={route.tab}
+            onCreateChange={route.create === "agent" ? clearCreateRoute : undefined}
             onRecordIdChange={(recordId) => {
               navigate.toPluginPanel("crm", {
                 subPath: crmRouteToSubPath({ kind: "agents", recordId }),
@@ -269,6 +419,12 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         )}
         </div>
       </main>
+      {route.create === "note" || route.create === "task" ? (
+        <GlobalActivityCreate
+          type={route.create}
+          onClose={clearCreateRoute}
+        />
+      ) : null}
     </div>
   );
 }

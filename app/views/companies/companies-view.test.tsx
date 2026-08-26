@@ -90,6 +90,129 @@ describe("CompaniesView", () => {
     expect(rpc.call).toHaveBeenCalledWith("companies_get", { id: "cmp_acme" });
   });
 
+  it("renders a company icon URL as the table mark", async () => {
+    const faviconCompany: Company = {
+      ...company,
+      iconUrl: "https://acme.example/favicon.ico",
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "companies_list") return listResult([faviconCompany]);
+      if (method === "companies_get") return faviconCompany;
+      return faviconCompany;
+    });
+    render(<CompaniesView rpcClient={rpc} />);
+
+    const row = await screen.findByRole("row", { name: /Open Acme Corporation/ });
+    expect(row.querySelector("img")?.getAttribute("src")).toBe(
+      "https://acme.example/favicon.ico",
+    );
+  });
+
+  it("renders owner-aware contact and deal relationship rows", async () => {
+    const relatedCompany: Company = {
+      ...company,
+      contacts: [
+        {
+          id: "con_ada",
+          firstName: "Ada",
+          lastName: "Lovelace",
+          email: "ada@example.com",
+          title: "Founder",
+          imageUrl: null,
+          ownerId: "owner_contact",
+          owner: {
+            id: "owner_contact",
+            name: "Contact owner",
+            email: "contact-owner@example.com",
+            image: null,
+          },
+        },
+      ],
+      deals: [
+        {
+          id: "deal_expansion",
+          name: "Expansion",
+          stage: "CONTRACT_SENT",
+          amountCents: 125_000,
+          currency: "USD",
+          ownerId: "owner_deal",
+          owner: {
+            id: "owner_deal",
+            name: "Deal owner",
+            email: "deal-owner@example.com",
+            image: null,
+          },
+          expectedCloseDate: "2026-10-31",
+        },
+      ],
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "companies_list") return listResult([relatedCompany]);
+      if (method === "companies_get") return relatedCompany;
+      return relatedCompany;
+    });
+    render(<CompaniesView rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Acme Corporation/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Acme Corporation" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Contacts" }));
+    const contacts = within(drawer).getByRole("region", { name: "Company contacts" });
+    expect(within(contacts).getByRole("button", { name: "Open Ada Lovelace" })).toBeDefined();
+    expect(within(contacts).getByText("Contact owner")).toBeDefined();
+
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
+    const deals = within(drawer).getByRole("region", { name: "Company deals" });
+    expect(within(deals).getByRole("button", { name: "Open Expansion" })).toBeDefined();
+    expect(within(deals).getByText("Contract sent")).toBeDefined();
+    expect(within(deals).getByText("$1,250.00")).toBeDefined();
+    expect(within(deals).getByText("Deal owner")).toBeDefined();
+    expect(within(deals).getByText(/Oct 31, 2026/)).toBeDefined();
+  });
+
+  it("marks archived relationship rows while keeping them visible", async () => {
+    const relatedCompany: Company = {
+      ...company,
+      contacts: [{
+        id: "con_archived",
+        firstName: "Archived",
+        lastName: "Contact",
+        email: "archived@example.com",
+        title: "Former buyer",
+        imageUrl: null,
+        ownerId: null,
+        owner: null,
+        archivedAt: "2026-08-25T00:00:00.000Z",
+      }],
+      deals: [{
+        id: "deal_archived",
+        name: "Archived expansion",
+        stage: "CLOSED_LOST",
+        amountCents: null,
+        currency: "USD",
+        ownerId: null,
+        owner: null,
+        expectedCloseDate: null,
+        archivedAt: "2026-08-25T00:00:00.000Z",
+      }],
+    };
+    const rpc = makeRpc(async (method) => {
+      if (method === "companies_list") return listResult([relatedCompany]);
+      if (method === "companies_get") return relatedCompany;
+      return relatedCompany;
+    });
+    render(<CompaniesView rpcClient={rpc} />);
+
+    fireEvent.click(await screen.findByRole("row", { name: /Open Acme Corporation/ }));
+    const drawer = await screen.findByRole("dialog", { name: "Acme Corporation" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Contacts" }));
+    const contacts = within(drawer).getByRole("region", { name: "Company contacts" });
+    expect(within(contacts).getByText("Archived")).toBeDefined();
+
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Deals" }));
+    const deals = within(drawer).getByRole("region", { name: "Company deals" });
+    expect(within(deals).getByText("Archived")).toBeDefined();
+  });
+
   it("restores a deep-linked drawer tab and reports tab changes", async () => {
     const onTabChange = vi.fn();
     const rpc = makeRpc();
@@ -224,7 +347,8 @@ describe("CompaniesView", () => {
             owner: { usr_juan: 2 },
             industry: { SaaS: 2 },
             source: { MANUAL: 2 },
-            segment: { opt_enterprise: 1 },
+            activity: { "7": 2 },
+            "field:segment": { opt_enterprise: 1 },
           },
         };
       }
@@ -263,6 +387,10 @@ describe("CompaniesView", () => {
     render(<CompaniesView rpcClient={rpc} />);
 
     await screen.findByText("Acme Corporation");
+    const sort = screen.getByLabelText("Sort companies");
+    expect(within(sort).getByRole("option", { name: "Contacts" })).toBeDefined();
+    expect(within(sort).getByRole("option", { name: "Open deals" })).toBeDefined();
+    expect(within(sort).getByRole("option", { name: "Archived" })).toBeDefined();
     fireEvent.change(screen.getByLabelText("Sort companies"), {
       target: { value: "industry" },
     });
@@ -278,12 +406,17 @@ describe("CompaniesView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
     await screen.findByLabelText("Enterprise");
+    const segmentFacet = screen.getByText("Segment").closest("fieldset");
+    expect(segmentFacet).not.toBeNull();
+    expect(within(segmentFacet as HTMLElement).getByText("1")).toBeDefined();
+    fireEvent.click(screen.getByLabelText("Active within 7 days"));
     fireEvent.click(screen.getByLabelText("SaaS"));
     fireEvent.click(screen.getByLabelText("Enterprise"));
     await waitFor(() =>
       expect(rpc.call).toHaveBeenCalledWith(
         "companies_list",
         expect.objectContaining({
+          activity: ["7"],
           industry: ["SaaS"],
           fields: { segment: ["opt_enterprise"] },
         }),
@@ -300,6 +433,40 @@ describe("CompaniesView", () => {
       expect(rpc.call).toHaveBeenCalledWith("companies_bulkArchive", {
         ids: ["cmp_acme"],
       }),
+    );
+  });
+
+  it("opens the create drawer for a routed header action", async () => {
+    render(<CompaniesView rpcClient={makeRpc()} initialCreate />);
+
+    expect(await screen.findByRole("dialog", { name: "New company" })).toBeDefined();
+  });
+
+  it("reports skipped and failed enrichment counts from the bulk RPC", async () => {
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "companies_list") return listResult();
+      if (method === "companies_bulkEnrich") {
+        expect(input).toEqual({ ids: [company.id] });
+        return {
+          requested: 1,
+          succeeded: 0,
+          skipped: 1,
+          failed: 0,
+          message: "No research agent is configured.",
+        };
+      }
+      return company;
+    });
+    render(<CompaniesView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Corporation");
+    fireEvent.click(screen.getByLabelText("Select Acme Corporation"));
+    fireEvent.click(screen.getByRole("button", { name: "Enrich selected" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Company enrichment: requested 1/).textContent).toContain(
+        "Company enrichment: requested 1 · succeeded 0 · skipped 1 · failed 0 · No research agent is configured.",
+      ),
     );
   });
 
@@ -364,7 +531,11 @@ describe("CompaniesView", () => {
       email: "ada@example.com",
       companyId: company.id,
       fields: {},
-      deals: [],
+      deals: [{
+        id: "deal_archived_nested",
+        name: "Archived nested expansion",
+        archivedAt: "2026-08-25T00:00:00.000Z",
+      }],
     };
     let current: Company = {
       ...company,
@@ -383,13 +554,13 @@ describe("CompaniesView", () => {
     const rpc = makeRpc(async (method, input) => {
       if (method === "companies_list") return listResult([current]);
       if (method === "companies_get") return current;
-      if (method === "companies_update") {
+      if (method === "companies_setPrimaryContact") {
         expect(input).toEqual({
-          id: company.id,
-          data: { primaryContactId: contact.id },
+          companyId: company.id,
+          contactId: contact.id,
         });
         current = { ...current, primaryContactId: contact.id };
-        return current;
+        return { id: company.id, primaryContactId: contact.id };
       }
       if (method === "contacts_get") return contact;
       return current;
@@ -405,9 +576,9 @@ describe("CompaniesView", () => {
       screen.getByRole("button", { name: /Make Ada Lovelace primary contact/ }),
     );
     await waitFor(() =>
-      expect(rpc.call).toHaveBeenCalledWith("companies_update", {
-        id: company.id,
-        data: { primaryContactId: contact.id },
+      expect(rpc.call).toHaveBeenCalledWith("companies_setPrimaryContact", {
+        companyId: company.id,
+        contactId: contact.id,
       }),
     );
     expect(screen.getByRole("button", { name: /Clear primary contact: Ada Lovelace/ })).toBeDefined();
