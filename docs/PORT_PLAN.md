@@ -175,8 +175,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
   website history, enrichment, fields, and Agent tab.
 - Primary contact, owner, social links, source, enrichment status, and a
   deterministic `https://<normalized-domain>/favicon.ico` URL when a domain is
-  present. Company contact/open-deal count sorting uses source relation-count
-  semantics, including archived contacts and archived non-closed deals; owner
+  present. Company contact/all-deal count sorting uses source relation-count
+  semantics across active and archived relations; owner
   sorting uses stable local IDs.
 - Related contacts include archived rows ordered by last name/first name; related
   deals include archived rows ordered by source stage then expected close date,
@@ -259,7 +259,8 @@ CRM records, workflows, integrations, automation, or agent behavior.
 
 ### Settings and connections
 
-- General workspace name and reporting currency.
+- BB-managed workspace name, plugin-local normalized company website and
+  optional factual profile, and reporting currency.
 - Agent provider/model/reasoning settings and an optional live BB research-agent selector; provider credentials stay with that agent's tools.
 - Archive retention policy.
 - Connections overview with liveness and last-sync metadata.
@@ -298,9 +299,10 @@ CRM records, workflows, integrations, automation, or agent behavior.
 - Activity facets use the source-compatible 7, 30, and 90-day windows, taking
   the widest selected window. Typed custom-field facets are returned under
   `field:<key>`.
-- Company contact and open-deal count sorts use SQL relation counts. Counts
-  include archived contacts and archived non-closed deals, matching the source
-  detail semantics. Null-last ordering is explicit for activity/archive dates.
+- Company contact and deal count sorts use SQL relation counts across active
+  and archived relations, matching the source list semantics. Detail
+  `openDealCount` remains the source-shaped open-pipeline count. Null-last
+  ordering is explicit for nullable list and related-record fields.
 - Company/contact/deal owner values are installation-local IDs. There is no BB
   identity directory, so owner sorting is ID-based rather than display-name
   based.
@@ -402,7 +404,7 @@ Tasks:
 
 - Finalize manifest, icon, license, repository metadata, and engine ranges.
 - Build append-only migration runner and initial schema; current migrations
-  advance through schema 10 without rewriting earlier versions.
+  advance through schema 11 without rewriting earlier versions.
 - Build route parser, shell, navigation rail, BB header actions, and error boundary.
 - Add shared query cache, realtime invalidation, and mutation error handling.
 - Vendor required BB table, drawer, tabs, select, menu, badge, skeleton,
@@ -588,11 +590,14 @@ future work hidden behind the phase headings above.
 - Schema 10 is an append-only tracking migration: site cookie/cross-domain
   rules, domain limits, observed verification evidence, event medium, and
   daily source/medium rollups are persisted for existing installs.
+- Schema 11 adds the normalized installation website and optional factual
+  workspace profile used by the source workspace settings flow.
 - Company, contact, and deal list queries now use contextual facet counts
   (current search plus active/archived scope), 7/30/90-day activity windows,
   and `field:<key>` custom-field keys. Contacts and deals search associated
-  company names; company contact/open-deal count sorting and null-last date
-  ordering are deterministic.
+  company names; company contact/all-deal count sorting and null-last list and
+  related-record ordering are deterministic. Initial company/contact lists use
+  `createdAt DESC`, and deals open with source status `all`.
 - Contact purge suppression and eligible work-email auto-company resolution are
   persisted in SQLite. Explicit contact recreation clears the suppression
   tombstone; free-mail and machine-generated domains do not create companies.
@@ -609,6 +614,10 @@ future work hidden behind the phase headings above.
   Anonymous visitors are never heuristically attached to CRM records.
 - The CRM header's global New menu routes company/contact/deal/agent creation
   and record-attached note/task creation through the typed views and RPCs.
+- Source-named agent workflows cover pipeline pagination, outstanding
+  research, field administration/manual-only enforcement, local CRM history,
+  stored work history, job-change notes, and durable rechecks. Connected
+  mailbox/calendar bodies remain an explicit provider boundary.
 
 Implementation anchors for this closeout are `db/schema.ts`, `db/types.ts`,
 `db/companies.ts`, `db/contacts.ts`, `db/connections.ts`,

@@ -113,7 +113,7 @@ operator-confirmed site authority.
 ## Plugin checks
 
 - Integrated release-candidate checks in the local working tree (schema
-  version 10): `npm test` passed with 50 test files / 257 tests;
+  version 11): `npm test` passed with 54 test files / 268 tests;
   `npm run typecheck` passed; `./node_modules/.bin/bb plugin types --check .`
   passed; `npm run build` passed and emitted identity-checked metadata; and
   `git diff --check` passed.
@@ -123,7 +123,8 @@ operator-confirmed site authority.
   checks and do not claim a public release.
 - A managed Git install and packaged-BB `0.39.0` panel smoke passed from the
   corrected exact public release-candidate commit after the integrated parity
-  work. It resolved the requested commit, reported schema 10, clean SQLite/FK
+  work. The latest exact-public-SHA rehearsal used `f69342c`, reported schema
+  11, clean SQLite/FK
   health, both background services running, and zero browser-console errors.
   A public-tag install is still required after approval; none is claimed yet.
 - The managed smoke covered Dashboard Me (installation-local owner)/Everyone,

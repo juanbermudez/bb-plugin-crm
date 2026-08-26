@@ -17,12 +17,12 @@ Status meanings:
 
 | Source capability | BB extension target | Status | Phase |
 | --- | --- | --- | --- |
-| Append-only schema evolution | SQLite migrations through `CRM_SCHEMA_VERSION = 10`; migration 10 adds tracking cookie/rule fields, observed verification evidence, event medium, and daily traffic-source rollups | done | 1/7 |
+| Append-only schema evolution | SQLite migrations through `CRM_SCHEMA_VERSION = 11`; migration 10 adds tracking controls/rollups and migration 11 adds the installation website and optional workspace profile | done | 1/7/8 |
 | Contextual facet counts | Counts use the current search and active/archived scope; selecting one facet does not collapse the other facet counts | done | 5 |
 | Activity facets | 7/30/90-day recency windows; multiple windows use the widest selected window | done | 5 |
 | Custom-field facet identity | Strict `field:<key>` keys shared by server output and list controls | done | 5 |
-| Relation count sorting | Company contact and open-deal counts use SQL relation counts; archived contacts and archived non-closed deals remain countable | done | 2/4 |
-| Null-last list ordering | Activity and archive date sorts put nulls last with deterministic name/ID ties | done | 2–4 |
+| Relation count sorting | Company contact and deal counts use SQL relation counts across active and archived relations, matching the source list semantics | done | 2/4 |
+| Null-last list ordering | Nullable list and related-record sorts use source-compatible null-last ordering with deterministic name/ID ties | done | 2–4 |
 | Owner relation sorting | Stable installation-local owner-ID sorting; BB exposes no plugin identity directory for display-name sorting | adapted | 2–5 |
 
 ## Host and shell
@@ -178,6 +178,9 @@ the server.
 | --- | --- | --- | --- |
 | CRM operating skill | Plugin `crm` skill | done | 6 |
 | Search/read/update native tools | `bb.agents.registerTool` | done | 6 |
+| Pipeline and outstanding-work tools | Source-named `list_deals` cursor workflow and `list_outstanding_work`, without a hidden 1,000-record ceiling | done | 6 |
+| Field management tools | Source-named list/manage/archive tools; agent writes refuse fields marked manual-only | done | 5/6 |
+| History/job-change/recheck tools | Local source-named contact/company/deal history, stored work history, job-change note, and durable recheck task workflows; connected message/calendar bodies stay provider-gated | adapted | 6/7 |
 | Evidence and identity rules | Skill references and tool validation | done | 6 |
 | Due-task leasing | Opt-in CRM-local CAS leases, bounded retries, and one explicit live-agent policy | done | 6 |
 | Aggregate enrichment queue | Shell queue for persisted local agent runs, field backfills, due tasks, and scheduled work with record context and local-status wording | done | 6 |
@@ -228,6 +231,7 @@ publicly reachable share requires BB Connect or an external relay.
 | Attribution and sources | Daily anonymous source/medium rollups with event counts and per-day distinct-visitor `visitorDays` | adapted | 7 |
 | Retention rollup | Bounded rollup/prune RPCs | done | 7 |
 | Workspace name | Plugin setting | done | 1 |
+| Workspace website/profile | Schema-11 workspace settings store normalized website identity and an optional factual company profile; BB owns the installation name | done | 8 |
 | Reporting currency | Plugin setting | done | 1 |
 | Research agent | Optional live/deployed BB agent selector; provider credentials remain in that agent's tools | done | 1/6 |
 | Archive retention | Bounded setting, prune RPC, and background service | done | 8 |

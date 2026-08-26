@@ -6,11 +6,11 @@ port plan and marketplace draft and are not treated as passing evidence.
 ## Current integrated release-candidate checks
 
 Verified on 2026-08-26 against the integrated release-candidate working tree,
-with CRM schema version 10, BB `0.39.0`, and plugin SDK `0.4.8`. These
+with CRM schema version 11, BB `0.39.0`, and plugin SDK `0.4.8`. These
 checks are local working-tree evidence; they do not claim a public release,
 tag, or marketplace submission.
 
-- `npm test`: 50 test files and 257 tests passed.
+- `npm test`: 54 test files and 268 tests passed.
 - `npm run typecheck`: passed.
 - `./node_modules/.bin/bb plugin types --check .`: passed.
 - `npm run build`: passed and emitted identity-checked server/app bundles and
@@ -72,7 +72,13 @@ databases for migrations and persistence. They cover:
   live-agent selection, strict `CRM_DUE_TASK` snapshots, completion/reopen
   tooling, global activity creation, the shell enrichment queue, the rule that
   activity authors are never inferred as assignees, and persisted schema-9 to
-  schema-10 migration upgrades.
+  schema-11 migration upgrades.
+- Workspace website/profile persistence, website-only setup, source default
+  list states, null-last related ordering, all-deal count sorting, archived
+  dashboard semantics, manual-only field protection, and the source-named
+  agent pipeline/outstanding-work/field/history/job-change/recheck workflows.
+- Stable focus restoration for global note/task drawers and capture-phase Tab
+  containment for compact drawers, including the independent portal exception.
 
 ## Final release-candidate managed Git-install / packaged-BB smoke
 
@@ -83,9 +89,10 @@ rather than this packaged evidence file. A public `v0.1.0` tag install remains
 approval-gated and must still be checked after the tag is created. No secret,
 one-time credential, or token value is recorded here.
 
-The final release-candidate smoke loaded the plugin successfully; both
+The final schema-11 release-candidate smoke loaded exact public commit
+`f69342c`; both
 `crm-agent-dispatcher` and `crm-archive-retention` background services were
-running, schema version 10 matched, SQLite integrity was `ok`, no foreign-key
+running, schema version 11 matched, SQLite integrity was `ok`, no foreign-key
 violations were found, the managed source resolved to the requested public
 commit, and the browser console reported zero errors.
 
@@ -155,6 +162,11 @@ Observed in the live CRM panel:
   six creation actions (company, contact, deal, note, task, and agent), opened
   the enrichment queue empty state, exercised Escape dismissal, and loaded
   Settings/Tracking at its deep link.
+- The schema-11 smoke opened Settings/Workspace, saved a normalized website
+  without requiring an optional profile, reloaded the deep link with the value
+  intact, and reported no browser-console errors. It also opened and closed the
+  global New note drawer and verified focus returned to the persistent New
+  button while the URL returned to `/dashboard`.
 
 ## Release-gated or not run
 

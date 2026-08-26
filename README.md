@@ -8,7 +8,7 @@ activity, enrichment, integration, and agent workflows. The interface uses BB
 theme tokens and version-matched vendored components.
 
 The core CRM workspace is implemented against the locked CRM release baseline;
-the current append-only storage schema is version 10. Source parity and release
+the current append-only storage schema is version 11. Source parity and release
 validation remain tracked explicitly. The full parity contract and phased task
 breakdown live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md). Track exact source
 capabilities in [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and checks that
@@ -20,9 +20,10 @@ Currently working end to end:
   owner)/Everyone scope,
   pipeline, performance, six-month trend, closing totals, overdue work, and
   recent activity
-- append-only SQLite storage (schema 10) for companies, contacts, deals,
+- append-only SQLite storage (schema 11) for companies, contacts, deals,
   activities, saved views, custom fields, agent lifecycles, connection health,
-  tracking sites/events, and daily traffic-source rollups
+  tracking sites/events, daily traffic-source rollups, and the installation's
+  website/optional company profile
 - company, contact, and deal tables with search, pagination, sorting and
   direction, standard/custom facets, saved-view restore/defaults, row
   selection, and bulk owner/company/stage/archive/restore/purge operations
@@ -32,7 +33,7 @@ Currently working end to end:
   archived relationships, deterministic favicon URLs, and realtime invalidation
 - contextual facet counts scoped to the current search/archive view (including
   7/30/90-day activity windows and `field:<key>` custom-field facets),
-  associated-company search for contacts/deals, and company contact/open-deal
+  associated-company search for contacts/deals, and company contact/all-deal
   count sorting; owner sorting remains stable local owner-ID sorting because BB
   exposes no plugin identity directory
 - work-email auto-company resolution for eligible domains and normalized
@@ -73,6 +74,8 @@ Currently working end to end:
   source/medium rollups with visitor-days, archive/event retention services,
   and one-time token display
 - strict company/contact/deal/activity/currency/field/saved-view wire contracts
+  plus source-named deal, outstanding-work, field-management, history,
+  job-change, and recheck agent workflows
 
 The current BB SDK does not provide plugin RBAC/current-user identity, a plugin
 identity directory, or a plugin blob API. CRM owner facets and sorting therefore
