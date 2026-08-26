@@ -13,6 +13,11 @@ import {
   type AgentThreadLink,
   type AgentVersion,
 } from "./db/agents.js";
+import {
+  agentAttachmentSchema,
+  AGENT_ATTACHMENT_MAX_COUNT,
+  type AgentAttachment,
+} from "./contracts/agents.js";
 import type { Db } from "./db/types.js";
 
 /** The exact public SDK request shape, without importing BB private packages. */
@@ -84,7 +89,16 @@ export interface AgentRunPromptContext {
   agent: Agent;
   version: AgentVersion;
   run: AgentRun;
+  /** Optional canonical BB project attachment references for builder/run prompts. */
+  attachments?: readonly AgentAttachment[];
   safetyRules?: readonly string[];
+}
+
+function attachmentsFromRunInput(input: AgentRun["input"]): AgentAttachment[] {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return [];
+  const candidate = (input as Record<string, unknown>).attachments;
+  if (candidate === undefined) return [];
+  return z.array(agentAttachmentSchema).max(AGENT_ATTACHMENT_MAX_COUNT).parse(candidate);
 }
 
 /**
@@ -98,8 +112,12 @@ export function buildAgentRunPrompt({
   agent,
   version,
   run,
+  attachments,
   safetyRules = DEFAULT_CRM_AGENT_SAFETY_RULES,
 }: AgentRunPromptContext): string {
+  const promptAttachments = attachments === undefined
+    ? attachmentsFromRunInput(run.input)
+    : z.array(agentAttachmentSchema).max(AGENT_ATTACHMENT_MAX_COUNT).parse(attachments);
   const metadata = {
     runId: run.id,
     agentId: agent.id,
@@ -139,6 +157,9 @@ export function buildAgentRunPrompt({
     "<<<CRM_RUN_INPUT>>>",
     JSON.stringify(run.input),
     "<<<END_CRM_RUN_INPUT>>>",
+    "",
+    "## Run attachments (JSON)",
+    JSON.stringify(promptAttachments),
     "",
     "## Safety and approval rules",
     ...safetyRules.map((rule, index) => `${index + 1}. ${rule}`),
@@ -339,18 +360,33 @@ function threadLinkId(db: Db, threadId: string): string | null {
   return typeof row?.id === "string" ? row.id : null;
 }
 
-function inputForPrompt(prompt: string): Array<{
-  type: "text";
-  text: string;
-  mentions: [];
-}> {
+/** Build host prompt parts from text plus safe, server-managed BB attachment refs. */
+export function buildAgentThreadInput(
+  prompt: string,
+  attachments: readonly AgentAttachment[] = [],
+): AgentThreadInput {
+  const promptAttachments = z
+    .array(agentAttachmentSchema)
+    .max(AGENT_ATTACHMENT_MAX_COUNT)
+    .parse(attachments);
   return [
     {
       type: "text",
       text: prompt,
       mentions: [],
     },
-  ];
+    ...promptAttachments.map((attachment) =>
+      attachment.type === "localImage"
+        ? { type: "localImage" as const, path: attachment.path, visibility: "agent-only" as const }
+        : {
+            type: "localFile" as const,
+            path: attachment.path,
+            name: attachment.name,
+            sizeBytes: attachment.sizeBytes,
+            ...(attachment.mimeType === undefined ? {} : { mimeType: attachment.mimeType }),
+            visibility: "agent-only" as const,
+          }),
+  ] as AgentThreadInput;
 }
 
 export class AgentDispatcher {
@@ -514,7 +550,7 @@ export class AgentDispatcher {
       const spawned = await this.options.bb.sdk.threads.spawn({
         projectId,
         environment: this.environment,
-        input: inputForPrompt(prompt) as AgentThreadInput,
+        input: buildAgentThreadInput(prompt, attachmentsFromRunInput(claimed.input)),
         title: this.threadTitle(claimed),
         visibility: this.visibility,
         ...(this.options.providerId === undefined ? {} : { providerId: this.options.providerId }),
@@ -687,7 +723,7 @@ export class AgentDispatcher {
       await this.options.bb.sdk.threads.send({
         threadId: link.threadId,
         mode: "auto",
-        input: inputForPrompt(prompt) as AgentThreadSendInput,
+        input: buildAgentThreadInput(prompt, attachmentsFromRunInput(run.input)) as AgentThreadSendInput,
         ...(this.options.providerId === undefined ? {} : { providerId: this.options.providerId }),
         ...(selectedModel === undefined ? {} : { model: selectedModel }),
         ...(this.options.reasoningLevel === undefined

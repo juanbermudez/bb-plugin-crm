@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import type { PluginAgentConfigurationContext } from "@get-bb/plugin-sdk";
 import plugin from "./server.js";
 import { CRM_AGENT_DISPATCH_SERVICE_NAME } from "./server.js";
 import { createAgentStore } from "./db/agents.js";
@@ -8,6 +9,29 @@ import { createCurrencyStore } from "./db/currency.js";
 import { CRM_SCHEMA_VERSION } from "./db/schema.js";
 
 type ServerHarness = ReturnType<typeof createFakePluginHost>["harness"];
+
+function agentConfigurationContext(
+  supportsNativeUserQuestion: boolean,
+): PluginAgentConfigurationContext {
+  return {
+    thread: { id: "thread-test", title: null, parentThreadId: null, sourceThreadId: null },
+    project: { id: "project-test", kind: "standard", name: "CRM", gitRemoteUrl: null },
+    environment: {
+      id: "environment-test",
+      name: null,
+      path: null,
+      workspaceProvisionType: "unmanaged",
+      branchName: null,
+    },
+    host: { id: "host-test", name: "Local" },
+    provider: {
+      id: "provider-test",
+      model: "model-test",
+      capabilities: { supportsNativeUserQuestion },
+    },
+    origin: { kind: null, pluginId: null },
+  };
+}
 
 async function seedLiveServerAgent(
   harness: ServerHarness,
@@ -236,6 +260,7 @@ describe("CRM plugin foundation", () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
     await plugin(bb);
     expect(harness.registrations.agentTools.map((tool) => tool.name)).toEqual([
+      "ask_question",
       "crm_search",
       "crm_get_record",
       "crm_create_record",
@@ -289,6 +314,69 @@ describe("CRM plugin foundation", () => {
     await expect(harness.callAgentTool("crm_list_tasks", {
       window: "all",
     })).resolves.toContain("Agent follow-up");
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("withholds the CRM clarification tool when the provider supplies one natively", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      agentSkillIds: ["crm"],
+    });
+    await plugin(bb);
+
+    const native = await harness.resolveAgentConfiguration(agentConfigurationContext(true));
+    const pluginOwned = await harness.resolveAgentConfiguration(agentConfigurationContext(false));
+    expect(native.tools.map((tool) => tool.name)).not.toContain("ask_question");
+    expect(pluginOwned.tools.map((tool) => tool.name)).toContain("ask_question");
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("opens a strict CRM clarification interaction and returns the selected answer", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+
+    await expect(harness.callAgentTool("ask_question", {
+      prompt: "Which account should receive this activity?",
+      options: [
+        { id: "account-a", label: "Account A", description: "Use the existing account." },
+        { id: "account-b", label: "Account B", description: "Use the secondary account." },
+      ],
+      allowFreeform: false,
+      unexpected: true,
+    })).rejects.toThrow(/arguments are invalid/u);
+
+    const pendingAnswer = harness.callAgentTool("ask_question", {
+      prompt: "Which account should receive this activity?",
+      options: [
+        { id: "account-a", label: "Account A", description: "Use the existing account." },
+        { id: "account-b", label: "Account B", description: "Use the secondary account." },
+      ],
+    });
+    await vi.waitFor(() => expect(harness.pendingInteractions).toHaveLength(1));
+
+    const pending = harness.pendingInteractions[0]!;
+    expect(pending).toMatchObject({
+      threadId: "thread-test",
+      rendererId: "crm-question",
+      title: "CRM clarification",
+    });
+    expect(pending.payload).toMatchObject({
+      kind: "question",
+      prompt: "Which account should receive this activity?",
+      display: "select",
+      allowFreeform: false,
+    });
+
+    harness.submitInteraction(pending.id, {
+      requestId: (pending.payload as { requestId: string }).requestId,
+      optionId: "account-b",
+    });
+    await expect(pendingAnswer).resolves.toEqual(JSON.stringify({
+      requestId: (pending.payload as { requestId: string }).requestId,
+      optionId: "account-b",
+    }));
 
     await harness.lifecycle.dispose();
   });

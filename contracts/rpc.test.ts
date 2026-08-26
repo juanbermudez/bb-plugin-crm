@@ -171,6 +171,9 @@ describe("CRM RPC contract", () => {
       "agents_threads_list",
       "agents_threads_get",
       "agents_threads_createRecord",
+      "agents_attachments_upload",
+      "agents_attachments_read",
+      "agents_attachments_copy",
     ]);
   });
 

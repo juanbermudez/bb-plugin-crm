@@ -3,8 +3,9 @@ import type {
   PluginCliContext,
   PluginCliResult,
   PluginHttpHandler,
+  PluginAgentToolResult,
 } from "@get-bb/plugin-sdk";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import { z } from "zod";
 import {
@@ -13,7 +14,19 @@ import {
   type AgentDispatchResult,
   type AgentThreadSpawnArgs,
 } from "./agent-dispatch.js";
+import {
+  copyAgentAttachments,
+  readAgentAttachment,
+  uploadAgentAttachment,
+} from "./agent-attachments.js";
 import type { AgentRecordType } from "./contracts/agents.js";
+import {
+  askQuestionInputSchema,
+  clarificationResponseSchema,
+  CLARIFICATION_RENDERER_ID,
+  type AskQuestionInput,
+  type ClarificationPayload,
+} from "./contracts/clarification.js";
 import {
   activityCreateInputSchema,
   companyCreateInputSchema,
@@ -1423,6 +1436,32 @@ export default async function plugin(bb: BbPluginApi) {
       if (preferred) return preferred.id;
     }
     return projects[0]?.id ?? null;
+  }
+
+  /**
+   * Resolve the project for one agent/version before touching attachment
+   * bytes. A caller supplies only CRM ids; it never supplies a workspace path
+   * or an arbitrary target project. Draft versions may opt into a manifest
+   * project, while the existing project fallback keeps the builder usable
+   * before its first deployment.
+   */
+  async function resolveAgentAttachmentProject(
+    agentId: string,
+    versionId?: string,
+  ): Promise<{ projectId: string; projects: readonly AvailableProject[] }> {
+    const agent = agents.getRequired(agentId);
+    const version = versionId === undefined
+      ? agent.currentVersionId === null
+        ? null
+        : agents.getVersionRequired(agent.currentVersionId)
+      : agents.getVersionRequired(versionId);
+    if (version !== null && version.agentId !== agent.id) {
+      throw new Error("The selected agent version does not belong to this agent.");
+    }
+    const projects = await readAvailableProjects();
+    const projectId = chooseProject(projects, version === null ? null : manifestProjectId(version.manifest));
+    if (projectId === null) throw new Error(NO_PROJECT_DIAGNOSTIC);
+    return { projectId, projects };
   }
 
   /**
@@ -3290,6 +3329,34 @@ export default async function plugin(bb: BbPluginApi) {
     agents_threads_createRecord(input) {
       return createRecordAgentThread(input.agentId, input.recordType, input.recordId);
     },
+    async agents_attachments_upload(input) {
+      const { projectId } = await resolveAgentAttachmentProject(input.agentId, input.versionId);
+      return uploadAgentAttachment(
+        { attachments: bb.sdk.projects.attachments },
+        projectId,
+        input,
+      );
+    },
+    async agents_attachments_read(input) {
+      const { projectId } = await resolveAgentAttachmentProject(input.agentId, input.versionId);
+      return readAgentAttachment(
+        { attachments: bb.sdk.projects.attachments },
+        projectId,
+        input.path,
+      );
+    },
+    async agents_attachments_copy(input) {
+      const { projectId, projects } = await resolveAgentAttachmentProject(input.agentId, input.versionId);
+      if (!projects.some((project) => project.id === input.sourceProjectId)) {
+        throw new Error("The source project is unavailable or deleted.");
+      }
+      return copyAgentAttachments(
+        { attachments: bb.sdk.projects.attachments },
+        projectId,
+        input.sourceProjectId,
+        input.paths,
+      );
+    },
     async dashboard_summary({ scope, ownerId }) {
       const { reportingCurrency: configuredCurrency } = await settings.get();
       const reportingCurrency = currencyCodeSchema.parse(configuredCurrency);
@@ -4092,6 +4159,7 @@ export default async function plugin(bb: BbPluginApi) {
     "crm_update_record",
     "crm_add_activity",
     "crm_list_tasks",
+    "ask_question",
     "crm_set_field",
     "crm_record_contact_fact",
     "crm_record_contact_brief",
@@ -4162,6 +4230,95 @@ export default async function plugin(bb: BbPluginApi) {
       (value) => value.type !== "TASK" || Boolean(value.subject),
       "A task needs a subject.",
     );
+
+  function clarificationError(message: string): PluginAgentToolResult {
+    return {
+      content: [{ type: "text", text: message }],
+      isError: true,
+    };
+  }
+
+  function clarificationPayload(
+    input: AskQuestionInput,
+    requestId: string,
+  ): ClarificationPayload {
+    const display = input.display ?? (input.options.length > 0 ? "select" : "text");
+    return {
+      kind: "question",
+      requestId,
+      prompt: input.prompt,
+      display,
+      options: input.options.map((option) =>
+        option.description === undefined
+          ? { id: option.id, label: option.label }
+          : option,
+      ),
+      // A text-only question always needs an answer. An empty option list is
+      // also a freeform question even when a caller explicitly chose another
+      // display mode, matching the CRM's source questionnaire behavior.
+      allowFreeform:
+        input.allowFreeform ?? (display === "text" || input.options.length === 0),
+    };
+  }
+
+  bb.agents.registerTool({
+    name: "ask_question",
+    description:
+      "Ask one focused clarification question when a materially necessary decision cannot be resolved from the request, CRM data, or a safe default.",
+    instructions:
+      "Ask only when the user's answer changes what happens next. Use two to four distinct options when they clarify a real choice; use allowFreeform when a custom answer is valid. Do not ask for optional detail or invent an option. Wait for the response before continuing.",
+    parameters: askQuestionInputSchema,
+    async execute(input, context) {
+      const requestId = randomUUID();
+      const payload = clarificationPayload(input, requestId);
+      let result;
+      try {
+        result = await bb.ui.requestInput(
+          {
+            threadId: context.threadId,
+            rendererId: CLARIFICATION_RENDERER_ID,
+            title: "CRM clarification",
+            payload,
+          },
+          { signal: context.signal },
+        );
+      } catch (error) {
+        return clarificationError(
+          `The clarification question could not be shown: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+
+      if (result.outcome === "cancelled") {
+        return clarificationError(
+          result.reason === "timeout"
+            ? "The clarification question timed out before the user answered. Continue with the safest supported default, or ask again later if the decision is still material."
+            : "The user dismissed the clarification question without answering. Continue with the safest supported default, or ask again in a later turn if the decision is still material.",
+        );
+      }
+
+      const response = clarificationResponseSchema.safeParse(result.value);
+      if (!response.success || response.data.requestId !== requestId) {
+        return clarificationError(
+          "The clarification answer was invalid or belonged to a different question. Do not guess; ask again in a later turn if the decision is still material.",
+        );
+      }
+      if ("optionId" in response.data) {
+        const optionId = response.data.optionId;
+        if (!payload.options.some((option) => option.id === optionId)) {
+          return clarificationError(
+            "The clarification answer selected an unavailable option. Do not guess; ask the question again if the decision is still material.",
+          );
+        }
+      } else if (!payload.allowFreeform) {
+        return clarificationError(
+          "The clarification answer supplied free text where only listed options are valid. Ask again with one of the listed options.",
+        );
+      }
+      return JSON.stringify(response.data);
+    },
+  });
 
   bb.agents.registerTool({
     name: "crm_search",
@@ -4436,8 +4593,10 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  bb.agents.configure(() => ({
-    tools: [...agentToolNames],
+  bb.agents.configure((context) => ({
+    tools: context.provider.capabilities.supportsNativeUserQuestion
+      ? agentToolNames.filter((name) => name !== "ask_question")
+      : [...agentToolNames],
     skills: ["crm"],
     instructions:
       "CRM tools are available. Search before creating, preserve source money, and record evidence for enrichment. Never write an unverified social URL or claim an external result that a provider tool did not confirm.",

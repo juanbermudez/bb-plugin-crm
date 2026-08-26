@@ -6,6 +6,12 @@ import {
   agentActionSchema,
   agentAuditEventSchema,
   agentAuditListInputSchema,
+  agentAttachmentCopyInputSchema,
+  agentAttachmentCopyOutputSchema,
+  agentAttachmentReadInputSchema,
+  agentAttachmentReadOutputSchema,
+  agentAttachmentUploadInputSchema,
+  agentAttachmentSchema,
   agentCancelledRunSchema,
   agentCreateInputSchema,
   agentDefinitionSchema,
@@ -886,5 +892,17 @@ export const rpcContract = defineRpcContract({
   agents_threads_createRecord: {
     input: agentThreadRecordCreateInputSchema,
     output: agentThreadLinkSchema,
+  },
+  agents_attachments_upload: {
+    input: agentAttachmentUploadInputSchema,
+    output: agentAttachmentSchema,
+  },
+  agents_attachments_read: {
+    input: agentAttachmentReadInputSchema,
+    output: agentAttachmentReadOutputSchema,
+  },
+  agents_attachments_copy: {
+    input: agentAttachmentCopyInputSchema,
+    output: agentAttachmentCopyOutputSchema,
   },
 });

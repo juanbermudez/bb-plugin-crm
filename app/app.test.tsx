@@ -5,6 +5,13 @@ import { describe, expect, it } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 describe("CRM nav panel", () => {
+  it("registers the native CRM clarification renderer", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+
+    expect(app.pendingInteractions).toHaveLength(1);
+    expect(app.pendingInteractions[0]?.id).toBe("crm-question");
+  });
+
   it("renders the operational dashboard and records BB navigation", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels).toHaveLength(1);

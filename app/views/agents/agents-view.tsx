@@ -17,6 +17,7 @@ import {
   TableShell,
 } from "../../components/index.js";
 import type {
+  AgentAttachment,
   AgentAuditEvent,
   AgentDefinition,
   AgentDefinitionStatus,
@@ -31,6 +32,7 @@ import type {
   AgentVersionStatus,
 } from "../../../contracts/agents.js";
 import { useAgentsRpc, type AgentsRpcClient } from "./rpc.js";
+import { AgentAttachmentPicker } from "./agent-attachments.js";
 
 const LIST_LIMIT = 100;
 const SELECT_CLASS =
@@ -1240,6 +1242,7 @@ function RunHistory({
   const [loading, setLoading] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [queueing, setQueueing] = useState(false);
+  const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -1275,7 +1278,13 @@ function RunHistory({
     setError(null);
     setNotice(null);
     try {
-      const result = await rawRpc(rpc).call("agents_runs_queue", { agentId: agent.id });
+      const result = await rawRpc(rpc).call(
+        "agents_runs_queue",
+        attachments.length === 0
+          ? { agentId: agent.id }
+          : { agentId: agent.id, input: { attachments } },
+      );
+      setAttachments([]);
       if (isRecord(result) && typeof result.id === "string") setSelectedRun(result as unknown as AgentRunDetail);
       setNotice("Run queued for the BB thread dispatcher.");
       await reloadRuns();
@@ -1319,6 +1328,14 @@ function RunHistory({
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
         Run now persists a <strong className="font-semibold">QUEUED</strong> run first. The background dispatcher starts a hidden BB thread when an eligible project is available.
       </div>
+      <AgentAttachmentPicker
+        agentId={agent.id}
+        versionId={agent.currentVersionId}
+        rpc={rpc}
+        value={attachments}
+        onChange={setAttachments}
+        disabled={queueing || !agent.currentVersionId}
+      />
       <InlineError message={error} />
       {notice ? <p className="text-sm text-emerald-700 dark:text-emerald-300" role="status">{notice}</p> : null}
       {loading && runs.length === 0 ? (

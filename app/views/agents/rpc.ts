@@ -1,6 +1,12 @@
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import type {
+  AgentAttachment,
+  AgentAttachmentCopyInput,
+  AgentAttachmentCopyOutput,
+  AgentAttachmentReadInput,
+  AgentAttachmentReadOutput,
+  AgentAttachmentUploadInput,
   AgentAuditEvent,
   AgentDefinition,
   AgentDetail,
@@ -102,6 +108,18 @@ export interface AgentsRpcClient {
   call(method: "agents_runs_fail", input: { id: string }): Promise<AgentRunDetail>;
   call(method: "agents_runs_cancel", input: { id: string }): Promise<AgentRunDetail & { cancelled: boolean }>;
   call(method: "agents_runs_retry", input: { id: string }): Promise<AgentRunDetail>;
+  call(
+    method: "agents_attachments_upload",
+    input: AgentAttachmentUploadInput,
+  ): Promise<AgentAttachment>;
+  call(
+    method: "agents_attachments_read",
+    input: AgentAttachmentReadInput,
+  ): Promise<AgentAttachmentReadOutput>;
+  call(
+    method: "agents_attachments_copy",
+    input: AgentAttachmentCopyInput,
+  ): Promise<AgentAttachmentCopyOutput>;
   call(
     method: "agents_audit_list",
     input: { agentId: string; limit: number; offset: number },

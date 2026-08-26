@@ -13,6 +13,181 @@ const offsetSchema = z.number().int().finite().min(0).default(0);
 const jsonValue = rpcJsonValueSchema;
 const jsonObject = rpcJsonObjectSchema;
 
+/**
+ * Attachment limits deliberately match the builder's small-file contract.
+ * Attachments are uploaded through BB's project area; the CRM never accepts a
+ * local path or reads the host filesystem on behalf of a caller.
+ */
+export const AGENT_ATTACHMENT_MAX_COUNT = 5;
+export const AGENT_ATTACHMENT_MAX_BYTES = 2_000_000;
+export const AGENT_ATTACHMENT_MAX_NAME_LENGTH = 180;
+export const AGENT_ATTACHMENT_MAX_MIME_LENGTH = 120;
+export const AGENT_ATTACHMENT_MAX_PATH_LENGTH = 1_024;
+export const AGENT_ATTACHMENT_MAX_BASE64_LENGTH =
+  Math.ceil(AGENT_ATTACHMENT_MAX_BYTES / 3) * 4;
+
+const noControlCharacters = (value: string): boolean =>
+  !/[\u0000-\u001f\u007f]/u.test(value);
+const noPathSeparators = (value: string): boolean =>
+  !/[\\/]/u.test(value);
+
+/** Relative, server-managed BB attachment references only. */
+export const agentAttachmentPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_ATTACHMENT_MAX_PATH_LENGTH)
+  .refine(noControlCharacters, "Attachment paths cannot contain control characters.")
+  .refine((value) => !value.startsWith("/") && !value.startsWith("~"), "Attachment paths must be relative.")
+  .refine((value) => !value.includes("\\"), "Attachment paths must use server-managed path references.")
+  .refine((value) => !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value), "Attachment paths cannot be URI-like values.")
+  .refine(
+    (value) => value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+    "Attachment paths cannot contain traversal segments.",
+  );
+
+const agentAttachmentNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_ATTACHMENT_MAX_NAME_LENGTH)
+  .refine(noControlCharacters, "Attachment names cannot contain control characters.")
+  .refine(noPathSeparators, "Attachment names cannot contain path separators.");
+
+const agentAttachmentMimeSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(AGENT_ATTACHMENT_MAX_MIME_LENGTH)
+  .refine(noControlCharacters, "Attachment MIME types cannot contain control characters.");
+
+const agentAttachmentSizeSchema = z
+  .number()
+  .int()
+  .finite()
+  .min(1)
+  .max(AGENT_ATTACHMENT_MAX_BYTES);
+
+const agentAttachmentBase64Schema = z
+  .string()
+  .min(1)
+  .max(AGENT_ATTACHMENT_MAX_BASE64_LENGTH)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u, "Attachment content must be base64.");
+
+export const agentAttachmentKindSchema = z.enum(["localFile", "localImage"]);
+
+/** Metadata persisted in a run input and safe to forward as a BB prompt part. */
+export const agentAttachmentSchema = z
+  .object({
+    path: agentAttachmentPathSchema,
+    name: agentAttachmentNameSchema,
+    mimeType: agentAttachmentMimeSchema.optional(),
+    sizeBytes: agentAttachmentSizeSchema,
+    type: agentAttachmentKindSchema,
+  })
+  .strict();
+export type AgentAttachment = z.infer<typeof agentAttachmentSchema>;
+
+/**
+ * Upload accepts `name` (the UI vocabulary) and `filename` (the SDK
+ * vocabulary) as mutually exclusive aliases. `size` is retained as a small
+ * compatibility alias for callers migrated from the builder API.
+ */
+export const agentAttachmentUploadInputSchema = z
+  .object({
+    agentId: idSchema,
+    versionId: idSchema.optional(),
+    name: agentAttachmentNameSchema.optional(),
+    filename: agentAttachmentNameSchema.optional(),
+    mimeType: agentAttachmentMimeSchema.optional(),
+    type: agentAttachmentMimeSchema.optional(),
+    sizeBytes: agentAttachmentSizeSchema.optional(),
+    size: agentAttachmentSizeSchema.optional(),
+    contentBase64: agentAttachmentBase64Schema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.name === undefined && value.filename === undefined) {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Attachment name is required." });
+    }
+    if (value.name !== undefined && value.filename !== undefined && value.name !== value.filename) {
+      ctx.addIssue({ code: "custom", path: ["filename"], message: "name and filename must match when both are supplied." });
+    }
+    if (value.sizeBytes === undefined && value.size === undefined) {
+      ctx.addIssue({ code: "custom", path: ["sizeBytes"], message: "Attachment size is required." });
+    }
+    if (value.sizeBytes !== undefined && value.size !== undefined && value.sizeBytes !== value.size) {
+      ctx.addIssue({ code: "custom", path: ["size"], message: "size and sizeBytes must match when both are supplied." });
+    }
+    const name = value.name ?? value.filename;
+    const size = value.sizeBytes ?? value.size;
+    if (name !== undefined && size !== undefined) {
+      // Base64 is canonical and padded, so this is an exact byte-size check;
+      // the server repeats it before calling the SDK as a defense in depth.
+      const decodedLength = Math.floor(value.contentBase64.length * 3 / 4) -
+        (value.contentBase64.endsWith("==") ? 2 : value.contentBase64.endsWith("=") ? 1 : 0);
+      if (decodedLength !== size) {
+        ctx.addIssue({ code: "custom", path: ["sizeBytes"], message: "Attachment size does not match contentBase64." });
+      }
+    }
+  });
+export type AgentAttachmentUploadInput = z.infer<typeof agentAttachmentUploadInputSchema>;
+
+export const agentAttachmentReadInputSchema = z
+  .object({
+    agentId: idSchema,
+    versionId: idSchema.optional(),
+    path: agentAttachmentPathSchema,
+  })
+  .strict();
+export type AgentAttachmentReadInput = z.infer<typeof agentAttachmentReadInputSchema>;
+
+export const agentAttachmentReadOutputSchema = z
+  .object({
+    path: agentAttachmentPathSchema,
+    mimeType: agentAttachmentMimeSchema,
+    sizeBytes: agentAttachmentSizeSchema,
+    contentBase64: agentAttachmentBase64Schema,
+  })
+  .strict();
+export type AgentAttachmentReadOutput = z.infer<typeof agentAttachmentReadOutputSchema>;
+
+export const agentAttachmentCopyInputSchema = z
+  .object({
+    agentId: idSchema,
+    versionId: idSchema.optional(),
+    sourceProjectId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .refine(noControlCharacters, "Project ids cannot contain control characters."),
+    paths: z.array(agentAttachmentPathSchema).min(1).max(AGENT_ATTACHMENT_MAX_COUNT),
+  })
+  .strict();
+export type AgentAttachmentCopyInput = z.infer<typeof agentAttachmentCopyInputSchema>;
+
+export const agentAttachmentCopyOutputSchema = z
+  .object({
+    paths: z.array(agentAttachmentPathSchema).min(1).max(AGENT_ATTACHMENT_MAX_COUNT),
+  })
+  .strict();
+export type AgentAttachmentCopyOutput = z.infer<typeof agentAttachmentCopyOutputSchema>;
+
+/** Attachments are an optional structured extension of the existing JSON run input. */
+export const agentRunInputSchema = jsonValue
+  .nullable()
+  .superRefine((value, ctx) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const candidate = (value as Record<string, unknown>).attachments;
+    if (candidate === undefined) return;
+    const parsed = z.array(agentAttachmentSchema).max(AGENT_ATTACHMENT_MAX_COUNT).safeParse(candidate);
+    if (!parsed.success) {
+      ctx.addIssue({ code: "custom", path: ["attachments"], message: "Run attachments are invalid or exceed the attachment limits." });
+    }
+  });
+export type AgentRunInput = z.infer<typeof agentRunInputSchema>;
+
 export const agentDefinitionStatuses = [
   "DRAFT",
   "DEPLOYING",
@@ -503,7 +678,7 @@ export const agentRunQueueInputSchema = z
     sessionId: idSchema.nullable().optional(),
     idempotencyKey: nonEmptyText.optional(),
     correlationId: nonEmptyText.optional(),
-    input: jsonValue.nullable().optional(),
+    input: agentRunInputSchema.optional(),
     modelId: idSchema.nullable().optional(),
   })
   .strict();
