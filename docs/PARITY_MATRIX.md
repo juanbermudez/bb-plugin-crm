@@ -105,24 +105,24 @@ and serve them through a local authenticated plugin route. BB has no plugin blob
 
 | Source capability | Target | Status | Phase |
 | --- | --- | --- | --- |
-| Deal list | Paginated CRM table | planned | 4 |
-| Open/closed tabs | List scope control | planned | 4 |
+| Deal list | Paginated CRM table | done | 4 |
+| Open/closed tabs | List scope control | done | 4 |
 | Owner/stage/closing facets | Filter bar | planned | 4 |
-| Inline stage change | Table and record controls | planned | 4 |
-| Close-reason dialog | Responsive confirmation dialog | planned | 4 |
-| Bulk owner/stage/archive | Bulk RPC and CLI | planned | 4 |
-| Create deal | Wide responsive drawer | planned | 4 |
-| Deal overview and stats | Record tab | planned | 4 |
+| Inline stage change | Table and record controls | building | 4 |
+| Close-reason dialog | Responsive confirmation dialog | done | 4 |
+| Bulk owner/stage/archive | Bulk RPC and CLI | building | 4 |
+| Create deal | Wide responsive drawer | done | 4 |
+| Deal overview and stats | Record tab | done | 4 |
 | Stage stepper | BB-tokenized stepper | planned | 4 |
 | Attached contacts and roles | Record tab | planned | 4 |
 | Deal activity | Record tab | planned | 5 |
 | Deal Agent tab | Linked BB thread | planned | 6 |
-| Source amount/currency | Integer minor units and code | planned | 4 |
-| Frozen base amount | Stored converted minor units | planned | 4 |
-| Manual rates | Currency settings | planned | 4/8 |
-| Fetched rates | Scheduled optional service | planned | 4 |
-| Explicit re-rate | Admin operation | planned | 4 |
-| Unconverted disclosure | Lists and dashboard warning | planned | 4 |
+| Source amount/currency | Integer minor units and code | done | 4 |
+| Frozen base amount | Stored converted minor units | done | 4 |
+| Manual rates | Currency settings | building | 4/8 |
+| Fetched rates | Scheduled optional service | building | 4 |
+| Explicit re-rate | Admin operation | building | 4 |
+| Unconverted disclosure | Lists and dashboard warning | done | 4 |
 
 ## Records, fields, views, and activity
 
@@ -228,6 +228,6 @@ installation-wide CRM. BB SDK `0.4.8` exposes no current-user identity or RBAC A
 | Marketplace PR body draft | done |
 | Production release tag | planned |
 | Fresh public-tag install test | planned |
-| Browser parity QA | building; company lifecycle smoke passed |
+| Browser parity QA | building; company/contact/deal lifecycle smoke passed |
 | Electron parity QA | planned |
 | Marketplace PR submission | planned |
