@@ -108,22 +108,26 @@ export function workspaceChecklistProgress(): { completed: number; total: number
 export function ChecklistProgressRing({
   completed,
   total,
+  minimumRatio = 0,
   className,
 }: {
   completed: number;
   total: number;
+  /** Optional visual floor that keeps an empty setup ring recognizable as progress. */
+  minimumRatio?: number;
   className?: string;
 }) {
-  const ratio = total === 0 ? 0 : Math.min(1, completed / total);
+  const actualRatio = total === 0 ? 0 : Math.min(1, completed / total);
+  const ratio = Math.max(actualRatio, Math.min(1, Math.max(0, minimumRatio)));
   const radius = 7;
   const circumference = 2 * Math.PI * radius;
   return (
     <svg
       viewBox="0 0 18 18"
-      className={cn("size-4 -rotate-90", className)}
+      className={cn("size-[18px] -rotate-90", className)}
       aria-hidden="true"
     >
-      <circle cx="9" cy="9" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground/30" />
+      <circle cx="9" cy="9" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground/35" />
       <circle
         cx="9"
         cy="9"

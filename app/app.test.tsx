@@ -125,6 +125,13 @@ describe("CRM nav panel", () => {
       path: "crm",
       options: { subPath: "contacts" },
     });
+    expect(headerSlot.queryByRole("searchbox", { name: "Search CRM" })).toBeNull();
+    fireEvent.click(headerSlot.getByRole("button", { name: "Search CRM" }));
+    const headerSearch = headerSlot.getByRole("searchbox", { name: "Search CRM" });
+    expect(document.activeElement).toBe(headerSearch);
+    fireEvent.keyDown(headerSearch, { key: "Escape" });
+    expect(headerSlot.queryByRole("searchbox", { name: "Search CRM" })).toBeNull();
+    expect(headerSlot.getByRole("button", { name: "Search CRM" })).toBeDefined();
     expect(headerSlot.getByRole("button", { name: "Checklist, 0 of 4 complete" })).toBeDefined();
     expect(headerSlot.getByRole("button", { name: /Enrichment queue/ })).toBeDefined();
     fireEvent.click(headerSlot.getByRole("button", { name: /Enrichment queue/ }));

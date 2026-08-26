@@ -11,6 +11,13 @@ import {
 import { rpcContract } from "../../contracts/rpc.js";
 import { Button } from "../../components/ui/button.js";
 import { Icon } from "../../components/ui/icon.js";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../../components/ui/tooltip.js";
+import { cn } from "../../lib/utils.js";
 
 export type EnrichmentQueueRpcClient = {
   call(method: "enrichment_queue", input: { limit: number }): Promise<EnrichmentQueueOutput>;
@@ -19,6 +26,8 @@ export type EnrichmentQueueRpcClient = {
 export interface EnrichmentQueueProps {
   rpcClient?: EnrichmentQueueRpcClient;
   onOpen?: (subject: EnrichmentQueueSubject) => void;
+  compact?: boolean;
+  triggerClassName?: string;
   className?: string;
 }
 
@@ -135,7 +144,13 @@ function ScheduledRow({
  * agent runs and CRM tasks. It exposes work state, not claims that a provider
  * lookup or external sync completed.
  */
-export function EnrichmentQueue({ rpcClient, onOpen, className }: EnrichmentQueueProps) {
+export function EnrichmentQueue({
+  rpcClient,
+  onOpen,
+  compact = false,
+  triggerClassName,
+  className,
+}: EnrichmentQueueProps) {
   const contextRpc = useRpc<typeof rpcContract>() as unknown as EnrichmentQueueRpcClient;
   const rpc = rpcClient ?? contextRpc;
   const [queue, setQueue] = useState<EnrichmentQueueOutput>(EMPTY_QUEUE);
@@ -202,27 +217,43 @@ export function EnrichmentQueue({ rpcClient, onOpen, className }: EnrichmentQueu
     onOpen?.(subject);
     setOpen(false);
   };
+  const triggerLabel = `Enrichment queue${visibleCount > 0 ? `, ${visibleCount} items` : ""}`;
+  const trigger = (
+    <Button
+      type="button"
+      variant="ghost"
+      size={compact ? "icon" : "sm"}
+      className={cn(compact && "size-8 text-muted-foreground", triggerClassName)}
+      aria-expanded={open}
+      aria-haspopup="dialog"
+      aria-controls="enrichment-queue-dialog"
+      aria-label={triggerLabel}
+      ref={triggerRef}
+      onClick={() => setOpen((current) => !current)}
+    >
+      <Icon name="Zap" aria-hidden="true" />
+      {compact ? null : "Enrichment"}
+      {visibleCount > 0 ? (
+        <span className={compact
+          ? "absolute right-0.5 top-0.5 size-1.5 rounded-full bg-foreground ring-2 ring-background"
+          : "rounded-full bg-secondary px-1.5 text-[11px] leading-5 text-secondary-foreground"}
+          aria-hidden={compact ? "true" : undefined}
+        >
+          {compact ? null : visibleCount}
+        </span>
+      ) : null}
+    </Button>
+  );
   return (
     <div className={`relative ${className ?? ""}`}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-controls="enrichment-queue-dialog"
-        aria-label={`Enrichment queue${visibleCount > 0 ? `, ${visibleCount} items` : ""}`}
-        ref={triggerRef}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <Icon name="Zap" aria-hidden="true" />
-        Enrichment
-        {visibleCount > 0 ? (
-          <span className="rounded-full bg-secondary px-1.5 text-[11px] leading-5 text-secondary-foreground">
-            {visibleCount}
-          </span>
-        ) : null}
-      </Button>
+      {compact ? (
+        <TooltipProvider delayDuration={250}>
+          <Tooltip>
+            <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+            <TooltipContent side="top">{triggerLabel}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : trigger}
       {open ? (
         <div
           id="enrichment-queue-dialog"

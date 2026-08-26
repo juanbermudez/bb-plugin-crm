@@ -15,9 +15,16 @@ import {
 import { Icon } from "../components/ui/icon.js";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs.js";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../components/ui/tooltip.js";
+import {
   ChecklistProgressRing,
   EnrichmentQueue,
   GlobalSearch,
+  TooltipIconButton,
   WorkspaceChecklist,
   WORKSPACE_CHECKLIST_CHANGE_EVENT,
   dismissWorkspaceChecklist,
@@ -59,6 +66,8 @@ const CRM_TABS: ReadonlyArray<{ kind: CrmPanelKind; label: string }> = [
   { kind: "agents", label: "Agents" },
 ];
 
+const HEADER_ICON_BUTTON_CLASS = "size-8 text-muted-foreground hover:text-foreground";
+
 function CrmSectionTabs({
   activeKind,
   onNavigate,
@@ -72,7 +81,7 @@ function CrmSectionTabs({
   return (
     <nav
       className={inHeader
-        ? "hidden shrink-0 lg:block"
+        ? "crm-header-tabs hidden shrink-0 lg:block"
         : "shrink-0 border-b border-border px-4 lg:hidden sm:px-5"}
       aria-label="CRM sections"
     >
@@ -154,6 +163,67 @@ function routeForQueueSubject(subject: EnrichmentQueueSubject): CrmRoute | null 
   };
 }
 
+function CrmHeaderSearch({
+  onOpen,
+}: {
+  onOpen: (result: GlobalSearchResult) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "k" ||
+        (!event.metaKey && !event.ctrlKey) ||
+        !event.shiftKey ||
+        event.altKey
+      ) return;
+      event.preventDefault();
+      setExpanded(true);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !rootRef.current?.contains(target)) {
+        setExpanded(false);
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [expanded]);
+
+  return (
+    <div ref={rootRef} className="relative flex h-8 shrink-0 items-center justify-end">
+      {expanded ? (
+        <GlobalSearch
+          autoFocus
+          resultsAlign="right"
+          onDismiss={() => setExpanded(false)}
+          onOpen={(result) => {
+            setExpanded(false);
+            onOpen(result);
+          }}
+          className="w-56 animate-in fade-in-0 zoom-in-95 duration-150"
+        />
+      ) : (
+        <TooltipIconButton
+          label="Search CRM"
+          icon="Search"
+          variant="ghost"
+          className={HEADER_ICON_BUTTON_CLASS}
+          onClick={() => setExpanded(true)}
+        />
+      )}
+    </div>
+  );
+}
+
 /** Compact actions mounted in BB's host-owned title bar. */
 export function CrmHeaderContent({ subPath }: CrmPanelProps) {
   const goRoute = useCrmRouteNavigation();
@@ -233,49 +303,58 @@ export function CrmHeaderContent({ subPath }: CrmPanelProps) {
   }, [createOpen, focusCreateButton]);
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-center gap-1">
       <CrmSectionTabs
         activeKind={route.kind}
         onNavigate={(kind) => goRoute({ kind, recordId: null })}
         placement="header"
       />
-      <GlobalSearch
+      <CrmHeaderSearch
         onOpen={(result) => goRoute(routeForSearchResult(result))}
-        className="hidden w-56 xl:block"
       />
       <EnrichmentQueue
+        compact
+        triggerClassName={HEADER_ICON_BUTTON_CLASS}
         onOpen={(subject) => {
           const route = routeForQueueSubject(subject);
           if (route !== null) goRoute(route);
         }}
       />
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        aria-label={`Checklist, ${checklistProgress.completed} of ${checklistProgress.total} complete`}
-        onClick={() => setChecklistOpen(true)}
-      >
-        <ChecklistProgressRing
-          completed={checklistProgress.completed}
-          total={checklistProgress.total}
-        />
-        Checklist
-      </Button>
+      <TooltipProvider delayDuration={250}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={HEADER_ICON_BUTTON_CLASS}
+              aria-label={`Checklist, ${checklistProgress.completed} of ${checklistProgress.total} complete`}
+              onClick={() => setChecklistOpen(true)}
+            >
+              <ChecklistProgressRing
+                completed={checklistProgress.completed}
+                total={checklistProgress.total}
+                minimumRatio={0.12}
+              />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            Checklist · {checklistProgress.completed} of {checklistProgress.total} complete
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <div className="relative">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
+        <TooltipIconButton
+          label="New"
+          icon="Plus"
+          variant="ghost"
+          className={HEADER_ICON_BUTTON_CLASS}
           aria-expanded={createOpen}
           aria-haspopup="menu"
           aria-controls="crm-create-menu"
           ref={createButtonRef}
           onClick={() => setCreateOpen((open) => !open)}
-        >
-          <Icon name="Plus" aria-hidden="true" />
-          New
-        </Button>
+        />
         {createOpen ? (
           <div
             id="crm-create-menu"

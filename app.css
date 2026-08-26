@@ -5,3 +5,13 @@ header:has([data-bb-plugin="crm"])
   :is([data-plugin-icon-asset], svg[data-icon]) {
   display: none;
 }
+
+/* Keep section navigation beside the CRM title instead of letting host actions push it right. */
+header:has([data-bb-plugin="crm"])
+  [data-testid="app-page-header-content-row"]
+  .crm-header-tabs {
+  position: absolute;
+  left: 3.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+}

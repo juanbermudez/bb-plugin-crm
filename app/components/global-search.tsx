@@ -32,6 +32,9 @@ export interface GlobalSearchResult {
 export interface GlobalSearchProps {
   rpcClient?: GlobalSearchRpcClient;
   onOpen: (result: GlobalSearchResult) => void;
+  onDismiss?: () => void;
+  autoFocus?: boolean;
+  resultsAlign?: "left" | "right";
   className?: string;
 }
 
@@ -102,7 +105,14 @@ function resultLabel(kind: RecordKind): string {
  * the existing paginated list RPCs, so the header does not introduce a second
  * search/index contract while still opening records in their native drawer.
  */
-export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps) {
+export function GlobalSearch({
+  rpcClient,
+  onOpen,
+  onDismiss,
+  autoFocus = false,
+  resultsAlign = "left",
+  className,
+}: GlobalSearchProps) {
   const contextRpc = useRpc<typeof rpcContract>() as unknown as GlobalSearchRpcClient;
   const rpc = rpcClient ?? contextRpc;
   const [query, setQuery] = useState("");
@@ -193,6 +203,7 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
       setOpen(false);
+      onDismiss?.();
       return;
     }
     if (!open || results.length === 0) return;
@@ -215,6 +226,7 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
     <div className={`relative min-w-0 ${className ?? ""}`}>
       <SearchField
         ref={inputRef}
+        autoFocus={autoFocus}
         label="Search CRM"
         value={query}
         onFocus={() => setOpen(true)}
@@ -228,11 +240,11 @@ export function GlobalSearch({ rpcClient, onOpen, className }: GlobalSearchProps
         }}
         onKeyDown={handleKeyDown}
         placeholder="Search CRM…"
-        className="h-8 w-full bg-background text-xs sm:w-72"
+        className="h-8 w-full bg-background text-xs"
       />
       {open && query.trim() ? (
         <div
-          className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-lg border border-border bg-background shadow-lg sm:w-[min(28rem,calc(100vw-2rem))]"
+          className={`absolute top-full z-40 mt-2 overflow-hidden rounded-lg border border-border bg-background shadow-lg sm:w-[min(28rem,calc(100vw-2rem))] ${resultsAlign === "right" ? "right-0" : "left-0"}`}
           role="listbox"
           aria-label="CRM search results"
         >
