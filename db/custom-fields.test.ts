@@ -341,10 +341,12 @@ describe("CRM custom-field persistence", () => {
       expect(() => store.missingRecordIds(activeText.id, CUSTOM_FIELD_BACKFILL_MAX_RECORDS + 1)).toThrow(
         `from 1 to ${CUSTOM_FIELD_BACKFILL_MAX_RECORDS}`,
       );
-      for (let index = 0; index < CUSTOM_FIELD_BACKFILL_MAX_RECORDS; index += 1) {
-        const suffix = String(index).padStart(3, "0");
-        createCompany(db, { id: `cmp_missing_batch_${suffix}`, name: `Batch ${suffix}` });
-      }
+      db.transaction(() => {
+        for (let index = 0; index < CUSTOM_FIELD_BACKFILL_MAX_RECORDS; index += 1) {
+          const suffix = String(index).padStart(3, "0");
+          createCompany(db, { id: `cmp_missing_batch_${suffix}`, name: `Batch ${suffix}` });
+        }
+      })();
       expect(store.missingRecordIds(activeText.id)).toHaveLength(CUSTOM_FIELD_BACKFILL_MAX_RECORDS);
     } finally {
       await lifecycle.dispose();
