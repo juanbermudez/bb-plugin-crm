@@ -760,14 +760,14 @@ export function DealOverview({
               ))}
             </select>
             <ol
-              className="flex min-w-0 items-start gap-1 overflow-x-auto pt-1"
+              className="flex min-w-0 items-start gap-1 overflow-x-auto pb-2 pt-1"
               aria-label="Deal stage stepper"
             >
               {DEAL_STAGES.map((stage, index) => {
                 const active = stage === stageDraft;
                 const complete = index < stageIndex(stageDraft);
                 return (
-                  <li key={stage} className="flex min-w-20 flex-1 items-start gap-1">
+                  <li key={stage} className="flex w-28 shrink-0 items-start gap-1 last:w-24">
                     <button
                       type="button"
                       className={cn(
