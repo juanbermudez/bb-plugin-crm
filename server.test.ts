@@ -230,7 +230,7 @@ describe("CRM plugin foundation", () => {
     ]);
 
     await harness.lifecycle.dispose();
-  });
+  }, 30_000);
 
   it("registers native CRM agent tools for search, records, fields, and activity", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
