@@ -15,14 +15,46 @@ import type {
   CompanyCreateInput,
   CompanyListInput,
   CompanyListOutput,
+  FieldDefinition,
   SavedViewFilters,
+  SortDirection,
 } from "../../../contracts/core.js";
 import { useCompaniesRpc, type CompaniesRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
-import { SavedViewBar } from "../saved-views/index.js";
+import { SavedViewBar, type SavedViewsRpcClient } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
+import {
+  customFieldFacets,
+  facetOptionsFromCounts,
+  ListControls,
+  type ListFacet,
+  type ListFilters,
+  type ListSortOption,
+  SelectAllCheckbox,
+} from "../list-controls/list-controls.js";
 
 const PAGE_SIZE = 25;
+
+const COMPANY_SORT_OPTIONS: readonly ListSortOption[] = [
+  { value: "name", label: "Company" },
+  { value: "domain", label: "Domain" },
+  { value: "industry", label: "Industry" },
+  { value: "owner", label: "Owner" },
+  { value: "createdAt", label: "Created" },
+  { value: "lastActivity", label: "Last activity" },
+];
+
+const COMPANY_STANDARD_FILTERS = [
+  "owner",
+  "industry",
+  "enrichment",
+  "source",
+  "activity",
+] as const;
+
+type CompanyBulkRpcClient = {
+  call(method: string, input: unknown): Promise<unknown>;
+};
 
 type CompanyTab = "overview" | "contacts" | "deals" | "activity" | "agent";
 
@@ -65,6 +97,18 @@ function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
 }
 
+function facetValueLabel(value: string): string {
+  if (value === "unassigned") return "Unassigned";
+  if (!value.includes("_") && !value.includes("-") && value !== value.toUpperCase()) {
+    return value;
+  }
+  return value
+    .toLowerCase()
+    .split(/[_-]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function isCompany(value: unknown): value is Company {
   return (
     typeof value === "object" &&
@@ -78,23 +122,45 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+function listRpc(rpc: CompaniesRpcClient): CompanyBulkRpcClient {
+  return rpc as unknown as CompanyBulkRpcClient;
+}
+
+function customFieldInput(filters: ListFilters): Record<string, string[]> {
+  const standard = new Set<string>(COMPANY_STANDARD_FILTERS);
+  return Object.fromEntries(
+    Object.entries(filters).filter(([key, values]) => !standard.has(key) && values.length > 0),
+  );
+}
+
+function cleanFilters(filters: Record<string, string[]>): ListFilters {
+  return Object.fromEntries(
+    Object.entries(filters)
+      .map(([key, values]) => [key, [...new Set(values)]])
+      .filter(([, values]) => values.length > 0),
+  );
+}
+
 function createListInput(
   query: string,
   page: number,
   archived: boolean,
+  sort: string,
+  dir: SortDirection,
+  filters: ListFilters,
 ): CompanyListInput {
   return {
     q: query,
-    sort: "name",
-    dir: "asc",
+    sort,
+    dir,
     page,
     pageSize: PAGE_SIZE,
-    owner: [],
-    industry: [],
-    enrichment: [],
-    source: [],
-    activity: [],
-    fields: {},
+    owner: filters.owner ?? [],
+    industry: filters.industry ?? [],
+    enrichment: (filters.enrichment ?? []) as CompanyListInput["enrichment"],
+    source: (filters.source ?? []) as CompanyListInput["source"],
+    activity: (filters.activity ?? []) as CompanyListInput["activity"],
+    fields: customFieldInput(filters),
     archived,
   };
 }
@@ -363,6 +429,8 @@ function StagedCompanyTab({ tab }: { tab: "agent" }) {
 export interface CompaniesViewProps {
   /** Optional client injection keeps component tests and host previews small. */
   rpcClient?: CompaniesRpcClient;
+  /** Optional saved-view client keeps restore behavior independently testable. */
+  savedViewsRpcClient?: SavedViewsRpcClient;
   /** Record selected by the BB panel sub-path or browser history. */
   initialRecordId?: string | null;
   /** Reflects record drawer changes back into the BB panel sub-path. */
@@ -371,6 +439,7 @@ export interface CompaniesViewProps {
 
 export function CompaniesView({
   rpcClient,
+  savedViewsRpcClient,
   initialRecordId = null,
   onRecordIdChange,
 }: CompaniesViewProps) {
@@ -378,10 +447,19 @@ export function CompaniesView({
   const rpc = rpcClient ?? contextRpc;
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState("name");
+  const [dir, setDir] = useState<SortDirection>("asc");
+  const [filters, setFilters] = useState<ListFilters>({});
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<CompanyListOutput>(EMPTY_LIST);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkOwnerId, setBulkOwnerId] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkStatus, setBulkStatus] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [recordId, setRecordId] = useState<string | null>(initialRecordId);
   const [record, setRecord] = useState<Company | null>(null);
@@ -401,8 +479,8 @@ export function CompaniesView({
   const [createSaving, setCreateSaving] = useState(false);
 
   const listInput = useMemo(
-    () => createListInput(query, page, showArchived),
-    [page, query, showArchived],
+    () => createListInput(query, page, showArchived, sort, dir, filters),
+    [dir, filters, page, query, showArchived, sort],
   );
 
   const reloadList = useCallback(async () => {
@@ -437,6 +515,27 @@ export function CompaniesView({
       active = false;
     };
   }, [listInput, refreshKey, rpc]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("fields_filters", { entity: "COMPANY" })
+      .then((next) => {
+        if (active && Array.isArray(next)) {
+          setFilterDefinitions(next as FieldDefinition[]);
+        }
+      })
+      .catch(() => {
+        // Custom-field facets are optional; the standard facets remain usable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [listInput]);
 
   useEffect(() => {
     setRecordId(initialRecordId);
@@ -562,6 +661,98 @@ export function CompaniesView({
     onRecordIdChange?.(id);
   }, [onRecordIdChange, record, recordId]);
 
+  const runBulk = useCallback(
+    async (method: string, input: unknown, successMessage: string) => {
+      setBulkBusy(true);
+      setBulkError(null);
+      setBulkStatus(null);
+      try {
+        await listRpc(rpc).call(method, input);
+        setSelectedIds([]);
+        setBulkStatus(successMessage);
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setBulkError(errorMessage(cause));
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [rpc],
+  );
+
+  const ownerLabels = useMemo(
+    () =>
+      new Map(
+        list.rows
+          .filter((company) => company.owner?.name)
+          .map((company) => [company.ownerId, company.owner?.name as string]),
+      ),
+    [list.rows],
+  );
+  const facets = useMemo<ListFacet[]>(
+    () => [
+      {
+        id: "owner",
+        label: "Owner",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "owner",
+          filters.owner,
+          (value) => ownerLabels.get(value) ?? facetValueLabel(value),
+        ),
+      },
+      {
+        id: "industry",
+        label: "Industry",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "industry",
+          filters.industry,
+          facetValueLabel,
+        ),
+      },
+      {
+        id: "enrichment",
+        label: "Enrichment",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "enrichment",
+          filters.enrichment,
+          facetValueLabel,
+        ),
+      },
+      {
+        id: "source",
+        label: "Source",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "source",
+          filters.source,
+          facetValueLabel,
+        ),
+      },
+      ...customFieldFacets(filterDefinitions, list.facetCounts, filters),
+    ],
+    [filterDefinitions, filters, list.facetCounts, ownerLabels],
+  );
+  const visibleIds = useMemo(() => list.rows.map((company) => company.id), [list.rows]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedSet.has(id));
+  const toggleAll = useCallback(
+    (checked: boolean) => {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        for (const id of visibleIds) {
+          if (checked) next.add(id);
+          else next.delete(id);
+        }
+        return [...next];
+      });
+    },
+    [visibleIds],
+  );
+
   const totalPages = Math.max(1, Math.ceil(list.total / PAGE_SIZE));
 
   return (
@@ -601,16 +792,24 @@ export function CompaniesView({
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 sm:p-5">
         <SavedViewBar
           entity="COMPANY"
+          rpcClient={savedViewsRpcClient}
           currentFilters={{
             q: query,
-            sort: "name",
-            dir: "asc",
+            sort,
+            dir,
             archived: showArchived,
-            filters: {},
+            filters,
             columns: [],
           }}
           onApplyFilters={(filters: SavedViewFilters) => {
             setQuery(filters.q);
+            setSort(
+              COMPANY_SORT_OPTIONS.some((option) => option.value === filters.sort)
+                ? filters.sort
+                : "name",
+            );
+            setDir(filters.dir);
+            setFilters(cleanFilters(filters.filters));
             setShowArchived(filters.archived);
             setPage(1);
           }}
@@ -635,6 +834,26 @@ export function CompaniesView({
             {showArchived ? " · archived" : ""}
           </p>
         </div>
+        <ListControls
+          entityLabel="companies"
+          sort={sort}
+          dir={dir}
+          sortOptions={COMPANY_SORT_OPTIONS}
+          filters={filters}
+          facets={facets}
+          onSortChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          onDirChange={(next) => {
+            setDir(next);
+            setPage(1);
+          }}
+          onFiltersChange={(next) => {
+            setFilters(cleanFilters(next));
+            setPage(1);
+          }}
+        />
         {listError === null ? null : (
           <div
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
@@ -646,9 +865,154 @@ export function CompaniesView({
             </Button>
           </div>
         )}
+        {bulkStatus ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {bulkStatus}
+          </p>
+        ) : null}
+        {bulkError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {bulkError}
+          </p>
+        ) : null}
+        {selectedIds.length > 0 ? (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2"
+            role="toolbar"
+            aria-label="Company bulk actions"
+          >
+            <span className="text-xs text-muted-foreground">
+              <strong className="font-medium text-foreground">{selectedIds.length}</strong>{" "}
+              selected
+            </span>
+            {!showArchived ? (
+              <>
+                <select
+                  className={"h-8 min-w-36 rounded-md border border-input bg-background px-2 text-xs"}
+                  aria-label="Bulk owner"
+                  value={bulkOwnerId}
+                  onChange={(event) => setBulkOwnerId(event.target.value)}
+                  disabled={bulkBusy}
+                >
+                  <option value="">Unassigned</option>
+                  {(facets.find((facet) => facet.id === "owner")?.options ?? [])
+                    .filter((option) => option.value !== "unassigned")
+                    .map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "companies_bulkAssignOwner",
+                      { ids: selectedIds, ownerId: bulkOwnerId || null },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} reassigned.`,
+                    )
+                  }
+                >
+                  Assign owner
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const confirmed =
+                      typeof window === "undefined" ||
+                      typeof window.confirm !== "function" ||
+                      window.confirm(
+                        `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"}?`,
+                      );
+                    if (confirmed) {
+                      void runBulk(
+                        "companies_bulkArchive",
+                        { ids: selectedIds },
+                        `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} archived.`,
+                      );
+                    }
+                  }}
+                >
+                  Archive selected
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "companies_bulkRestore",
+                      { ids: selectedIds },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} restored.`,
+                    )
+                  }
+                >
+                  Restore selected
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const confirmed =
+                      typeof window === "undefined" ||
+                      typeof window.confirm !== "function" ||
+                      window.confirm(
+                        `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} permanently? This cannot be undone.`,
+                      );
+                    if (confirmed) {
+                      void runBulk(
+                        "companies_bulkPurge",
+                        { ids: selectedIds },
+                        `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} deleted.`,
+                      );
+                    }
+                  }}
+                >
+                  Delete selected
+                </Button>
+              </>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={bulkBusy}
+              onClick={() => setSelectedIds([])}
+            >
+              Clear selection
+            </Button>
+          </div>
+        ) : null}
         <TableShell
           caption="Companies"
-          columns={COMPANY_COLUMNS}
+          columns={[
+            {
+              id: "select",
+              label: (
+                <SelectAllCheckbox
+                  label="Select all visible companies"
+                  checked={allVisibleSelected}
+                  indeterminate={!allVisibleSelected && someVisibleSelected}
+                  disabled={listLoading || visibleIds.length === 0}
+                  onChange={toggleAll}
+                />
+              ),
+              className: "w-10 px-3",
+            },
+            ...COMPANY_COLUMNS,
+          ]}
           loading={listLoading}
           empty={
             <EmptyState
@@ -697,6 +1061,25 @@ export function CompaniesView({
                 }
               }}
             >
+              <td
+                className="w-10 px-3 py-3"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label={`Select ${company.name}`}
+                  checked={selectedSet.has(company.id)}
+                  onChange={(event) => {
+                    setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (event.target.checked) next.add(company.id);
+                      else next.delete(company.id);
+                      return [...next];
+                    });
+                  }}
+                />
+              </td>
               <td className="px-3 py-3 font-medium">{company.name}</td>
               <td className="px-3 py-3 text-muted-foreground">
                 {displayValue(company.domain)}

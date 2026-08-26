@@ -11,6 +11,7 @@ import { Icon } from "../../../components/ui/icon.js";
 import { Input } from "../../../components/ui/input.js";
 import {
   CURRENCY_CODES,
+  CLOSING_WINDOWS,
   DEAL_STAGES,
   type CurrencyCode,
   type Deal,
@@ -21,7 +22,9 @@ import {
   type DealUpdateInput,
   type SetDealStageInput,
   type DealListStatus,
+  type FieldDefinition,
   type SavedViewFilters,
+  type SortDirection,
 } from "../../../contracts/core.js";
 import {
   EmptyState,
@@ -34,8 +37,33 @@ import { useDealsRpc, type DealsRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
+import {
+  customFieldFacets,
+  facetOptionsFromCounts,
+  ListControls,
+  type ListFacet,
+  type ListFilters,
+  type ListSortOption,
+  SelectAllCheckbox,
+} from "../list-controls/list-controls.js";
 
 const PAGE_SIZE = 25;
+
+const DEAL_SORT_OPTIONS: readonly ListSortOption[] = [
+  { value: "createdAt", label: "Created" },
+  { value: "company", label: "Company" },
+  { value: "stage", label: "Stage" },
+  { value: "owner", label: "Owner" },
+  { value: "amount", label: "Amount" },
+  { value: "expectedClose", label: "Close date" },
+  { value: "lastActivity", label: "Last activity" },
+];
+
+const DEAL_STANDARD_FILTERS = ["owner", "stage", "closing"] as const;
+
+type DealBulkRpcClient = {
+  call(method: string, input: unknown): Promise<unknown>;
+};
 
 const SELECT_CLASS =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -57,6 +85,14 @@ const DEAL_STATUS_OPTIONS: ReadonlyArray<{
   { id: "closed", label: "Closed" },
   { id: "all", label: "All" },
 ];
+
+const CLOSING_LABELS: Record<(typeof CLOSING_WINDOWS)[number], string> = {
+  overdue: "Overdue",
+  "this-month": "Closing this month",
+  "next-month": "Closing next month",
+  later: "Later",
+  none: "No close date",
+};
 
 const DEAL_COLUMNS = [
   { id: "deal", label: "Deal", className: "min-w-52" },
@@ -143,23 +179,58 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+function listRpc(rpc: DealsRpcClient): DealBulkRpcClient {
+  return rpc as unknown as DealBulkRpcClient;
+}
+
+function facetValueLabel(value: string): string {
+  if (value === "unassigned") return "Unassigned";
+  if (value === "none") return "No close date";
+  if (!value.includes("_") && !value.includes("-") && value !== value.toUpperCase()) {
+    return value;
+  }
+  return value
+    .toLowerCase()
+    .split(/[_-]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function customFieldInput(filters: ListFilters): Record<string, string[]> {
+  const standard = new Set<string>(DEAL_STANDARD_FILTERS);
+  return Object.fromEntries(
+    Object.entries(filters).filter(([key, values]) => !standard.has(key) && values.length > 0),
+  );
+}
+
+function cleanFilters(filters: Record<string, string[]>): ListFilters {
+  return Object.fromEntries(
+    Object.entries(filters)
+      .map(([key, values]) => [key, [...new Set(values)]])
+      .filter(([, values]) => values.length > 0),
+  );
+}
+
 function createListInput(
   query: string,
   page: number,
   status: DealListStatus,
   archived: boolean,
+  sort: string,
+  dir: SortDirection,
+  filters: ListFilters,
 ): DealListInput {
   return {
     q: query,
-    sort: "createdAt",
-    dir: "desc",
+    sort,
+    dir,
     page,
     pageSize: PAGE_SIZE,
     status,
-    owner: [],
-    stage: [],
-    closing: [],
-    fields: {},
+    owner: filters.owner ?? [],
+    stage: (filters.stage ?? []) as DealListInput["stage"],
+    closing: (filters.closing ?? []) as DealListInput["closing"],
+    fields: customFieldInput(filters),
     archived,
   };
 }
@@ -616,10 +687,21 @@ export function DealsView({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<DealListStatus>("open");
+  const [sort, setSort] = useState("createdAt");
+  const [dir, setDir] = useState<SortDirection>("desc");
+  const [filters, setFilters] = useState<ListFilters>({});
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<DealListOutput>(EMPTY_LIST);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkOwnerId, setBulkOwnerId] = useState("");
+  const [bulkStage, setBulkStage] = useState<DealStage>("DEMO_BOOKED");
+  const [bulkCloseReason, setBulkCloseReason] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkStatus, setBulkStatus] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [recordId, setRecordId] = useState<string | null>(initialRecordId);
   const [record, setRecord] = useState<Deal | null>(null);
@@ -643,8 +725,8 @@ export function DealsView({
   const [createSaving, setCreateSaving] = useState(false);
 
   const listInput = useMemo(
-    () => createListInput(query, page, status, showArchived),
-    [page, query, showArchived, status],
+    () => createListInput(query, page, status, showArchived, sort, dir, filters),
+    [dir, filters, page, query, showArchived, sort, status],
   );
 
   const reloadList = useCallback(async () => {
@@ -679,6 +761,27 @@ export function DealsView({
       active = false;
     };
   }, [listInput, refreshKey, rpc]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("fields_filters", { entity: "DEAL" })
+      .then((next) => {
+        if (active && Array.isArray(next)) {
+          setFilterDefinitions(next as FieldDefinition[]);
+        }
+      })
+      .catch(() => {
+        // Custom-field facets are optional; the standard facets remain usable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [listInput]);
 
   useEffect(() => {
     setRecordId(initialRecordId);
@@ -871,6 +974,86 @@ export function DealsView({
     [onRecordIdChange, record, recordId],
   );
 
+  const ownerLabels = useMemo(
+    () =>
+      new Map(
+        list.rows
+          .filter((deal) => deal.owner?.name)
+          .map((deal) => [deal.ownerId, deal.owner?.name as string]),
+      ),
+    [list.rows],
+  );
+  const facets = useMemo<ListFacet[]>(
+    () => [
+      {
+        id: "owner",
+        label: "Owner",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "owner",
+          filters.owner,
+          (value) => ownerLabels.get(value) ?? facetValueLabel(value),
+        ),
+      },
+      {
+        id: "stage",
+        label: "Stage",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "stage",
+          filters.stage,
+          (value) => STAGE_LABELS[value as DealStage] ?? facetValueLabel(value),
+        ),
+      },
+      {
+        id: "closing",
+        label: "Closing",
+        options: CLOSING_WINDOWS.map((value) => ({
+          value,
+          label: CLOSING_LABELS[value],
+          count: list.facetCounts.closing?.[value],
+        })),
+      },
+      ...customFieldFacets(filterDefinitions, list.facetCounts, filters),
+    ],
+    [filterDefinitions, filters, list.facetCounts, ownerLabels],
+  );
+  const visibleIds = useMemo(() => list.rows.map((deal) => deal.id), [list.rows]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedSet.has(id));
+  const toggleAll = useCallback(
+    (checked: boolean) => {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        for (const id of visibleIds) {
+          if (checked) next.add(id);
+          else next.delete(id);
+        }
+        return [...next];
+      });
+    },
+    [visibleIds],
+  );
+  const runBulk = useCallback(
+    async (method: string, input: unknown, successMessage: string) => {
+      setBulkBusy(true);
+      setBulkError(null);
+      setBulkStatus(null);
+      try {
+        await listRpc(rpc).call(method, input);
+        setSelectedIds([]);
+        setBulkStatus(successMessage);
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setBulkError(errorMessage(cause));
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [rpc],
+  );
+
   const totalPages = Math.max(1, Math.ceil(list.total / PAGE_SIZE));
   const unconverted = list.unconverted;
 
@@ -913,15 +1096,28 @@ export function DealsView({
           entity="DEAL"
           currentFilters={{
             q: query,
-            sort: "createdAt",
-            dir: "desc",
+            sort,
+            dir,
             archived: showArchived,
-            filters: { status: [status] },
+            filters: { ...filters, status: [status] },
             columns: [],
           }}
           onApplyFilters={(filters: SavedViewFilters) => {
             const savedStatus = filters.filters.status?.[0];
             setQuery(filters.q);
+            setSort(
+              DEAL_SORT_OPTIONS.some((option) => option.value === filters.sort)
+                ? filters.sort
+                : "createdAt",
+            );
+            setDir(filters.dir);
+            setFilters(
+              cleanFilters(
+                Object.fromEntries(
+                  Object.entries(filters.filters).filter(([key]) => key !== "status"),
+                ),
+              ),
+            );
             setShowArchived(filters.archived);
             if (savedStatus === "open" || savedStatus === "closed" || savedStatus === "all") {
               setStatus(savedStatus);
@@ -979,6 +1175,26 @@ export function DealsView({
             Source amounts stay in their original currency; compatible pipeline totals use frozen base money.
           </p>
         </div>
+        <ListControls
+          entityLabel="deals"
+          sort={sort}
+          dir={dir}
+          sortOptions={DEAL_SORT_OPTIONS}
+          filters={filters}
+          facets={facets}
+          onSortChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          onDirChange={(next) => {
+            setDir(next);
+            setPage(1);
+          }}
+          onFiltersChange={(next) => {
+            setFilters(cleanFilters(next));
+            setPage(1);
+          }}
+        />
         {unconverted.count > 0 ? (
           <div
             className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
@@ -1002,9 +1218,198 @@ export function DealsView({
             </Button>
           </div>
         )}
+        {bulkStatus ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {bulkStatus}
+          </p>
+        ) : null}
+        {bulkError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {bulkError}
+          </p>
+        ) : null}
+        {selectedIds.length > 0 ? (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2"
+            role="toolbar"
+            aria-label="Deal bulk actions"
+          >
+            <span className="text-xs text-muted-foreground">
+              <strong className="font-medium text-foreground">{selectedIds.length}</strong>{" "}
+              selected
+            </span>
+            {!showArchived ? (
+              <>
+                <select
+                  className="h-8 min-w-36 rounded-md border border-input bg-background px-2 text-xs"
+                  aria-label="Bulk owner"
+                  value={bulkOwnerId}
+                  onChange={(event) => setBulkOwnerId(event.target.value)}
+                  disabled={bulkBusy}
+                >
+                  <option value="">Unassigned</option>
+                  {(facets.find((facet) => facet.id === "owner")?.options ?? [])
+                    .filter((option) => option.value !== "unassigned")
+                    .map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "deals_bulkAssignOwner",
+                      { ids: selectedIds, ownerId: bulkOwnerId || null },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} reassigned.`,
+                    )
+                  }
+                >
+                  Assign owner
+                </Button>
+                <select
+                  className="h-8 min-w-40 rounded-md border border-input bg-background px-2 text-xs"
+                  aria-label="Bulk stage"
+                  value={bulkStage}
+                  onChange={(event) => setBulkStage(event.target.value as DealStage)}
+                  disabled={bulkBusy}
+                >
+                  {DEAL_STAGES.map((stage) => (
+                    <option key={stage} value={stage}>
+                      {stageLabel(stage)}
+                    </option>
+                  ))}
+                </select>
+                {bulkStage === "CLOSED_LOST" ? (
+                  <Input
+                    className="h-8 w-40 text-xs"
+                    aria-label="Bulk close reason"
+                    value={bulkCloseReason}
+                    onChange={(event) => setBulkCloseReason(event.target.value)}
+                    placeholder="Close reason"
+                    disabled={bulkBusy}
+                  />
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy || (bulkStage === "CLOSED_LOST" && bulkCloseReason.trim() === "")}
+                  onClick={() =>
+                    void runBulk(
+                      "deals_bulkSetStage",
+                      {
+                        ids: selectedIds,
+                        stage: bulkStage,
+                        ...(bulkStage === "CLOSED_LOST" && bulkCloseReason.trim()
+                          ? { closedReason: bulkCloseReason.trim() }
+                          : {}),
+                      },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} moved.`,
+                    )
+                  }
+                >
+                  Change stage
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const confirmed =
+                      typeof window === "undefined" ||
+                      typeof window.confirm !== "function" ||
+                      window.confirm(
+                        `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"}?`,
+                      );
+                    if (confirmed) {
+                      void runBulk(
+                        "deals_bulkArchive",
+                        { ids: selectedIds },
+                        `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} archived.`,
+                      );
+                    }
+                  }}
+                >
+                  Archive selected
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "deals_bulkRestore",
+                      { ids: selectedIds },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} restored.`,
+                    )
+                  }
+                >
+                  Restore selected
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const confirmed =
+                      typeof window === "undefined" ||
+                      typeof window.confirm !== "function" ||
+                      window.confirm(
+                        `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} permanently? This cannot be undone.`,
+                      );
+                    if (confirmed) {
+                      void runBulk(
+                        "deals_bulkPurge",
+                        { ids: selectedIds },
+                        `${selectedIds.length} ${selectedIds.length === 1 ? "deal" : "deals"} deleted.`,
+                      );
+                    }
+                  }}
+                >
+                  Delete selected
+                </Button>
+              </>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={bulkBusy}
+              onClick={() => setSelectedIds([])}
+            >
+              Clear selection
+            </Button>
+          </div>
+        ) : null}
         <TableShell
           caption="Deals"
-          columns={DEAL_COLUMNS}
+          columns={[
+            {
+              id: "select",
+              label: (
+                <SelectAllCheckbox
+                  label="Select all visible deals"
+                  checked={allVisibleSelected}
+                  indeterminate={!allVisibleSelected && someVisibleSelected}
+                  disabled={listLoading || visibleIds.length === 0}
+                  onChange={toggleAll}
+                />
+              ),
+              className: "w-10 px-3",
+            },
+            ...DEAL_COLUMNS,
+          ]}
           loading={listLoading}
           empty={
             <EmptyState
@@ -1046,14 +1451,33 @@ export function DealsView({
               aria-label={`Open ${deal.name}`}
               className="cursor-pointer outline-none transition-colors hover:bg-state-hover focus-visible:bg-state-hover"
               onClick={() => openRecord(deal.id)}
-              onKeyDown={(event) => {
+                onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   openRecord(deal.id);
-                }
-              }}
-            >
-              <td className="px-3 py-3 font-medium">{deal.name}</td>
+                  }
+                }}
+              >
+                <td
+                  className="w-10 px-3 py-3"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    aria-label={`Select ${deal.name}`}
+                    checked={selectedSet.has(deal.id)}
+                    onChange={(event) => {
+                      setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(deal.id);
+                        else next.delete(deal.id);
+                        return [...next];
+                      });
+                    }}
+                  />
+                </td>
+                <td className="px-3 py-3 font-medium">{deal.name}</td>
               <td className="px-3 py-3 text-muted-foreground">
                 {deal.company?.name ?? displayValue(deal.companyId)}
               </td>

@@ -331,4 +331,52 @@ describe("DealsView", () => {
     );
     confirm.mockRestore();
   });
+
+  it("carries deal sorting/facets and selected ids to bulk stage RPC", async () => {
+    const second = { ...deal, id: "deal_beta", name: "Beta Renewal" };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "deals_list") {
+        return {
+          ...listResult([deal, second]),
+          facetCounts: {
+            owner: { usr_juan: 2 },
+            stage: { DEMO_BOOKED: 2 },
+            closing: { "this-month": 2 },
+          },
+        };
+      }
+      if (method === "fields_filters") return [];
+      if (method === "deals_bulkSetStage") {
+        expect(input).toEqual({ ids: ["deal_acme_expand"], stage: "CONTRACT_SENT" });
+        return { requested: 1, succeeded: 1, failed: 0, message: null };
+      }
+      return deal;
+    });
+    render(<DealsView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Expansion");
+    fireEvent.change(screen.getByLabelText("Sort deals"), {
+      target: { value: "amount" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    fireEvent.click(screen.getByLabelText("Demo booked"));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith(
+        "deals_list",
+        expect.objectContaining({ sort: "amount", stage: ["DEMO_BOOKED"] }),
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Select Acme Expansion"));
+    fireEvent.change(screen.getByLabelText("Bulk stage"), {
+      target: { value: "CONTRACT_SENT" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Change stage" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_bulkSetStage", {
+        ids: ["deal_acme_expand"],
+        stage: "CONTRACT_SENT",
+      }),
+    );
+  });
 });

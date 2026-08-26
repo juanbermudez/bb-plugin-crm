@@ -13,8 +13,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   Company,
   CompanyListOutput,
+  SavedView,
 } from "../../../contracts/core.js";
-import { CompaniesView, type CompaniesRpcClient } from "./index.js";
+import {
+  CompaniesView,
+  type CompaniesRpcClient,
+} from "./index.js";
+import type { SavedViewsRpcClient } from "../saved-views/index.js";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
   useRpc: () => ({ call: vi.fn(async (method: string) =>
@@ -159,5 +164,146 @@ describe("CompaniesView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restore company" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Archive company" })).toBeDefined());
     expect(rpc.call).toHaveBeenCalledWith("companies_restore", { id: "cmp_acme" });
+  });
+
+  it("carries sorting, standard/custom facets, selection, and bulk archive to RPC", async () => {
+    const second = { ...company, id: "cmp_beta", name: "Beta Corporation" };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "companies_list") {
+        return {
+          ...listResult([company, second]),
+          facetCounts: {
+            owner: { usr_juan: 2 },
+            industry: { SaaS: 2 },
+            source: { MANUAL: 2 },
+            segment: { opt_enterprise: 1 },
+          },
+        };
+      }
+      if (method === "fields_filters") {
+        return [
+          {
+            id: "field_segment",
+            entity: "COMPANY",
+            key: "segment",
+            label: "Segment",
+            type: "SELECT",
+            agentFilled: false,
+            agentBrief: null,
+            required: false,
+            showOnSheet: true,
+            showOnTable: false,
+            showOnFilter: true,
+            position: 0,
+            options: [
+              {
+                id: "opt_enterprise",
+                fieldId: "field_segment",
+                label: "Enterprise",
+                position: 0,
+              },
+            ],
+          },
+        ];
+      }
+      if (method === "companies_bulkArchive") {
+        expect(input).toEqual({ ids: ["cmp_acme"] });
+        return { requested: 1, succeeded: 1, failed: 0, message: null };
+      }
+      return company;
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CompaniesView rpcClient={rpc} />);
+
+    await screen.findByText("Acme Corporation");
+    fireEvent.change(screen.getByLabelText("Sort companies"), {
+      target: { value: "industry" },
+    });
+    fireEvent.change(screen.getByLabelText("Sort direction"), {
+      target: { value: "desc" },
+    });
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith(
+        "companies_list",
+        expect.objectContaining({ sort: "industry", dir: "desc" }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    await screen.findByLabelText("Enterprise");
+    fireEvent.click(screen.getByLabelText("SaaS"));
+    fireEvent.click(screen.getByLabelText("Enterprise"));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith(
+        "companies_list",
+        expect.objectContaining({
+          industry: ["SaaS"],
+          fields: { segment: ["opt_enterprise"] },
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Select Acme Corporation"));
+    fireEvent.click(screen.getByRole("button", { name: "Archive selected" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("companies_bulkArchive", {
+        ids: ["cmp_acme"],
+      }),
+    );
+    expect(confirm).toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  it("restores query, sorting, direction, and facets from a saved view", async () => {
+    const saved: SavedView = {
+      id: "view_enterprise",
+      entity: "COMPANY",
+      name: "Enterprise accounts",
+      shared: false,
+      isDefault: true,
+      filters: {
+        q: "Acme",
+        sort: "domain",
+        dir: "desc",
+        archived: false,
+        filters: { industry: ["SaaS"], segment: ["opt_enterprise"] },
+        columns: [],
+      },
+    };
+    const savedRpc = {
+      call: vi.fn(async (method: string) =>
+        method === "savedViews_list" ? [saved] : saved,
+      ),
+    } as unknown as SavedViewsRpcClient;
+    const rpc = makeRpc(async (method) => {
+      if (method === "companies_list") {
+        return {
+          ...listResult(),
+          facetCounts: { industry: { SaaS: 1 } },
+        };
+      }
+      if (method === "fields_filters") return [];
+      return company;
+    });
+    render(<CompaniesView rpcClient={rpc} savedViewsRpcClient={savedRpc} />);
+
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith(
+        "companies_list",
+        expect.objectContaining({
+          q: "Acme",
+          sort: "domain",
+          dir: "desc",
+          industry: ["SaaS"],
+          fields: { segment: ["opt_enterprise"] },
+        }),
+      ),
+    );
+    expect((screen.getByLabelText("Sort companies") as HTMLSelectElement).value).toBe(
+      "domain",
+    );
+    expect((screen.getByLabelText("Sort direction") as HTMLSelectElement).value).toBe(
+      "desc",
+    );
   });
 });

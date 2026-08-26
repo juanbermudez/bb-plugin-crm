@@ -265,4 +265,60 @@ describe("ContactsView", () => {
     );
     confirm.mockRestore();
   });
+
+  it("sends contact facets and sorting, supports clear-all chips, and assigns a company in bulk", async () => {
+    const second = { ...contact, id: "con_grace", firstName: "Grace", lastName: "Hopper" };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "contacts_list") {
+        return {
+          ...listResult([contact, second]),
+          facetCounts: {
+            owner: { usr_juan: 2 },
+            company: { cmp_acme: 2 },
+            title: { "VP Engineering": 1 },
+            source: { MANUAL: 2 },
+          },
+        };
+      }
+      if (method === "fields_filters") return [];
+      if (method === "contacts_bulkAssignCompany") {
+        expect(input).toEqual({ ids: ["con_ada"], companyId: "cmp_beta" });
+        return { requested: 1, succeeded: 1, failed: 0, message: null };
+      }
+      return contact;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    await screen.findByText("Ada Lovelace");
+    fireEvent.change(screen.getByLabelText("Sort contacts"), {
+      target: { value: "title" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
+    fireEvent.click(screen.getByLabelText("VP Engineering"));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith(
+        "contacts_list",
+        expect.objectContaining({ sort: "title", title: ["VP Engineering"] }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear all filters" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith(
+        "contacts_list",
+        expect.objectContaining({ title: [], fields: {} }),
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Select Ada Lovelace"));
+    fireEvent.change(screen.getByLabelText("Bulk company ID"), {
+      target: { value: "cmp_beta" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Assign company" }));
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("contacts_bulkAssignCompany", {
+        ids: ["con_ada"],
+        companyId: "cmp_beta",
+      }),
+    );
+  });
 });

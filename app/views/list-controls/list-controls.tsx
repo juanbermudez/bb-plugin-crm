@@ -1,0 +1,364 @@
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
+
+import { Button } from "../../../components/ui/button.js";
+import { Icon } from "../../../components/ui/icon.js";
+import type { FieldDefinition, SortDirection } from "../../../contracts/core.js";
+import { cn } from "../../../lib/utils.js";
+
+export interface ListSortOption {
+  value: string;
+  label: string;
+}
+
+export interface ListFacetOption {
+  value: string;
+  label: string;
+  count?: number;
+}
+
+export interface ListFacet {
+  id: string;
+  label: string;
+  options: readonly ListFacetOption[];
+}
+
+export type ListFilters = Record<string, string[]>;
+
+const SELECT_CLASS =
+  "flex h-9 min-w-0 rounded-md border border-input bg-background px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
+const CHECKBOX_CLASS =
+  "size-4 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+function cloneFilters(filters: ListFilters): ListFilters {
+  return Object.fromEntries(
+    Object.entries(filters).map(([key, values]) => [key, [...values]]),
+  );
+}
+
+function toggleValue(
+  filters: ListFilters,
+  facetId: string,
+  value: string,
+  checked: boolean,
+): ListFilters {
+  const selected = filters[facetId] ?? [];
+  const next = checked
+    ? selected.includes(value)
+      ? selected
+      : [...selected, value]
+    : selected.filter((candidate) => candidate !== value);
+  const result = cloneFilters(filters);
+  if (next.length === 0) delete result[facetId];
+  else result[facetId] = next;
+  return result;
+}
+
+function facetLabel(facet: ListFacet | undefined, value: string): string {
+  return facet?.options.find((option) => option.value === value)?.label ?? value;
+}
+
+function facetName(facet: ListFacet | undefined, id: string): string {
+  return facet?.label ?? id;
+}
+
+export interface ListControlsProps {
+  entityLabel: string;
+  sort: string;
+  dir: SortDirection;
+  sortOptions: readonly ListSortOption[];
+  filters: ListFilters;
+  facets: readonly ListFacet[];
+  onSortChange: (sort: string) => void;
+  onDirChange: (dir: SortDirection) => void;
+  onFiltersChange: (filters: ListFilters) => void;
+  className?: string;
+}
+
+/**
+ * Quiet, keyboard-friendly list controls shared by the CRM record tables.
+ * Native selects and checkboxes keep the control usable in BB's host shell
+ * without relying on a second menu primitive or a portal.
+ */
+export function ListControls({
+  entityLabel,
+  sort,
+  dir,
+  sortOptions,
+  filters,
+  facets,
+  onSortChange,
+  onDirChange,
+  onFiltersChange,
+  className,
+}: ListControlsProps) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersId = useId();
+  const activeFilters = Object.entries(filters).flatMap(([id, values]) =>
+    values.map((value) => ({ id, value })),
+  );
+  const availableFacets = facets.filter(
+    (facet) =>
+      facet.options.length > 0 || (filters[facet.id]?.length ?? 0) > 0,
+  );
+  const facetById = new Map(facets.map((facet) => [facet.id, facet]));
+
+  const handleFacetChange = (
+    event: ChangeEvent<HTMLInputElement>,
+    facetId: string,
+    value: string,
+  ) => {
+    onFiltersChange(toggleValue(filters, facetId, value, event.target.checked));
+  };
+
+  return (
+    <div className={cn("min-w-0 space-y-2", className)}>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-36 flex-1 space-y-1 sm:flex-none">
+          <label
+            className="text-xs font-medium text-muted-foreground"
+            htmlFor={`${filtersId}-sort`}
+          >
+            Sort by
+          </label>
+          <select
+            id={`${filtersId}-sort`}
+            className={cn(SELECT_CLASS, "w-full sm:w-44")}
+            aria-label={`Sort ${entityLabel}`}
+            value={sort}
+            onChange={(event) => onSortChange(event.target.value)}
+          >
+            {sortOptions.map((option) => (
+              <option key={option.value || "default"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="min-w-36 flex-1 space-y-1 sm:flex-none">
+          <label
+            className="text-xs font-medium text-muted-foreground"
+            htmlFor={`${filtersId}-direction`}
+          >
+            Direction
+          </label>
+          <select
+            id={`${filtersId}-direction`}
+            className={cn(SELECT_CLASS, "w-full sm:w-36")}
+            aria-label="Sort direction"
+            value={dir}
+            onChange={(event) =>
+              onDirChange(event.target.value === "desc" ? "desc" : "asc")
+            }
+          >
+            <option value="asc">Ascending</option>
+            <option value="desc">Descending</option>
+          </select>
+        </div>
+        {availableFacets.length > 0 ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-expanded={filtersOpen}
+            aria-controls={filtersId}
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            <Icon name="SlidersHorizontal" aria-hidden="true" />
+            Filters
+            {activeFilters.length > 0 ? (
+              <span className="tabular-nums text-muted-foreground">
+                ({activeFilters.length})
+              </span>
+            ) : null}
+          </Button>
+        ) : null}
+      </div>
+
+      {filtersOpen && availableFacets.length > 0 ? (
+        <div
+          id={filtersId}
+          className="grid gap-3 rounded-md border border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3"
+          role="group"
+          aria-label={`${entityLabel} filters`}
+        >
+          {availableFacets.map((facet) => {
+            const selected = filters[facet.id] ?? [];
+            const options: ListFacetOption[] = [
+              ...facet.options,
+              ...selected
+                .filter(
+                  (value) => !facet.options.some((option) => option.value === value),
+                )
+                .map((value) => ({ value, label: value })),
+            ];
+            return (
+              <fieldset key={facet.id} className="min-w-0 space-y-1">
+                <legend className="text-xs font-medium text-muted-foreground">
+                  {facet.label}
+                </legend>
+                <div className="max-h-36 space-y-1 overflow-y-auto">
+                  {options.map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex min-w-0 items-center gap-2 rounded px-1 py-1 text-sm hover:bg-state-hover"
+                    >
+                      <input
+                        type="checkbox"
+                        className={CHECKBOX_CLASS}
+                        aria-label={option.label}
+                        checked={selected.includes(option.value)}
+                        onChange={(event) =>
+                          handleFacetChange(event, facet.id, option.value)
+                        }
+                      />
+                      <span className="min-w-0 truncate">{option.label}</span>
+                      {option.count === undefined ? null : (
+                        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                          {option.count}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {activeFilters.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="Selected filters">
+          {activeFilters.map(({ id, value }) => {
+            const facet = facetById.get(id);
+            const label = facetLabel(facet, value);
+            return (
+              <button
+                key={`${id}:${value}`}
+                type="button"
+                className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-1 text-xs transition-colors hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                aria-label={`Remove ${facetName(facet, id)} filter ${label}`}
+                onClick={() =>
+                  onFiltersChange(toggleValue(filters, id, value, false))
+                }
+              >
+                <span className="truncate">
+                  {facetName(facet, id)}: {label}
+                </span>
+                <Icon name="X" aria-hidden="true" className="size-3" />
+              </button>
+            );
+          })}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => onFiltersChange({})}
+          >
+            Clear all filters
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export interface SelectAllCheckboxProps {
+  label: string;
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}
+
+/** A native checkbox with the mixed state wired for assistive technology. */
+export function SelectAllCheckbox({
+  label,
+  checked,
+  indeterminate = false,
+  disabled = false,
+  onChange,
+}: SelectAllCheckboxProps) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className={CHECKBOX_CLASS}
+      checked={checked}
+      disabled={disabled}
+      aria-label={label}
+      aria-checked={indeterminate ? "mixed" : checked}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  );
+}
+
+export function facetOptionsFromCounts(
+  facetCounts: Record<string, Record<string, number>> | undefined,
+  facetId: string,
+  selected: readonly string[] = [],
+  labelForValue: (value: string) => string = (value) => value,
+): ListFacetOption[] {
+  const counts = facetCounts?.[facetId] ?? {};
+  const values = new Set([...Object.keys(counts), ...selected]);
+  return [...values]
+    .sort((left, right) => labelForValue(left).localeCompare(labelForValue(right)))
+    .map((value) => ({
+      value,
+      label: labelForValue(value),
+      count: counts[value],
+    }));
+}
+
+/** Turns `fields_filters` definitions into facets while retaining saved values. */
+export function customFieldFacets(
+  definitions: readonly FieldDefinition[],
+  facetCounts: Record<string, Record<string, number>> | undefined,
+  selected: ListFilters,
+): ListFacet[] {
+  return definitions
+    .filter((definition) => !definition.archived && definition.showOnFilter)
+    .map((definition) => {
+      const optionsByValue = new Map<string, ListFacetOption>();
+      for (const option of definition.options ?? []) {
+        if (option.archived || option.archivedAt) continue;
+        optionsByValue.set(option.id, { value: option.id, label: option.label });
+      }
+      const counts = facetCounts?.[definition.key] ?? {};
+      for (const value of Object.keys(counts)) {
+        const existing = optionsByValue.get(value);
+        optionsByValue.set(value, {
+          value,
+          label: existing?.label ?? value,
+          count: counts[value],
+        });
+      }
+      for (const value of selected[definition.key] ?? []) {
+        if (!optionsByValue.has(value)) {
+          optionsByValue.set(value, { value, label: value });
+        }
+      }
+      return {
+        id: definition.key,
+        label: definition.label,
+        options: [...optionsByValue.values()].sort((left, right) =>
+          left.label.localeCompare(right.label),
+        ),
+      };
+    })
+    .filter(
+      (facet) =>
+        facet.options.length > 0 || (selected[facet.id]?.length ?? 0) > 0,
+    );
+}

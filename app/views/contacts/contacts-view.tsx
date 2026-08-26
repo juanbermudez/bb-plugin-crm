@@ -21,14 +21,49 @@ import type {
   ContactCreateInput,
   ContactListInput,
   ContactListOutput,
+  FieldDefinition,
   SavedViewFilters,
+  SortDirection,
 } from "../../../contracts/core.js";
 import { useContactsRpc, type ContactsRpcClient } from "./rpc.js";
 import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
+import {
+  customFieldFacets,
+  facetOptionsFromCounts,
+  ListControls,
+  type ListFacet,
+  type ListFilters,
+  type ListSortOption,
+  SelectAllCheckbox,
+} from "../list-controls/list-controls.js";
 
 const PAGE_SIZE = 25;
+
+const CONTACT_SORT_OPTIONS: readonly ListSortOption[] = [
+  { value: "name", label: "Contact" },
+  { value: "email", label: "Email" },
+  { value: "title", label: "Title" },
+  { value: "company", label: "Company" },
+  { value: "owner", label: "Owner" },
+  { value: "createdAt", label: "Created" },
+  { value: "lastActivity", label: "Last activity" },
+];
+
+const CONTACT_STANDARD_FILTERS = [
+  "owner",
+  "company",
+  "source",
+  "title",
+  "seniority",
+  "persona",
+  "activity",
+] as const;
+
+type ContactBulkRpcClient = {
+  call(method: string, input: unknown): Promise<unknown>;
+};
 
 type ContactTab = "overview" | "deals" | "activity" | "agent";
 
@@ -92,25 +127,59 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+function listRpc(rpc: ContactsRpcClient): ContactBulkRpcClient {
+  return rpc as unknown as ContactBulkRpcClient;
+}
+
+function facetValueLabel(value: string): string {
+  if (value === "unassigned" || value === "none") return "Unassigned";
+  if (!value.includes("_") && !value.includes("-") && value !== value.toUpperCase()) {
+    return value;
+  }
+  return value
+    .toLowerCase()
+    .split(/[_-]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function customFieldInput(filters: ListFilters): Record<string, string[]> {
+  const standard = new Set<string>(CONTACT_STANDARD_FILTERS);
+  return Object.fromEntries(
+    Object.entries(filters).filter(([key, values]) => !standard.has(key) && values.length > 0),
+  );
+}
+
+function cleanFilters(filters: Record<string, string[]>): ListFilters {
+  return Object.fromEntries(
+    Object.entries(filters)
+      .map(([key, values]) => [key, [...new Set(values)]])
+      .filter(([, values]) => values.length > 0),
+  );
+}
+
 function createListInput(
   query: string,
   page: number,
   archived: boolean,
+  sort: string,
+  dir: SortDirection,
+  filters: ListFilters,
 ): ContactListInput {
   return {
     q: query,
-    sort: "name",
-    dir: "asc",
+    sort,
+    dir,
     page,
     pageSize: PAGE_SIZE,
-    owner: [],
-    company: [],
-    source: [],
-    title: [],
-    seniority: [],
-    persona: [],
-    activity: [],
-    fields: {},
+    owner: filters.owner ?? [],
+    company: filters.company ?? [],
+    source: (filters.source ?? []) as ContactListInput["source"],
+    title: filters.title ?? [],
+    seniority: filters.seniority ?? [],
+    persona: filters.persona ?? [],
+    activity: (filters.activity ?? []) as ContactListInput["activity"],
+    fields: customFieldInput(filters),
     archived,
   };
 }
@@ -429,10 +498,20 @@ export function ContactsView({
   const rpc = rpcClient ?? contextRpc;
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState("name");
+  const [dir, setDir] = useState<SortDirection>("asc");
+  const [filters, setFilters] = useState<ListFilters>({});
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<ContactListOutput>(EMPTY_LIST);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [filterDefinitions, setFilterDefinitions] = useState<readonly FieldDefinition[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkOwnerId, setBulkOwnerId] = useState("");
+  const [bulkCompanyId, setBulkCompanyId] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkStatus, setBulkStatus] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [recordId, setRecordId] = useState<string | null>(initialRecordId);
   const [record, setRecord] = useState<Contact | null>(null);
@@ -456,8 +535,8 @@ export function ContactsView({
   const [createSaving, setCreateSaving] = useState(false);
 
   const listInput = useMemo(
-    () => createListInput(query, page, showArchived),
-    [page, query, showArchived],
+    () => createListInput(query, page, showArchived, sort, dir, filters),
+    [dir, filters, page, query, showArchived, sort],
   );
 
   const reloadList = useCallback(async () => {
@@ -492,6 +571,27 @@ export function ContactsView({
       active = false;
     };
   }, [listInput, refreshKey, rpc]);
+
+  useEffect(() => {
+    let active = true;
+    void listRpc(rpc)
+      .call("fields_filters", { entity: "CONTACT" })
+      .then((next) => {
+        if (active && Array.isArray(next)) {
+          setFilterDefinitions(next as FieldDefinition[]);
+        }
+      })
+      .catch(() => {
+        // Custom-field facets are optional; the standard facets remain usable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [rpc]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [listInput]);
 
   useEffect(() => {
     setRecordId(initialRecordId);
@@ -640,6 +740,126 @@ export function ContactsView({
     [onRecordIdChange, record, recordId],
   );
 
+  const ownerLabels = useMemo(
+    () =>
+      new Map(
+        list.rows
+          .filter((contact) => contact.owner?.name)
+          .map((contact) => [contact.ownerId, contact.owner?.name as string]),
+      ),
+    [list.rows],
+  );
+  const companyLabels = useMemo(
+    () =>
+      new Map(
+        list.rows
+          .filter((contact) => contact.company?.name)
+          .map((contact) => [contact.companyId, contact.company?.name as string]),
+      ),
+    [list.rows],
+  );
+  const facets = useMemo<ListFacet[]>(
+    () => [
+      {
+        id: "owner",
+        label: "Owner",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "owner",
+          filters.owner,
+          (value) => ownerLabels.get(value) ?? facetValueLabel(value),
+        ),
+      },
+      {
+        id: "company",
+        label: "Company",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "company",
+          filters.company,
+          (value) => companyLabels.get(value) ?? facetValueLabel(value),
+        ),
+      },
+      {
+        id: "title",
+        label: "Title",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "title",
+          filters.title,
+          facetValueLabel,
+        ),
+      },
+      {
+        id: "seniority",
+        label: "Seniority",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "seniority",
+          filters.seniority,
+          facetValueLabel,
+        ),
+      },
+      {
+        id: "persona",
+        label: "Persona",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "persona",
+          filters.persona,
+          facetValueLabel,
+        ),
+      },
+      {
+        id: "source",
+        label: "Source",
+        options: facetOptionsFromCounts(
+          list.facetCounts,
+          "source",
+          filters.source,
+          facetValueLabel,
+        ),
+      },
+      ...customFieldFacets(filterDefinitions, list.facetCounts, filters),
+    ],
+    [companyLabels, filterDefinitions, filters, list.facetCounts, ownerLabels],
+  );
+  const visibleIds = useMemo(() => list.rows.map((contact) => contact.id), [list.rows]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedSet.has(id));
+  const toggleAll = useCallback(
+    (checked: boolean) => {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        for (const id of visibleIds) {
+          if (checked) next.add(id);
+          else next.delete(id);
+        }
+        return [...next];
+      });
+    },
+    [visibleIds],
+  );
+  const runBulk = useCallback(
+    async (method: string, input: unknown, successMessage: string) => {
+      setBulkBusy(true);
+      setBulkError(null);
+      setBulkStatus(null);
+      try {
+        await listRpc(rpc).call(method, input);
+        setSelectedIds([]);
+        setBulkStatus(successMessage);
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setBulkError(errorMessage(cause));
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [rpc],
+  );
+
   const totalPages = Math.max(1, Math.ceil(list.total / PAGE_SIZE));
 
   return (
@@ -681,14 +901,21 @@ export function ContactsView({
           entity="CONTACT"
           currentFilters={{
             q: query,
-            sort: "name",
-            dir: "asc",
+            sort,
+            dir,
             archived: showArchived,
-            filters: {},
+            filters,
             columns: [],
           }}
           onApplyFilters={(filters: SavedViewFilters) => {
             setQuery(filters.q);
+            setSort(
+              CONTACT_SORT_OPTIONS.some((option) => option.value === filters.sort)
+                ? filters.sort
+                : "name",
+            );
+            setDir(filters.dir);
+            setFilters(cleanFilters(filters.filters));
             setShowArchived(filters.archived);
             setPage(1);
           }}
@@ -713,6 +940,26 @@ export function ContactsView({
             {showArchived ? " · archived" : ""}
           </p>
         </div>
+        <ListControls
+          entityLabel="contacts"
+          sort={sort}
+          dir={dir}
+          sortOptions={CONTACT_SORT_OPTIONS}
+          filters={filters}
+          facets={facets}
+          onSortChange={(next) => {
+            setSort(next);
+            setPage(1);
+          }}
+          onDirChange={(next) => {
+            setDir(next);
+            setPage(1);
+          }}
+          onFiltersChange={(next) => {
+            setFilters(cleanFilters(next));
+            setPage(1);
+          }}
+        />
         {listError === null ? null : (
           <div
             className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
@@ -724,9 +971,177 @@ export function ContactsView({
             </Button>
           </div>
         )}
+        {bulkStatus ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {bulkStatus}
+          </p>
+        ) : null}
+        {bulkError ? (
+          <p className="text-sm text-destructive" role="alert">
+            {bulkError}
+          </p>
+        ) : null}
+        {selectedIds.length > 0 ? (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2"
+            role="toolbar"
+            aria-label="Contact bulk actions"
+          >
+            <span className="text-xs text-muted-foreground">
+              <strong className="font-medium text-foreground">{selectedIds.length}</strong>{" "}
+              selected
+            </span>
+            {!showArchived ? (
+              <>
+                <select
+                  className="h-8 min-w-36 rounded-md border border-input bg-background px-2 text-xs"
+                  aria-label="Bulk owner"
+                  value={bulkOwnerId}
+                  onChange={(event) => setBulkOwnerId(event.target.value)}
+                  disabled={bulkBusy}
+                >
+                  <option value="">Unassigned</option>
+                  {(facets.find((facet) => facet.id === "owner")?.options ?? [])
+                    .filter((option) => option.value !== "unassigned")
+                    .map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "contacts_bulkAssignOwner",
+                      { ids: selectedIds, ownerId: bulkOwnerId || null },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} reassigned.`,
+                    )
+                  }
+                >
+                  Assign owner
+                </Button>
+                <Input
+                  className="h-8 w-40 text-xs"
+                  aria-label="Bulk company ID"
+                  value={bulkCompanyId}
+                  onChange={(event) => setBulkCompanyId(event.target.value)}
+                  placeholder="Company ID"
+                  disabled={bulkBusy}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy || bulkCompanyId.trim() === ""}
+                  onClick={() =>
+                    void runBulk(
+                      "contacts_bulkAssignCompany",
+                      { ids: selectedIds, companyId: bulkCompanyId.trim() || null },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} moved.`,
+                    )
+                  }
+                >
+                  Assign company
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const confirmed =
+                      typeof window === "undefined" ||
+                      typeof window.confirm !== "function" ||
+                      window.confirm(
+                        `Archive ${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"}?`,
+                      );
+                    if (confirmed) {
+                      void runBulk(
+                        "contacts_bulkArchive",
+                        { ids: selectedIds },
+                        `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} archived.`,
+                      );
+                    }
+                  }}
+                >
+                  Archive selected
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "contacts_bulkRestore",
+                      { ids: selectedIds },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} restored.`,
+                    )
+                  }
+                >
+                  Restore selected
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const confirmed =
+                      typeof window === "undefined" ||
+                      typeof window.confirm !== "function" ||
+                      window.confirm(
+                        `Delete ${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} permanently? This cannot be undone.`,
+                      );
+                    if (confirmed) {
+                      void runBulk(
+                        "contacts_bulkPurge",
+                        { ids: selectedIds },
+                        `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} deleted.`,
+                      );
+                    }
+                  }}
+                >
+                  Delete selected
+                </Button>
+              </>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={bulkBusy}
+              onClick={() => setSelectedIds([])}
+            >
+              Clear selection
+            </Button>
+          </div>
+        ) : null}
         <TableShell
           caption="Contacts"
-          columns={CONTACT_COLUMNS}
+          columns={[
+            {
+              id: "select",
+              label: (
+                <SelectAllCheckbox
+                  label="Select all visible contacts"
+                  checked={allVisibleSelected}
+                  indeterminate={!allVisibleSelected && someVisibleSelected}
+                  disabled={listLoading || visibleIds.length === 0}
+                  onChange={toggleAll}
+                />
+              ),
+              className: "w-10 px-3",
+            },
+            ...CONTACT_COLUMNS,
+          ]}
           loading={listLoading}
           empty={
             <EmptyState
@@ -777,6 +1192,25 @@ export function ContactsView({
                   }
                 }}
               >
+                <td
+                  className="w-10 px-3 py-3"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    aria-label={`Select ${name}`}
+                    checked={selectedSet.has(contact.id)}
+                    onChange={(event) => {
+                      setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(contact.id);
+                        else next.delete(contact.id);
+                        return [...next];
+                      });
+                    }}
+                  />
+                </td>
                 <td className="px-3 py-3 font-medium">{name}</td>
                 <td className="px-3 py-3 text-muted-foreground">
                   {contact.company?.name ?? displayValue(contact.companyId)}
