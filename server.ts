@@ -76,7 +76,10 @@ export default async function plugin(bb: BbPluginApi) {
   const currency = createCurrencyStore(db);
   const activities = createActivityStore(db);
 
-  function companyOutput(company: StoredCompany): CompanyOutput {
+  function companyOutput(
+    company: StoredCompany,
+    includeRelations = false,
+  ): CompanyOutput {
     const counts = db
       .prepare(`
         SELECT
@@ -87,12 +90,32 @@ export default async function plugin(bb: BbPluginApi) {
               AND stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')) AS openDealCount
       `)
       .get({ id: company.id }) as { contactCount: number; openDealCount: number };
-    return {
+    const relatedContacts = includeRelations
+      ? db.prepare(`
+          SELECT id, first_name AS firstName, last_name AS lastName,
+            email, title, image_url AS imageUrl
+          FROM contacts
+          WHERE company_id = ? AND archived_at IS NULL
+          ORDER BY first_name, last_name, id
+        `).all(company.id) as NonNullable<CompanyOutput["contacts"]>
+      : undefined;
+    const relatedDeals = includeRelations
+      ? db.prepare(`
+          SELECT id, name
+          FROM deals
+          WHERE company_id = ? AND archived_at IS NULL
+          ORDER BY created_at DESC, id DESC
+        `).all(company.id) as NonNullable<CompanyOutput["deals"]>
+      : undefined;
+    const output: CompanyOutput = {
       ...company,
       fields: {},
       contactCount: counts.contactCount,
       openDealCount: counts.openDealCount,
     };
+    return includeRelations
+      ? { ...output, contacts: relatedContacts ?? [], deals: relatedDeals ?? [] }
+      : output;
   }
 
   function companyListOptions(input: CompanyListInput): CompanyListOptions {
@@ -379,13 +402,13 @@ export default async function plugin(bb: BbPluginApi) {
     companies_list(input) {
       const options = companyListOptions(input);
       return {
-        rows: companies.list(options).map(companyOutput),
+        rows: companies.list(options).map((company) => companyOutput(company)),
         total: companies.count(options),
         facetCounts: facetCounts(),
       };
     },
     companies_get({ id }) {
-      return companyOutput(companies.getRequired(id));
+      return companyOutput(companies.getRequired(id), true);
     },
     companies_create(input) {
       const company = companies.create(input);

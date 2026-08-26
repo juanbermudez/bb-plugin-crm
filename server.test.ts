@@ -109,6 +109,12 @@ describe("CRM plugin foundation", () => {
       fields: {},
       deals: [],
     });
+    await expect(
+      harness.behavior.callRpc("companies_get", { id: company.id }),
+    ).resolves.toMatchObject({
+      contacts: [expect.objectContaining({ email: "ada@example.com" })],
+      deals: [],
+    });
 
     const listed = await harness.behavior.callRpc("contacts_list", {
       q: "ada@example.com",
@@ -157,6 +163,11 @@ describe("CRM plugin foundation", () => {
       fxRate: 1,
       company: { id: company.id, name: "Pipeline Co" },
       contacts: [],
+    });
+    await expect(
+      harness.behavior.callRpc("companies_get", { id: company.id }),
+    ).resolves.toMatchObject({
+      deals: [expect.objectContaining({ id: (deal as { id: string }).id, name: "Expansion" })],
     });
 
     const listed = await harness.behavior.callRpc("deals_list", { status: "open" });
