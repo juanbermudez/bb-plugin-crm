@@ -1,0 +1,84 @@
+{
+  "name": "bb-plugin-crm",
+  "version": "0.1.0",
+  "description": "A local-first, agent-native CRM workspace for BB.",
+  "license": "MIT",
+  "homepage": "https://github.com/juanbermudez/bb-plugin-crm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juanbermudez/bb-plugin-crm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/juanbermudez/bb-plugin-crm/issues"
+  },
+  "type": "module",
+  "engines": {
+    "bb": ">=0.39",
+    "bbPluginSdk": ">=0.4.8"
+  },
+  "bb": {
+    "name": "CRM",
+    "description": "Manage contacts, companies, deals, activities, and agent-driven research inside BB.",
+    "branding": {
+      "icon": "./assets/icon.svg"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "skills": [
+      "skills"
+    ]
+  },
+  "files": [
+    "assets",
+    "components",
+    "dist",
+    "docs",
+    "lib",
+    "skills",
+    "app.tsx",
+    "server.ts",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "keywords": [
+    "bb-plugin",
+    "crm",
+    "sales",
+    "contacts",
+    "deals",
+    "agents"
+  ],
+  "scripts": {
+    "build": "bb plugin build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hugeicons/core-free-icons": "^4.1.3",
+    "@hugeicons/react": "^1.1.6",
+    "@radix-ui/react-slot": "^1.3.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.4.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.8",
+    "@radix-ui/react-dialog": "^1.1.19",
+    "@testing-library/react": "^16.3.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "bb-app": "0.39.0",
+    "better-sqlite3": "^12.0.0",
+    "cron-parser": "^5.5.0",
+    "hono": "^4.11.9",
+    "jsdom": "^26.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}
