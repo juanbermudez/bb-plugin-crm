@@ -14,6 +14,7 @@ import {
   EmptyState,
   InlineField,
   PageHeader,
+  PersonAvatar,
   RecordDrawer,
   SearchField,
   TableShell,
@@ -482,6 +483,19 @@ function ContactOverview({
               onUpdate(
                 { githubUrl: githubUrl || null },
                 { githubUrl: githubUrl || null },
+              )
+            }
+          />
+          <InlineField
+            label="Photo URL"
+            value={contact.imageUrl ?? null}
+            type="url"
+            placeholder="https://example.com/photo.jpg"
+            saving={mutationBusy}
+            onSave={(imageUrl) =>
+              onUpdate(
+                { imageUrl: imageUrl || null },
+                { imageUrl: imageUrl || null },
               )
             }
           />
@@ -1541,7 +1555,17 @@ export function ContactsView({
                             : "px-3 py-3 text-muted-foreground"
                     }
                   >
-                    {column.id === "last-activity" && contact.lastActivityAt ? (
+                    {column.id === "contact" ? (
+                      <div className="flex min-w-0 items-center gap-2">
+                        <PersonAvatar
+                          src={contact.imageUrl}
+                          name={name}
+                          email={contact.email}
+                          size="sm"
+                        />
+                        <span className="min-w-0 truncate">{name}</span>
+                      </div>
+                    ) : column.id === "last-activity" && contact.lastActivityAt ? (
                       <time dateTime={contact.lastActivityAt}>
                         {contactColumnValue(contact, column.id, tableDefinitions)}
                       </time>
@@ -1592,6 +1616,16 @@ export function ContactsView({
         }}
         title={record === null ? "Contact" : contactName(record)}
         description={record?.email ?? record?.title ?? "Contact record"}
+        media={
+          record === null ? undefined : (
+            <PersonAvatar
+              src={record.imageUrl}
+              name={contactName(record)}
+              email={record.email}
+              size="lg"
+            />
+          )
+        }
       >
         {recordLoading ? (
           <div className="flex min-h-56 items-center justify-center" role="status">

@@ -267,6 +267,7 @@ describe("CRM plugin foundation", () => {
       "crm_update_record",
       "crm_add_activity",
       "crm_list_tasks",
+      "crm_complete_task",
       "crm_set_field",
       "crm_record_contact_fact",
       "crm_record_contact_brief",
@@ -311,9 +312,17 @@ describe("CRM plugin foundation", () => {
       subject: "Agent follow-up",
       dueAt: new Date(Date.now() + 86_400_000).toISOString(),
     });
+    const task = JSON.parse(String(await harness.callAgentTool("crm_add_activity", {
+      type: "TASK",
+      companyId: created.id,
+      subject: "Agent completion",
+      dueAt: new Date(Date.now() + 86_400_000).toISOString(),
+    }))) as { id: string };
     await expect(harness.callAgentTool("crm_list_tasks", {
       window: "all",
     })).resolves.toContain("Agent follow-up");
+    await expect(harness.callAgentTool("crm_complete_task", { id: task.id })).resolves.toContain("completedAt");
+    await expect(harness.callAgentTool("crm_complete_task", { id: task.id, unknown: true })).rejects.toThrow();
 
     await harness.lifecycle.dispose();
   });
@@ -1620,6 +1629,62 @@ describe("CRM plugin foundation", () => {
       });
       expect(store.listThreads("agent_dispatch_server", { runId: "run_dispatch_server" }))
         .toEqual([expect.objectContaining({ threadId: "bb-thread-manual" })]);
+    } finally {
+      service.controller.abort();
+      await service.done;
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("leases due CRM tasks into the explicitly configured hidden agent worker", async () => {
+    const spawn = vi.fn(async () => ({ id: "bb-thread-due-task" }));
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: {
+        taskAgentId: "agent_due_task_server",
+      },
+      sdk: {
+        projects: { list: async () => [{ id: "project-due-task", kind: "standard" }] },
+        threads: { spawn },
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_due_task_server", "version_due_task_server");
+    const company = await harness.behavior.callRpc("companies_create", { name: "Due Task Co" }) as { id: string };
+    const activity = await harness.behavior.callRpc("activity_create", {
+      type: "TASK",
+      companyId: company.id,
+      createdById: "human-task-author",
+      subject: "Call the account",
+      dueAt: new Date(Date.now() - 1_000).toISOString(),
+    }) as { id: string };
+
+    const service = harness.behavior.runService(CRM_AGENT_DISPATCH_SERVICE_NAME);
+    const store = createAgentStore(bb.storage.database());
+    try {
+      await vi.waitFor(() => {
+        const runs = store.listRuns({
+          agentId: "agent_due_task_server",
+          status: ["QUEUED", "RUNNING"],
+          limit: 100,
+          includeEvents: false,
+          includeActions: false,
+        });
+        expect(runs).toEqual([expect.objectContaining({ triggerType: "MANUAL", triggerId: null })]);
+        expect(runs[0]?.input).toMatchObject({
+          kind: "CRM_DUE_TASK",
+          activity: { id: activity.id, createdById: "human-task-author" },
+        });
+      });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0]).toMatchObject({
+        projectId: "project-due-task",
+        visibility: "hidden",
+      });
+      const dispatch = bb.storage.database().prepare(
+        "SELECT status, attempts, run_id AS runId FROM crm_activity_task_dispatches WHERE activity_id = ?",
+      ).get(activity.id) as { status: string; attempts: number; runId: string | null };
+      expect(dispatch).toMatchObject({ status: "DISPATCHED", attempts: 1, runId: expect.any(String) });
     } finally {
       service.controller.abort();
       await service.done;

@@ -74,6 +74,50 @@ function makeRpc(
 }
 
 describe("ContactsView", () => {
+  it("displays a portrait with initials fallback and saves an edited portrait URL", async () => {
+    let current = { ...contact, imageUrl: "https://cdn.example/ada.jpg" };
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "contacts_list") return listResult([current]);
+      if (method === "contacts_get") return current;
+      if (method === "contacts_update") {
+        const data = (input as { data: { imageUrl?: string | null } }).data;
+        current = { ...current, imageUrl: data.imageUrl ?? null };
+        return current;
+      }
+      return current;
+    });
+    render(<ContactsView rpcClient={rpc} />);
+
+    const row = await screen.findByRole("row", { name: /Open Ada Lovelace/ });
+    const tableAvatar = within(row).getByRole("img", { name: "Ada Lovelace" });
+    expect(tableAvatar.querySelector("img")?.getAttribute("src")).toBe(
+      "https://cdn.example/ada.jpg",
+    );
+
+    fireEvent.click(row);
+    const drawer = await screen.findByRole("dialog", { name: "Ada Lovelace" });
+    const drawerAvatar = within(drawer).getByRole("img", { name: "Ada Lovelace" });
+    expect(drawerAvatar.querySelector("img")?.getAttribute("src")).toBe(
+      "https://cdn.example/ada.jpg",
+    );
+
+    fireEvent.error(drawerAvatar.querySelector("img")!);
+    expect(drawerAvatar.textContent).toContain("AL");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: "Photo URL" }));
+    const photoInput = within(drawer).getByLabelText("Photo URL");
+    fireEvent.change(photoInput, {
+      target: { value: "https://cdn.example/ada-new.jpg" },
+    });
+    fireEvent.blur(photoInput);
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("contacts_update", {
+        id: "con_ada",
+        data: { imageUrl: "https://cdn.example/ada-new.jpg" },
+      }),
+    );
+  });
+
   it("loads a searchable contact table and opens the related deals tab", async () => {
     const rpc = makeRpc();
     render(<ContactsView rpcClient={rpc} />);

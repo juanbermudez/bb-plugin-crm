@@ -37,6 +37,7 @@
     "db",
     "dist",
     "docs",
+    "agent-attachments.ts",
     "agent-dispatch.ts",
     "hooks",
     "lib",

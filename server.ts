@@ -63,6 +63,10 @@ import {
   type EnrichmentFocus,
 } from "./contracts/core.js";
 import {
+  crmDueTaskRunInputSchema,
+  CRM_DUE_TASK_RUN_KIND,
+} from "./contracts/task-dispatch.js";
+import {
   siteKeySchema,
   trackingEventBatchInputSchema,
   trackingEventInputSchema,
@@ -92,6 +96,10 @@ import {
   createActivityStore,
   type Activity as StoredActivity,
 } from "./db/activities.js";
+import {
+  createActivityTaskDispatchStore,
+  CRM_ACTIVITY_TASK_DISPATCH_MAX_BATCH,
+} from "./db/activity-task-dispatch.js";
 import {
   createSavedViewStore,
   type SavedView as StoredSavedView,
@@ -628,6 +636,12 @@ export default async function plugin(bb: BbPluginApi) {
         "Optional live BB agent used for provider-backed company and contact research.",
       default: "",
     },
+    taskAgentId: {
+      type: "string",
+      label: "Due-task agent id",
+      description: "Optional live BB agent used for due CRM TASK activities.",
+      default: "",
+    },
     currencyRateProvider: {
       type: "string",
       label: "Currency rate provider",
@@ -668,6 +682,7 @@ export default async function plugin(bb: BbPluginApi) {
   const deals = createDealStore(db);
   const currency = createCurrencyStore(db);
   const activities = createActivityStore(db);
+  const activityTaskDispatch = createActivityTaskDispatchStore(db);
   const savedViews = createSavedViewStore(db);
   const customFields = createCustomFieldStore(db);
   const evidenceStore = createEvidenceStore(db);
@@ -1696,10 +1711,13 @@ export default async function plugin(bb: BbPluginApi) {
       SELECT id
       FROM agent_triggers
       WHERE type = 'SCHEDULE' AND enabled = 1
-        AND (next_run_at IS NULL OR next_run_at <= ?)
+        AND (next_run_at IS NULL OR next_run_at <= @now)
       ORDER BY COALESCE(next_run_at, ''), id
-      LIMIT ?
-    `).all(nowIso, CRM_AGENT_DISPATCH_MAX_BATCH) as Array<{ id?: unknown }>;
+      LIMIT @limit
+    `).all({
+      now: nowIso,
+      limit: CRM_AGENT_DISPATCH_MAX_BATCH,
+    }) as Array<{ id?: unknown }>;
 
     for (const row of rows) {
       if (signal.aborted) return;
@@ -1793,8 +1811,117 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
+  type DueTaskDispatchPolicy = {
+    agentId: string;
+    versionId: string;
+  };
+
+  /**
+   * Due-task dispatch is opt-in and deliberately requires one explicit live
+   * agent id. Runs use the MANUAL lane because CRM has no separate task
+   * trigger producer; no activity author is treated as a BB assignee and no
+   * default/research agent is inferred.
+   */
+  async function resolveDueTaskDispatchPolicy(): Promise<DueTaskDispatchPolicy | null> {
+    const values = await settings.get() as Record<string, unknown>;
+    const agentId = parseAgentSelector(values.taskAgentId, "due-task agent", (message) => bb.log.warn(message));
+    if (agentId === undefined) return null;
+
+    try {
+      const agent = agents.getRequired(agentId);
+      if (agent.status !== "LIVE" || agent.currentVersionId === null) {
+        bb.log.warn(`CRM due-task agent ${agent.id} is not live with a current version; no tasks were queued.`);
+        return null;
+      }
+      const version = agents.getVersionRequired(agent.currentVersionId);
+      if (version.status !== "DEPLOYED") {
+        bb.log.warn(`CRM due-task agent ${agent.id} has no deployed version; no tasks were queued.`);
+        return null;
+      }
+      return { agentId: agent.id, versionId: version.id };
+    } catch (error) {
+      bb.log.warn(
+        `CRM due-task policy could not be resolved; no tasks were queued: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  async function enqueueDueActivityTaskRuns(
+    signal: AbortSignal,
+    policy: DueTaskDispatchPolicy,
+  ): Promise<void> {
+    const claims = activityTaskDispatch.claimDue(CRM_ACTIVITY_TASK_DISPATCH_MAX_BATCH);
+    for (const claim of claims) {
+      if (signal.aborted) return;
+      try {
+        // A completion can race the lease transaction. Re-read the activity
+        // before creating a run so normal user completion wins when observed.
+        const current = activities.getRequired(claim.activity.id);
+        if (current.type !== "TASK" || current.completedAt !== null || current.dueAt === null) {
+          activityTaskDispatch.markCompleted(claim.activity.id);
+          continue;
+        }
+        const input = crmDueTaskRunInputSchema.parse({
+          kind: CRM_DUE_TASK_RUN_KIND,
+          activity: {
+            id: current.id,
+            subject: current.subject,
+            body: current.body,
+            occurredAt: current.occurredAt,
+            dueAt: current.dueAt,
+            completedAt: current.completedAt,
+            companyId: current.companyId,
+            contactId: current.contactId,
+            dealId: current.dealId,
+            createdById: current.createdById,
+            meta: current.meta,
+          },
+          requestedAt: new Date().toISOString(),
+        });
+        const run = agents.queueRun(
+          policy.agentId,
+          {
+            versionId: policy.versionId,
+            triggerId: null,
+            triggerType: "MANUAL",
+            initiatedById: LOCAL_OWNER_ID,
+            input,
+            idempotencyKey: claim.dispatch.idempotencyKey,
+            correlationId: claim.dispatch.idempotencyKey,
+          },
+          "crm-task-dispatcher",
+        );
+        activityTaskDispatch.attachRun(
+          claim.activity.id,
+          claim.dispatch.leaseToken ?? "",
+          run.id,
+        );
+        changed("agent-run", "queued", run.id);
+        changed("agent", "run-queued", run.agentId);
+      } catch (error) {
+        activityTaskDispatch.releaseClaim(
+          claim.activity.id,
+          claim.dispatch.leaseToken ?? "",
+          error,
+        );
+        bb.log.error(
+          `CRM due activity task ${claim.activity.id} could not queue its agent run: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  }
+
   function publishDispatchResult(result: AgentDispatchResult): void {
     syncEnrichmentRun(result.run);
+    const dueTask = crmDueTaskRunInputSchema.safeParse(result.run.input);
+    if (dueTask.success && result.kind === "dispatched") {
+      activityTaskDispatch.markDispatched(dueTask.data.activity.id, result.run.id);
+    }
     if (result.kind === "dispatched") {
       changed("agent-run", "started", result.run.id);
       changed("agent", "run-updated", result.run.agentId);
@@ -1839,7 +1966,10 @@ export default async function plugin(bb: BbPluginApi) {
     if (signal.aborted) return;
     await reconcileRunningLinkedRuns(signal);
     if (signal.aborted) return;
+    const dueTaskPolicy = await resolveDueTaskDispatchPolicy();
     await enqueueDueScheduleRuns(signal);
+    if (signal.aborted) return;
+    if (dueTaskPolicy !== null) await enqueueDueActivityTaskRuns(signal, dueTaskPolicy);
     if (signal.aborted) return;
 
     const queued = agents.listRuns({
@@ -4019,6 +4149,10 @@ export default async function plugin(bb: BbPluginApi) {
     },
     activity_complete({ id, completed }) {
       const activity = activities.complete(id, completed);
+      if (activity.type === "TASK") {
+        if (completed) activityTaskDispatch.markCompleted(activity.id);
+        else activityTaskDispatch.markReopened(activity.id);
+      }
       changed("activity", completed ? "completed" : "reopened", activity.id);
       return activityOutput(activity);
     },
@@ -4159,6 +4293,7 @@ export default async function plugin(bb: BbPluginApi) {
     "crm_update_record",
     "crm_add_activity",
     "crm_list_tasks",
+    "crm_complete_task",
     "ask_question",
     "crm_set_field",
     "crm_record_contact_fact",
@@ -4230,6 +4365,10 @@ export default async function plugin(bb: BbPluginApi) {
       (value) => value.type !== "TASK" || Boolean(value.subject),
       "A task needs a subject.",
     );
+  const activityTaskCompletionToolInputSchema = z.object({
+    id: idSchema,
+    completed: z.boolean().default(true),
+  }).strict();
 
   function clarificationError(message: string): PluginAgentToolResult {
     return {
@@ -4498,6 +4637,26 @@ export default async function plugin(bb: BbPluginApi) {
           limit: input.limit,
         }).map(activityOutput),
       );
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_complete_task",
+    description: "Complete or reopen one CRM TASK activity by its exact activity id.",
+    instructions:
+      "Use the activity id from crm_list_tasks or a focused CRM read. Only mark the task complete when the requested work is actually done; use completed=false to reopen it. Never infer an id from a subject or claim completion from a summary alone.",
+    parameters: activityTaskCompletionToolInputSchema,
+    execute({ id, completed }) {
+      const activity = activities.complete(id, completed);
+      if (activity.type !== "TASK") {
+        // ActivityStore.complete already rejects this, but retain the guard
+        // if its implementation is ever widened independently.
+        throw new Error("Only TASK activities can be completed.");
+      }
+      if (completed) activityTaskDispatch.markCompleted(activity.id);
+      else activityTaskDispatch.markReopened(activity.id);
+      changed("activity", completed ? "completed" : "reopened", activity.id);
+      return JSON.stringify(activityOutput(activity));
     },
   });
 

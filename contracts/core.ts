@@ -38,6 +38,17 @@ const nullableText = z.string().trim().nullable();
 const optionalNullableText = nullableText.optional();
 const sourceUrl = z.string().trim().url("Use an absolute source URL.");
 const optionalNullableSourceUrl = sourceUrl.nullable().optional();
+const contactImageUrl = z.string().trim().refine(
+  (value) => {
+    try {
+      return new URL(value).protocol === "https:";
+    } catch {
+      return false;
+    }
+  },
+  "Use an HTTPS portrait URL.",
+);
+const optionalNullableContactImageUrl = contactImageUrl.nullable().optional();
 
 /** Serialized timestamps are strings at the RPC boundary, never Date values. */
 export const timestampSchema = z.string().trim().min(1);
@@ -816,6 +827,7 @@ const contactUpdateDataShape = {
   linkedinUrl: optionalNullableText,
   twitterUrl: optionalNullableText,
   githubUrl: optionalNullableText,
+  imageUrl: optionalNullableContactImageUrl,
   companyId: idSchema.nullable().optional(),
   ownerId: idSchema.nullable().optional(),
   fields: fieldValuesSchema.optional(),

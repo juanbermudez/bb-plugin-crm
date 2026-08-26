@@ -2,6 +2,7 @@ export { EmptyState, type EmptyStateProps } from "./empty-state.js";
 export { ClarificationQuestion } from "./clarification-question.js";
 export { PageHeader, type PageHeaderProps } from "./page-header.js";
 export { RecordDrawer, type RecordDrawerProps } from "./record-drawer.js";
+export { PersonAvatar, type PersonAvatarProps } from "./person-avatar.js";
 export {
   InlineDateField,
   InlineField,

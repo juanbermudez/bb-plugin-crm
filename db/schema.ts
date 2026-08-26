@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 7;
+export const CRM_SCHEMA_VERSION = 8;
 
 const MIGRATIONS: string[] = [
   `
@@ -1117,6 +1117,35 @@ const MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '7', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    -- Due timeline tasks are leased in their own table.  Keeping dispatch
+    -- state separate from activities preserves the source-shaped activity
+    -- model while allowing bounded retries and a compare-and-set lease fence.
+    CREATE TABLE IF NOT EXISTS crm_activity_task_dispatches (
+      activity_id TEXT PRIMARY KEY NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'LEASED'
+        CHECK (status IN ('LEASED', 'QUEUED', 'DISPATCHED', 'COMPLETED', 'FAILED')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      lease_token TEXT,
+      lease_until TEXT,
+      run_id TEXT UNIQUE REFERENCES agent_runs(id) ON DELETE SET NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS crm_activity_task_dispatch_due_idx
+      ON crm_activity_task_dispatches(status, lease_until, attempts, activity_id);
+    CREATE INDEX IF NOT EXISTS crm_activity_task_dispatch_run_idx
+      ON crm_activity_task_dispatches(run_id);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '8', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;

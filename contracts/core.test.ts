@@ -12,6 +12,7 @@ import {
   contactBriefCreateInputSchema,
   contactFactCreateInputSchema,
   contactFactRecordSchema,
+  contactUpdateDataSchema,
   contactWorkHistoryCreateInputSchema,
   currencyCodeSchema,
   dealCreateInputSchema,
@@ -139,6 +140,16 @@ describe("CRM core contracts", () => {
         ownerId: "user_1",
         amountCents: -1,
         currency: "USD",
+      }).success,
+    ).toBe(false);
+    expect(
+      contactUpdateDataSchema.safeParse({
+        imageUrl: "https://cdn.example/ada.jpg",
+      }).success,
+    ).toBe(true);
+    expect(
+      contactUpdateDataSchema.safeParse({
+        imageUrl: "http://cdn.example/ada.jpg",
       }).success,
     ).toBe(false);
   });

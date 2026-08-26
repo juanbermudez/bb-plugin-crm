@@ -17,6 +17,7 @@ export interface RecordDrawerProps {
   onOpenChange: (open: boolean) => void;
   title: React.ReactNode;
   description?: React.ReactNode;
+  media?: React.ReactNode;
   actions?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
@@ -38,6 +39,7 @@ export function RecordDrawer({
   onOpenChange,
   title,
   description,
+  media,
   actions,
   children,
   footer,
@@ -56,18 +58,23 @@ export function RecordDrawer({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <DialogHeader className="relative shrink-0 border-b border-border px-5 py-4 pr-14">
             <div className="flex min-w-0 items-start justify-between gap-3">
-              <div className="min-w-0">
-                <DialogTitle className="truncate text-lg">
-                  {title}
-                </DialogTitle>
-                <DialogDescription
-                  className={cn(
-                    "mt-1 line-clamp-2",
-                    description === undefined && "sr-only",
-                  )}
-                >
-                  {description ?? "Record details"}
-                </DialogDescription>
+              <div className="flex min-w-0 items-start gap-3">
+                {media === undefined ? null : (
+                  <div className="shrink-0">{media}</div>
+                )}
+                <div className="min-w-0">
+                  <DialogTitle className="truncate text-lg">
+                    {title}
+                  </DialogTitle>
+                  <DialogDescription
+                    className={cn(
+                      "mt-1 line-clamp-2",
+                      description === undefined && "sr-only",
+                    )}
+                  >
+                    {description ?? "Record details"}
+                  </DialogDescription>
+                </div>
               </div>
               {actions === undefined ? null : (
                 <div className="flex shrink-0 items-center gap-1">
