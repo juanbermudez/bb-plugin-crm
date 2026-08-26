@@ -131,6 +131,40 @@ function snapshotForColumns(
   return normalizeColumnPreference(columns, readSnapshot(storageKey));
 }
 
+function snapshotForVisibleIds(
+  columns: readonly TableColumnPreference[],
+  ids: readonly string[],
+): ColumnPreferenceSnapshot {
+  const requested = cleanIds(ids);
+  const available = availableIds(columns);
+  const order = requested.filter((id) => available.has(id));
+  for (const column of columns) {
+    if (!order.includes(column.id)) order.push(column.id);
+  }
+  const requiredIds = new Set(
+    columns.filter((column) => column.required === true).map((column) => column.id),
+  );
+  const hidden = columns
+    .map((column) => column.id)
+    .filter((id) => !requested.includes(id) && !requiredIds.has(id));
+  return { order, hidden };
+}
+
+function hasUnknownIds(
+  ids: readonly string[],
+  columns: readonly TableColumnPreference[],
+): boolean {
+  const available = availableIds(columns);
+  return cleanIds(ids).some((id) => !available.has(id));
+}
+
+function hasUnknownSnapshot(
+  snapshot: ColumnPreferenceSnapshot,
+  columns: readonly TableColumnPreference[],
+): boolean {
+  return hasUnknownIds([...snapshot.order, ...snapshot.hidden], columns);
+}
+
 function optionSignature(columns: readonly TableColumnPreference[]): string {
   return columns
     .map((column) => `${column.id}:${column.defaultVisible === false ? "0" : "1"}`)
@@ -147,17 +181,54 @@ export function usePersistentColumnPreferences(
   columns: readonly TableColumnPreference[],
 ): PersistentColumnPreferences {
   const signature = optionSignature(columns);
+  const storedSnapshotRef = React.useRef<ColumnPreferenceSnapshot | null>(
+    readSnapshot(storageKey),
+  );
+  /**
+   * Saved views contain visible ids only. Keep that list until async custom
+   * fields have arrived so applying a view cannot silently lose those fields.
+   * It also lets newly-arrived fields remain hidden when the view explicitly
+   * omitted them.
+   */
+  const appliedViewColumnsRef = React.useRef<string[] | null>(null);
   const [snapshot, setSnapshot] = React.useState<ColumnPreferenceSnapshot>(() =>
     snapshotForColumns(storageKey, columns),
   );
 
   React.useEffect(() => {
-    setSnapshot((current) => normalizeColumnPreference(columns, current));
+    const appliedViewColumns = appliedViewColumnsRef.current;
+    if (appliedViewColumns !== null) {
+      setSnapshot(snapshotForVisibleIds(columns, appliedViewColumns));
+      return;
+    }
+    const storedSnapshot = storedSnapshotRef.current;
+    setSnapshot((current) =>
+      normalizeColumnPreference(
+        columns,
+        storedSnapshot ?? current,
+      ),
+    );
+    if (storedSnapshot && !hasUnknownSnapshot(storedSnapshot, columns)) {
+      storedSnapshotRef.current = null;
+    }
   }, [signature, storageKey]);
 
   React.useEffect(() => {
+    const appliedViewColumns = appliedViewColumnsRef.current;
+    if (
+      (appliedViewColumns !== null && hasUnknownIds(appliedViewColumns, columns)) ||
+      (storedSnapshotRef.current !== null &&
+        hasUnknownSnapshot(storedSnapshotRef.current, columns))
+    ) {
+      return;
+    }
     writeSnapshot(storageKey, snapshot);
-  }, [snapshot, storageKey]);
+  }, [columns, signature, snapshot, storageKey]);
+
+  const clearDeferredColumns = React.useCallback(() => {
+    appliedViewColumnsRef.current = null;
+    storedSnapshotRef.current = null;
+  }, []);
 
   const update = React.useCallback(
     (next: ColumnPreferenceSnapshot) => {
@@ -170,12 +241,13 @@ export function usePersistentColumnPreferences(
     (id: string, visible: boolean) => {
       const column = columns.find((candidate) => candidate.id === id);
       if (column?.required === true) return;
+      clearDeferredColumns();
       const hidden = new Set(snapshot.hidden);
       if (visible) hidden.delete(id);
       else hidden.add(id);
       update({ order: [...snapshot.order], hidden: [...hidden] });
     },
-    [columns, snapshot, update],
+    [clearDeferredColumns, columns, snapshot, update],
   );
 
   const move = React.useCallback(
@@ -184,37 +256,30 @@ export function usePersistentColumnPreferences(
       if (index < 0) return;
       const target = direction === "up" ? index - 1 : index + 1;
       if (target < 0 || target >= snapshot.order.length) return;
+      clearDeferredColumns();
       const order = [...snapshot.order];
       const [moved] = order.splice(index, 1);
       if (moved === undefined) return;
       order.splice(target, 0, moved);
       update({ order, hidden: [...snapshot.hidden] });
     },
-    [snapshot, update],
+    [clearDeferredColumns, snapshot, update],
   );
 
   const reset = React.useCallback(() => {
+    clearDeferredColumns();
     update({
       order: columns.map((column) => column.id),
       hidden: defaultHiddenIds(columns),
     });
-  }, [columns, update]);
+  }, [clearDeferredColumns, columns, update]);
 
   const apply = React.useCallback(
     (ids: readonly string[]) => {
       const requested = cleanIds(ids);
-      const available = new Set(columns.map((column) => column.id));
-      const order = requested.filter((id) => available.has(id));
-      for (const column of columns) {
-        if (!order.includes(column.id)) order.push(column.id);
-      }
-      const requiredIds = new Set(
-        columns.filter((column) => column.required === true).map((column) => column.id),
-      );
-      const hidden = columns
-        .map((column) => column.id)
-        .filter((id) => !requested.includes(id) && !requiredIds.has(id));
-      update({ order, hidden });
+      appliedViewColumnsRef.current = requested;
+      storedSnapshotRef.current = null;
+      update(snapshotForVisibleIds(columns, requested));
     },
     [columns, signature, update],
   );

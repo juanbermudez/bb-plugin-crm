@@ -4,6 +4,7 @@ import type {
   PluginCliResult,
   PluginHttpHandler,
 } from "@get-bb/plugin-sdk";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import { z } from "zod";
 import {
@@ -18,16 +19,22 @@ import {
   companyCreateInputSchema,
   companyListInputSchema,
   companyUpdateDataSchema,
+  contactBriefCreateInputSchema,
   contactCreateInputSchema,
+  contactFactCreateInputSchema,
   contactListInputSchema,
+  contactResearchInputSchema,
   contactUpdateDataSchema,
+  contactWorkHistoryCreateInputSchema,
   currencyCodeSchema,
+  currencyRateUpsertFetchedInputSchema,
   dealCreateInputSchema,
   dealListInputSchema,
   dealUpdateDataSchema,
   fieldEntitySchema,
   fieldValueSchema,
   idSchema,
+  rpcJsonValueSchema,
   type ActivityEntry as ActivityOutput,
   type DashboardSummaryOutput,
   type CurrencyCode,
@@ -40,6 +47,7 @@ import {
   type DealListInput,
   type FieldEntity,
   type FieldValues,
+  type EnrichmentFocus,
 } from "./contracts/core.js";
 import {
   siteKeySchema,
@@ -80,8 +88,17 @@ import { createEvidenceStore } from "./db/evidence.js";
 import {
   createAgentStore,
   type AgentJsonValue,
+  type AgentRunDetail,
   type AgentTrigger,
 } from "./db/agents.js";
+import {
+  createAgentWebhookTokenStore,
+} from "./db/agent-webhooks.js";
+import {
+  createCrmEventStore,
+  CRM_EVENT_CATALOG,
+  type CrmEventOutboxRecord,
+} from "./db/crm-events.js";
 import {
   createConnectionStore,
   createTrackingSiteStore,
@@ -115,6 +132,31 @@ export const CRM_AGENT_DISPATCH_SERVICE_NAME = "crm-agent-dispatcher";
 export const CRM_TRACKING_LOADER_PATH = "/tracking/loader.js";
 export const CRM_TRACKING_COLLECTOR_PATH = "/tracking/collect";
 export const CRM_TRACKING_HTTP_MAX_BODY_BYTES = 2_000_000;
+export const CRM_AGENT_WEBHOOK_PATH = "/agents/webhook";
+export const CRM_AGENT_WEBHOOK_HTTP_MAX_BODY_BYTES = 256_000;
+export const CRM_AGENT_WEBHOOK_SIGNATURE_MAX_AGE_SECONDS = 5 * 60;
+
+const CRM_WEBHOOK_SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
+const crmAgentWebhookRequestSchema = z
+  .object({
+    triggerId: idSchema.max(256),
+    eventId: z.string().trim().min(1).max(256).regex(CRM_WEBHOOK_SAFE_KEY),
+    idempotencyKey: z.string().trim().min(1).max(256).regex(CRM_WEBHOOK_SAFE_KEY).optional(),
+    input: rpcJsonValueSchema.optional(),
+  })
+  .strict();
+
+/** Sign the exact request bytes sent to CRM_AGENT_WEBHOOK_PATH. */
+export function signCrmAgentWebhookRequest(
+  token: string,
+  timestamp: string | number,
+  rawBody: string,
+): string {
+  const timestampText = String(timestamp);
+  return `sha256=${createHmac("sha256", token)
+    .update(`${timestampText}.${rawBody}`, "utf8")
+    .digest("hex")}`;
+}
 
 export const CRM_ARCHIVE_RETENTION_SERVICE_NAME = "crm-archive-retention";
 export const CRM_ARCHIVE_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000;
@@ -563,6 +605,20 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Research API key",
       secret: true,
     },
+    researchAgentId: {
+      type: "string",
+      label: "Research agent id",
+      description:
+        "Optional live BB agent used for provider-backed company and contact research.",
+      default: "",
+    },
+    currencyRateProvider: {
+      type: "string",
+      label: "Currency rate provider",
+      description:
+        "Provider identifier allowed to push fetched exchange rates into this workspace.",
+      default: "",
+    },
     archiveRetentionDays: {
       type: "string",
       label: "Archive retention (days)",
@@ -600,6 +656,8 @@ export default async function plugin(bb: BbPluginApi) {
   const customFields = createCustomFieldStore(db);
   const evidenceStore = createEvidenceStore(db);
   const agents = createAgentStore(db);
+  const crmEvents = createCrmEventStore(db);
+  const agentWebhookTokens = createAgentWebhookTokenStore(db);
   const connections = createConnectionStore(db);
   const trackingSites = createTrackingSiteStore(db);
   const tracking = createTrackingStore(db);
@@ -798,7 +856,123 @@ export default async function plugin(bb: BbPluginApi) {
     id: string,
   ): void {
     bb.realtime.publish("changed", { entity, action, id });
+    drainCrmEventOutbox();
   }
+
+  let drainingCrmEventOutbox = false;
+
+  function triggerEventType(trigger: AgentTrigger): keyof typeof CRM_EVENT_CATALOG | null {
+    if (trigger.type !== "EVENT") return null;
+    const event = trigger.config.event;
+    return typeof event === "string" && event in CRM_EVENT_CATALOG
+      ? event as keyof typeof CRM_EVENT_CATALOG
+      : null;
+  }
+
+  function matchingEventTriggers(event: CrmEventOutboxRecord): AgentTrigger[] {
+    const rows = db.prepare(`
+      SELECT id
+      FROM agent_triggers
+      WHERE type = 'EVENT' AND enabled = 1
+        AND EXISTS (
+          SELECT 1
+          FROM agent_definitions AS a
+          INNER JOIN agent_versions AS v ON v.id = agent_triggers.version_id
+            AND v.agent_id = agent_triggers.agent_id
+          WHERE a.id = agent_triggers.agent_id
+            AND a.status = 'LIVE'
+            AND v.status = 'DEPLOYED'
+        )
+      ORDER BY id ASC
+    `).all() as Array<{ id?: unknown }>;
+    const matching: AgentTrigger[] = [];
+    for (const row of rows) {
+      if (typeof row.id !== "string") continue;
+      try {
+        const trigger = agents.getTrigger(row.id);
+        if (trigger && trigger.enabled && triggerEventType(trigger) === event.type) {
+          matching.push(trigger);
+        }
+      } catch (error) {
+        bb.log.warn(
+          `CRM event trigger ${row.id} was ignored because its persisted config is invalid: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return matching;
+  }
+
+  /**
+   * Deliver persisted domain events to matching live EVENT triggers. The
+   * outbox row remains pending when a live trigger cannot be queued, so the
+   * background dispatcher retries it. Queue idempotency makes retries safe
+   * after a process interruption or duplicate realtime notification.
+   */
+  function drainCrmEventOutbox(): void {
+    if (drainingCrmEventOutbox) return;
+    drainingCrmEventOutbox = true;
+    try {
+      for (const event of crmEvents.listPending(CRM_AGENT_DISPATCH_MAX_BATCH)) {
+        let complete = true;
+        for (const trigger of matchingEventTriggers(event)) {
+          const idempotencyKey = `event:${event.id}:trigger:${trigger.id}`;
+          try {
+            const run = agents.queueRun(
+              trigger.agentId,
+              {
+                versionId: trigger.versionId,
+                triggerId: trigger.id,
+                triggerType: "EVENT",
+                input: {
+                  event: {
+                    type: event.type,
+                    occurredAt: event.occurredAt,
+                    data: event.data as AgentJsonValue,
+                  },
+                  record: { kind: event.recordKind, id: event.recordId },
+                },
+                idempotencyKey,
+                correlationId: `trigger:${trigger.id}:event:${event.id}`,
+              },
+              "crm-event-dispatcher",
+            );
+            changed("agent-run", "queued", run.id);
+            changed("agent", "run-queued", run.agentId);
+            const updated = agents.updateTrigger(
+              trigger.id,
+              { lastRunAt: event.occurredAt },
+              "crm-event-dispatcher",
+            );
+            changed("agent-trigger", "event-dispatched", updated.id);
+            changed("agent", "trigger-updated", updated.agentId);
+          } catch (error) {
+            complete = false;
+            bb.log.error(
+              `CRM event ${event.id} could not queue trigger ${trigger.id}; it will be retried: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
+        if (complete) crmEvents.markProcessed(event.id);
+        else break;
+      }
+    } catch (error) {
+      bb.log.error(
+        `CRM event outbox drain failed; pending events remain queued: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      drainingCrmEventOutbox = false;
+    }
+  }
+
+  // Reloads can leave domain events committed after a previous process stopped
+  // before its trigger dispatcher ran. Reconcile them before serving RPC/HTTP.
+  drainCrmEventOutbox();
 
   function trackingHttpOrigin(value: string | undefined): { origin: string; host: string } | null {
     if (value === undefined || value.trim() === "") return null;
@@ -1050,6 +1224,157 @@ export default async function plugin(bb: BbPluginApi) {
   bb.http.route("OPTIONS", CRM_TRACKING_COLLECTOR_PATH, trackingCollectorOptionsHandler, { auth: "none" });
   bb.http.route("POST", CRM_TRACKING_COLLECTOR_PATH, trackingCollectorHandler, { auth: "none" });
 
+  function agentWebhookJson(body: Record<string, unknown>, status: number): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  }
+
+  const agentWebhookHandler: PluginHttpHandler = async (context) => {
+    const contentLength = context.req.header("content-length");
+    if (contentLength !== undefined) {
+      const parsedLength = Number(contentLength);
+      if (
+        !Number.isSafeInteger(parsedLength) ||
+        parsedLength < 0 ||
+        parsedLength > CRM_AGENT_WEBHOOK_HTTP_MAX_BODY_BYTES
+      ) {
+        return agentWebhookJson({ ok: false, error: "invalid webhook request" }, 413);
+      }
+    }
+    const contentType = context.req.header("content-type") ?? "";
+    if (!/^application\/json(?:\s*;|$)/iu.test(contentType)) {
+      return agentWebhookJson({ ok: false, error: "invalid webhook request" }, 415);
+    }
+
+    let rawBody: string;
+    try {
+      rawBody = await context.req.text();
+    } catch {
+      return agentWebhookJson({ ok: false, error: "invalid webhook request" }, 400);
+    }
+    if (Buffer.byteLength(rawBody, "utf8") > CRM_AGENT_WEBHOOK_HTTP_MAX_BODY_BYTES) {
+      return agentWebhookJson({ ok: false, error: "invalid webhook request" }, 413);
+    }
+
+    let rawPayload: unknown;
+    try {
+      rawPayload = JSON.parse(rawBody) as unknown;
+    } catch {
+      return agentWebhookJson({ ok: false, error: "invalid webhook request" }, 400);
+    }
+    const parsedPayload = crmAgentWebhookRequestSchema.safeParse(rawPayload);
+    if (!parsedPayload.success) {
+      return agentWebhookJson({ ok: false, error: "invalid webhook request" }, 400);
+    }
+
+    const timestamp = context.req.header("x-crm-webhook-timestamp");
+    const signature = context.req.header("x-crm-webhook-signature");
+    const token = context.req.header("x-crm-webhook-token");
+    if (
+      !timestamp ||
+      !/^\d{1,12}$/u.test(timestamp) ||
+      !signature ||
+      !/^sha256=[a-f0-9]{64}$/iu.test(signature) ||
+      !token ||
+      token.length > 512
+    ) {
+      return agentWebhookJson({ ok: false, error: "webhook authentication failed" }, 401);
+    }
+    const timestampSeconds = Number(timestamp);
+    if (
+      !Number.isSafeInteger(timestampSeconds) ||
+      Math.abs(Date.now() / 1_000 - timestampSeconds) > CRM_AGENT_WEBHOOK_SIGNATURE_MAX_AGE_SECONDS
+    ) {
+      return agentWebhookJson({ ok: false, error: "webhook authentication failed" }, 401);
+    }
+
+    let trigger: AgentTrigger;
+    try {
+      const candidate = agents.getTrigger(parsedPayload.data.triggerId);
+      if (!candidate || candidate.type !== "WEBHOOK") {
+        return agentWebhookJson({ ok: false, error: "webhook authentication failed" }, 401);
+      }
+      trigger = candidate;
+    } catch {
+      return agentWebhookJson({ ok: false, error: "webhook authentication failed" }, 401);
+    }
+    const tokenRow = agentWebhookTokens.authenticate(trigger.id, token);
+    if (!tokenRow) {
+      return agentWebhookJson({ ok: false, error: "webhook authentication failed" }, 401);
+    }
+    const expected = signCrmAgentWebhookRequest(token, timestamp, rawBody);
+    const expectedBuffer = Buffer.from(expected, "utf8");
+    const presentedBuffer = Buffer.from(signature, "utf8");
+    if (
+      expectedBuffer.length !== presentedBuffer.length ||
+      !timingSafeEqual(expectedBuffer, presentedBuffer)
+    ) {
+      return agentWebhookJson({ ok: false, error: "webhook authentication failed" }, 401);
+    }
+
+    if (!trigger.enabled) {
+      return agentWebhookJson({ ok: false, error: "webhook trigger is disabled" }, 409);
+    }
+    try {
+      const agent = agents.getRequired(trigger.agentId);
+      const version = agents.getVersionRequired(trigger.versionId);
+      if (agent.status !== "LIVE" || version.status !== "DEPLOYED") {
+        return agentWebhookJson({ ok: false, error: "webhook trigger is unavailable" }, 409);
+      }
+    } catch {
+      return agentWebhookJson({ ok: false, error: "webhook trigger is unavailable" }, 409);
+    }
+
+    const request = parsedPayload.data;
+    const requestKey = request.idempotencyKey ?? request.eventId;
+    const idempotencyKey = `crm-webhook:${trigger.id}:${requestKey}`;
+    const existing = db.prepare("SELECT id FROM agent_runs WHERE idempotency_key = ? LIMIT 1").get(idempotencyKey) as
+      | { id?: unknown }
+      | undefined;
+    try {
+      const run = agents.queueRun(
+        trigger.agentId,
+        {
+          versionId: trigger.versionId,
+          triggerId: trigger.id,
+          triggerType: "WEBHOOK",
+          input: {
+            webhook: {
+              eventId: request.eventId,
+              receivedAt: new Date().toISOString(),
+              input: request.input ?? null,
+            },
+          },
+          idempotencyKey,
+          correlationId: `trigger:${trigger.id}:webhook:${requestKey}`,
+        },
+        "crm-webhook",
+      );
+      agentWebhookTokens.markUsed(tokenRow.id);
+      changed("agent-run", "queued", run.id);
+      changed("agent", "run-queued", run.agentId);
+      return agentWebhookJson({ ok: true, runId: run.id, duplicate: existing?.id === run.id }, 200);
+    } catch (error) {
+      bb.log.error(
+        `CRM webhook trigger ${trigger.id} could not queue its run: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return agentWebhookJson({ ok: false, error: "webhook run could not be queued" }, 503);
+    }
+  };
+
+  // This route deliberately uses auth "none": BB's plugin token is not an
+  // external credential. The handler authenticates a trigger-scoped secret
+  // and verifies its HMAC before any run is queued.
+  bb.http.route("POST", CRM_AGENT_WEBHOOK_PATH, agentWebhookHandler, { auth: "none" });
+
   function changedContactEvidence(
     entity: "contact-fact" | "contact-brief" | "contact-work-history",
     action: string,
@@ -1233,6 +1558,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (typeof link?.linkId !== "string" || typeof link.runId !== "string") return;
     const run = agents.getRun(link.runId);
     if (!run) return;
+    syncEnrichmentRun(run);
     const action = run.status === "SUCCEEDED"
       ? "succeeded"
       : run.status === "FAILED"
@@ -1426,6 +1752,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   function publishDispatchResult(result: AgentDispatchResult): void {
+    syncEnrichmentRun(result.run);
     if (result.kind === "dispatched") {
       changed("agent-run", "started", result.run.id);
       changed("agent", "run-updated", result.run.agentId);
@@ -1465,6 +1792,8 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function performDispatcherSweep(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    drainCrmEventOutbox();
     if (signal.aborted) return;
     await reconcileRunningLinkedRuns(signal);
     if (signal.aborted) return;
@@ -2047,6 +2376,419 @@ export default async function plugin(bb: BbPluginApi) {
 
   const LOCAL_OWNER_ID = "local_user";
 
+  type EnrichmentEntity = "company" | "contact";
+  type EnrichmentOperation =
+    | "enrich"
+    | "research"
+    | "socials"
+    | "work-history"
+    | "brief";
+  type EnrichmentRequestResult = {
+    id: string;
+    queued: boolean;
+    status: "PENDING" | "RUNNING" | "COMPLETE" | "FAILED" | "SKIPPED";
+    runId: string | null;
+    reason: string | null;
+  };
+
+  const ENRICHMENT_RUN_KIND = "CRM_ENRICHMENT_REQUEST";
+  const ACTIVE_AGENT_RUN_STATUSES = [
+    "QUEUED",
+    "RUNNING",
+    "WAITING_FOR_APPROVAL",
+  ] as const;
+  const ENRICHMENT_FIELDS = [
+    "domain",
+    "website",
+    "description",
+    "logoUrl",
+    "logoDarkUrl",
+    "iconUrl",
+    "iconDarkUrl",
+    "iconTone",
+    "brandColor",
+    "industry",
+    "subIndustry",
+    "city",
+    "stateCode",
+    "country",
+    "countryCode",
+    "phone",
+    "email",
+    "linkedinUrl",
+    "twitterUrl",
+    "githubUrl",
+    "pricingUrl",
+    "careersUrl",
+  ] as const;
+  const CONTACT_RESEARCH_FIELDS = [
+    "firstName",
+    "lastName",
+    "email",
+    "phone",
+    "title",
+    "seniority",
+    "function",
+    "linkedinUrl",
+    "twitterUrl",
+    "githubUrl",
+    "imageUrl",
+  ] as const;
+
+  function enrichmentOutput(
+    id: string,
+    queued: boolean,
+    status: EnrichmentRequestResult["status"],
+    runId: string | null,
+    reason: string | null,
+  ): EnrichmentRequestResult {
+    return { id, queued, status, runId, reason };
+  }
+
+  function enrichmentRunInput(
+    value: AgentJsonValue | null,
+  ): {
+    entity: EnrichmentEntity;
+    recordId: string;
+    operation: EnrichmentOperation;
+    snapshot: Record<string, AgentJsonValue>;
+  } | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const input = value as Record<string, AgentJsonValue>;
+    if (
+      input.kind !== ENRICHMENT_RUN_KIND ||
+      (input.entity !== "COMPANY" && input.entity !== "CONTACT") ||
+      typeof input.recordId !== "string" ||
+      typeof input.operation !== "string" ||
+      !["enrich", "research", "socials", "work-history", "brief"].includes(input.operation)
+    ) {
+      return null;
+    }
+    const snapshot = input.snapshot;
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+    return {
+      entity: input.entity === "COMPANY" ? "company" : "contact",
+      recordId: input.recordId,
+      operation: input.operation as EnrichmentOperation,
+      snapshot: snapshot as Record<string, AgentJsonValue>,
+    };
+  }
+
+  function currentEnrichmentRecord(entity: EnrichmentEntity, id: string): StoredCompany | StoredContact {
+    return entity === "company" ? companies.getRequired(id) : contacts.getRequired(id);
+  }
+
+  function updateEnrichmentState(
+    entity: EnrichmentEntity,
+    id: string,
+    status: "PENDING" | "RUNNING" | "COMPLETE" | "FAILED" | "SKIPPED",
+    reason: string | null,
+    complete = false,
+  ): StoredCompany | StoredContact {
+    const updated = entity === "company"
+      ? companies.update(id, {
+          enrichmentStatus: status,
+          enrichmentError: reason,
+          ...(complete ? { enrichedAt: new Date().toISOString() } : {}),
+        })
+      : contacts.update(id, {
+          enrichmentStatus: status,
+          enrichmentError: reason,
+          ...(complete ? { enrichedAt: new Date().toISOString() } : {}),
+        });
+    changed(entity, "enrichment-status", id);
+    return updated;
+  }
+
+  function baselineForRecord(
+    entity: EnrichmentEntity,
+    record: StoredCompany | StoredContact,
+  ): Record<string, AgentJsonValue> {
+    if (entity === "company") {
+      const company = record as StoredCompany;
+      return Object.fromEntries(
+        ENRICHMENT_FIELDS.map((field) => [field, company[field] ?? null]),
+      ) as Record<string, AgentJsonValue>;
+    }
+    const contact = record as StoredContact;
+    return Object.fromEntries(
+      CONTACT_RESEARCH_FIELDS.map((field) => [field, contact[field] ?? null]),
+    ) as Record<string, AgentJsonValue>;
+  }
+
+  function sameJsonValue(left: AgentJsonValue, right: AgentJsonValue): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  function hasRecordEnrichmentWrite(
+    entity: EnrichmentEntity,
+    current: StoredCompany | StoredContact,
+    snapshot: Record<string, AgentJsonValue>,
+  ): boolean {
+    const baseline = baselineForRecord(entity, current);
+    const fields = entity === "company" ? ENRICHMENT_FIELDS : CONTACT_RESEARCH_FIELDS;
+    return fields.some((field) => !sameJsonValue(baseline[field] ?? null, snapshot[field] ?? null));
+  }
+
+  async function requestEnrichment(
+    entity: EnrichmentEntity,
+    id: string,
+    operation: EnrichmentOperation,
+    agentIdOverride?: string,
+  ): Promise<EnrichmentRequestResult> {
+    const record = currentEnrichmentRecord(entity, id);
+    const activeRuns = agents.listRuns({
+      status: ACTIVE_AGENT_RUN_STATUSES,
+      limit: CRM_AGENT_DISPATCH_MAX_BATCH,
+      includeEvents: false,
+      includeActions: false,
+    });
+    const existing = activeRuns.find((run) => {
+      const input = enrichmentRunInput(run.input);
+      return input?.entity === entity && input.recordId === id && input.operation === operation;
+    });
+    if (existing) {
+      return enrichmentOutput(
+        id,
+        true,
+        record.enrichmentStatus,
+        existing.id,
+        null,
+      );
+    }
+
+    const settingsValue = await settings.get();
+    const researchKey = typeof settingsValue.researchApiKey === "string"
+      ? settingsValue.researchApiKey.trim()
+      : "";
+    if (researchKey === "") {
+      const reason = "Research provider credentials are not configured; no external data was fetched.";
+      const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+      return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+    }
+
+    const configuredAgent = typeof settingsValue.researchAgentId === "string"
+      ? settingsValue.researchAgentId.trim()
+      : "";
+    const agentId = agentIdOverride?.trim() || configuredAgent;
+    if (agentId === "") {
+      const reason = "No research agent is configured; set researchAgentId to a live BB agent before requesting enrichment.";
+      const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+      return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+    }
+
+    let agent;
+    try {
+      agent = agents.getRequired(agentId);
+    } catch {
+      const reason = `Research agent ${agentId} was not found; no external data was fetched.`;
+      const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+      return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+    }
+    if (agent.status !== "LIVE" || agent.currentVersionId === null) {
+      const reason = `Research agent ${agentId} is not live with a deployed version; no external data was fetched.`;
+      const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+      return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+    }
+    const version = agents.getVersionRequired(agent.currentVersionId);
+    if (version.status !== "DEPLOYED") {
+      const reason = `Research agent ${agentId} has no deployed version; no external data was fetched.`;
+      const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+      return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+    }
+
+    if (entity === "company" && operation === "research") {
+      const company = record as StoredCompany;
+      if (!company.domain && !company.website) {
+        const reason = "A company domain or website is required before research can run.";
+        const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+        return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+      }
+    }
+    if (entity === "contact" && operation === "work-history") {
+      const contact = record as StoredContact;
+      if (!contact.linkedinUrl) {
+        const reason = "A LinkedIn URL is required before work-history research can run.";
+        const skipped = updateEnrichmentState(entity, id, "SKIPPED", reason);
+        return enrichmentOutput(skipped.id, false, skipped.enrichmentStatus, null, reason);
+      }
+    }
+
+    const pending = updateEnrichmentState(entity, id, "PENDING", null);
+    const snapshot = baselineForRecord(entity, pending);
+    const idempotencyKey = `crm-enrichment:${entity}:${id}:${operation}:${pending.updatedAt}`;
+    try {
+      const run = agents.queueRun(
+        agent.id,
+        {
+          triggerType: "MANUAL",
+          initiatedById: LOCAL_OWNER_ID,
+          idempotencyKey,
+          correlationId: idempotencyKey,
+          input: {
+            kind: ENRICHMENT_RUN_KIND,
+            entity: entity === "company" ? "COMPANY" : "CONTACT",
+            recordId: id,
+            operation,
+            snapshot,
+            requestedAt: new Date().toISOString(),
+            requiresExternalProvider: true,
+          },
+        },
+        LOCAL_OWNER_ID,
+      );
+      changed("agent-run", "queued", run.id);
+      changed("agent", "run-queued", run.agentId);
+      return enrichmentOutput(id, true, pending.enrichmentStatus, run.id, null);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const failed = updateEnrichmentState(entity, id, "FAILED", reason);
+      return enrichmentOutput(failed.id, false, failed.enrichmentStatus, null, reason);
+    }
+  }
+
+  async function bulkEnrichment(
+    entity: EnrichmentEntity,
+    ids: readonly string[],
+    operation: EnrichmentOperation,
+  ): Promise<{ requested: number; succeeded: number; skipped: number; failed: number; message: string | null }> {
+    let succeeded = 0;
+    let skipped = 0;
+    let failed = 0;
+    const reasons: string[] = [];
+    for (const id of ids) {
+      try {
+        const result = await requestEnrichment(entity, id, operation);
+        if (result.queued) succeeded += 1;
+        else if (result.status === "SKIPPED") {
+          skipped += 1;
+          if (result.reason && !reasons.includes(result.reason)) reasons.push(result.reason);
+        } else failed += 1;
+      } catch (error) {
+        failed += 1;
+        const reason = error instanceof Error ? error.message : String(error);
+        if (!reasons.includes(reason)) reasons.push(reason);
+      }
+    }
+    const summary = [
+      skipped > 0 ? `${skipped} skipped because an external research boundary was unavailable` : null,
+      failed > 0 ? `${failed} failed` : null,
+      reasons.length > 0 ? reasons.slice(0, 2).join("; ") : null,
+    ].filter((value): value is string => value !== null);
+    return {
+      requested: ids.length,
+      succeeded,
+      skipped,
+      failed,
+      message: summary.length > 0 ? summary.join(". ") : null,
+    };
+  }
+
+  function finalizeEnrichment(
+    runId: string,
+    entity: EnrichmentEntity,
+    id: string,
+    sourceUrl?: string,
+  ): { completed: boolean; status: EnrichmentRequestResult["status"]; reason: string | null } {
+    const run = agents.getRunRequired(runId);
+    if (run.status !== "RUNNING" && run.status !== "WAITING_FOR_APPROVAL") {
+      return {
+        completed: false,
+        status: "FAILED",
+        reason: `Enrichment run ${runId} is ${run.status}; it cannot be finalized from a live agent thread.`,
+      };
+    }
+    const input = enrichmentRunInput(run.input);
+    if (!input || input.entity !== entity || input.recordId !== id) {
+      return {
+        completed: false,
+        status: "FAILED",
+        reason: "The enrichment run does not target this record.",
+      };
+    }
+    if (entity === "company" && !sourceUrl) {
+      return {
+        completed: false,
+        status: "FAILED",
+        reason: "A source URL is required before company enrichment can be finalized.",
+      };
+    }
+    const current = currentEnrichmentRecord(entity, id);
+    let hasWrite = hasRecordEnrichmentWrite(entity, current, input.snapshot);
+    if (entity === "contact") {
+      const cutoff = run.startedAt ?? run.createdAt;
+      const evidenceCount = Number(
+        db.prepare(`
+          SELECT (
+            (SELECT COUNT(*) FROM contact_facts WHERE contact_id = ? AND created_at >= ?) +
+            (SELECT COUNT(*) FROM contact_work_history WHERE contact_id = ? AND created_at >= ?) +
+            (SELECT COUNT(*) FROM contact_briefs WHERE contact_id = ? AND created_at >= ?)
+          ) AS count
+        `).pluck().get(id, cutoff, id, cutoff, id, cutoff),
+      );
+      hasWrite = hasWrite || evidenceCount > 0;
+    }
+    if (!hasWrite) {
+      return {
+        completed: false,
+        status: current.enrichmentStatus,
+        reason: "No verified CRM write or evidence was recorded; enrichment remains incomplete.",
+      };
+    }
+    const completed = updateEnrichmentState(entity, id, "COMPLETE", null, true);
+    return { completed: true, status: completed.enrichmentStatus, reason: null };
+  }
+
+  function syncEnrichmentRun(run: AgentRunDetail): void {
+    const input = enrichmentRunInput(run.input);
+    if (!input) return;
+    let current: StoredCompany | StoredContact;
+    try {
+      current = currentEnrichmentRecord(input.entity, input.recordId);
+    } catch (error) {
+      bb.log.warn(
+        `CRM enrichment run ${run.id} targets a missing ${input.entity} ${input.recordId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    if (run.status === "RUNNING") {
+      if (current.enrichmentStatus === "PENDING") updateEnrichmentState(input.entity, input.recordId, "RUNNING", null);
+      return;
+    }
+    if (run.status === "FAILED") {
+      if (current.enrichmentStatus !== "COMPLETE") {
+        updateEnrichmentState(
+          input.entity,
+          input.recordId,
+          "FAILED",
+          run.errorMessage ?? "The research agent failed before a verified result was recorded.",
+        );
+      }
+      return;
+    }
+    if (run.status === "CANCELLED") {
+      if (current.enrichmentStatus !== "COMPLETE") {
+        updateEnrichmentState(
+          input.entity,
+          input.recordId,
+          "SKIPPED",
+          "The research agent run was cancelled; no enrichment result was marked complete.",
+        );
+      }
+      return;
+    }
+    if (run.status === "SUCCEEDED" && current.enrichmentStatus !== "COMPLETE") {
+      updateEnrichmentState(
+        input.entity,
+        input.recordId,
+        "SKIPPED",
+        "The agent run ended without a trusted enrichment completion; no data was marked complete.",
+      );
+    }
+  }
+
   function savedViewDefaultKey(entity: StoredSavedView["entity"]): string {
     return `saved_view_default_${entity}`;
   }
@@ -2337,6 +3079,36 @@ export default async function plugin(bb: BbPluginApi) {
       changed("agent", "trigger-updated", trigger.agentId);
       return trigger;
     },
+    agents_webhooks_list({ triggerId }) {
+      const trigger = agents.getTriggerRequired(triggerId);
+      if (trigger.type !== "WEBHOOK") throw new Error("Webhook credentials require a WEBHOOK trigger.");
+      return agentWebhookTokens.list(trigger.id);
+    },
+    agents_webhooks_provision({ triggerId, at }) {
+      const trigger = agents.getTriggerRequired(triggerId);
+      if (trigger.type !== "WEBHOOK") throw new Error("Webhook credentials require a WEBHOOK trigger.");
+      const token = agentWebhookTokens.provision(trigger.id, at ?? new Date().toISOString());
+      changed("agent-trigger", "webhook-token-provisioned", trigger.id);
+      changed("agent", "trigger-updated", trigger.agentId);
+      return token;
+    },
+    agents_webhooks_rotate({ triggerId, at }) {
+      const trigger = agents.getTriggerRequired(triggerId);
+      if (trigger.type !== "WEBHOOK") throw new Error("Webhook credentials require a WEBHOOK trigger.");
+      const token = agentWebhookTokens.rotate(trigger.id, at ?? new Date().toISOString());
+      changed("agent-trigger", "webhook-token-rotated", trigger.id);
+      changed("agent", "trigger-updated", trigger.agentId);
+      return token;
+    },
+    agents_webhooks_revoke({ id, at }) {
+      const token = agentWebhookTokens.get(id);
+      if (!token) throw new Error(`No webhook token with id ${id}.`);
+      const trigger = agents.getTriggerRequired(token.triggerId);
+      const revoked = agentWebhookTokens.revoke(token.id, at ?? new Date().toISOString());
+      changed("agent-trigger", "webhook-token-revoked", trigger.id);
+      changed("agent", "trigger-updated", trigger.agentId);
+      return revoked;
+    },
     agents_runs_list(input) {
       return agents.listRuns(input);
     },
@@ -2382,12 +3154,14 @@ export default async function plugin(bb: BbPluginApi) {
     },
     agents_runs_success({ id, actorId, ...data }) {
       const run = agents.succeedRun(id, data, actorId ?? LOCAL_OWNER_ID);
+      syncEnrichmentRun(run);
       changed("agent-run", "succeeded", run.id);
       changed("agent", "run-updated", run.agentId);
       return run;
     },
     agents_runs_fail({ id, actorId, ...data }) {
       const run = agents.failRun(id, data, actorId ?? LOCAL_OWNER_ID);
+      syncEnrichmentRun(run);
       changed("agent-run", "failed", run.id);
       changed("agent", "run-updated", run.agentId);
       return run;
@@ -2405,6 +3179,7 @@ export default async function plugin(bb: BbPluginApi) {
         before.status !== "CANCELLED" &&
         run.status === "CANCELLED";
       const output = { ...run, cancelled };
+      syncEnrichmentRun(run);
       changed("agent-run", cancelled ? "cancelled" : "cancel-ignored", run.id);
       changed("agent", "run-updated", run.agentId);
       return output;
@@ -2692,6 +3467,15 @@ export default async function plugin(bb: BbPluginApi) {
         changed("company", "updated", id);
       });
     },
+    async companies_enrich({ id, agentId }) {
+      return requestEnrichment("company", id, "enrich", agentId);
+    },
+    async companies_bulkEnrich({ ids }) {
+      return bulkEnrichment("company", ids, "enrich");
+    },
+    async companies_research({ id, agentId }) {
+      return requestEnrichment("company", id, "research", agentId);
+    },
     companies_bulkArchive({ ids }) {
       return bulk("company", ids, (id) => {
         companies.archive(id);
@@ -2762,6 +3546,15 @@ export default async function plugin(bb: BbPluginApi) {
         contacts.update(id, { companyId });
         changed("contact", "updated", id);
       });
+    },
+    async contacts_enrich({ id, agentId }) {
+      return requestEnrichment("contact", id, "enrich", agentId);
+    },
+    async contacts_bulkEnrich({ ids }) {
+      return bulkEnrichment("contact", ids, "enrich");
+    },
+    async contacts_research({ id, focus, agentId }) {
+      return requestEnrichment("contact", id, focus as EnrichmentFocus, agentId);
     },
     contacts_bulkArchive({ ids }) {
       return bulk("contact", ids, (id) => {
@@ -2998,6 +3791,27 @@ export default async function plugin(bb: BbPluginApi) {
       );
       return rate;
     },
+    async currency_rates_upsertFetched(input) {
+      // Fetched rates are accepted only from a provider-labelled integration
+      // boundary. The plugin never performs arbitrary outbound rate fetching.
+      const parsed = currencyRateUpsertFetchedInputSchema.parse(input);
+      const settingsValue = await settings.get();
+      const configuredProvider = typeof settingsValue.currencyRateProvider === "string"
+        ? settingsValue.currencyRateProvider.trim()
+        : "";
+      if (configuredProvider === "" || parsed.provider !== configuredProvider) {
+        throw new Error(
+          "Fetched rates require a configured currencyRateProvider that matches the provider payload.",
+        );
+      }
+      const rate = currency.upsertFetched(parsed);
+      changed(
+        "currency",
+        "fetched-rate-upserted",
+        `${rate.baseCurrency}_${rate.quoteCurrency}`,
+      );
+      return rate;
+    },
     currency_rates_removeManual({ baseCurrency, quoteCurrency, actorId }) {
       const rate = currency.rates.removeManual(baseCurrency, quoteCurrency, actorId);
       if (rate) {
@@ -3194,8 +4008,59 @@ export default async function plugin(bb: BbPluginApi) {
     "crm_add_activity",
     "crm_list_tasks",
     "crm_set_field",
+    "crm_record_contact_fact",
+    "crm_record_contact_brief",
+    "crm_record_contact_work_history",
+    "crm_finalize_enrichment",
   ] as const;
   const toolRecordEntity = z.enum(["company", "contact", "deal"]);
+  // Social URLs are evidence-backed contact facts. Keeping them out of the
+  // generic agent update tool prevents an agent from writing an unverified
+  // profile candidate directly onto a contact.
+  const contactAgentUpdateDataSchema = contactUpdateDataSchema
+    .omit({ linkedinUrl: true, twitterUrl: true, githubUrl: true })
+    .strict();
+  const contactFactToolInputSchema = contactFactCreateInputSchema
+    .omit({
+      id: true,
+      status: true,
+      decidedById: true,
+      decidedAt: true,
+      supersededAt: true,
+      supersedesId: true,
+    })
+    .strict();
+  const contactBriefToolInputSchema = contactBriefCreateInputSchema
+    .omit({ id: true, version: true, refreshedAt: true })
+    .extend({
+      // A brief has no separate evidence table; its source URL is therefore
+      // mandatory for agent-authored versions.
+      sourceUrl: z.string().trim().url("A sourced brief needs an absolute URL."),
+    })
+    .strict();
+  const contactWorkHistoryToolInputSchema = contactWorkHistoryCreateInputSchema
+    .omit({
+      id: true,
+      status: true,
+      decidedById: true,
+      decidedAt: true,
+      supersededAt: true,
+      supersedesId: true,
+    })
+    .strict();
+  const enrichmentFinalizeInputSchema = z.discriminatedUnion("entity", [
+    z.object({
+      entity: z.literal("company"),
+      recordId: idSchema,
+      runId: idSchema,
+      sourceUrl: z.string().trim().url("A source URL is required."),
+    }).strict(),
+    z.object({
+      entity: z.literal("contact"),
+      recordId: idSchema,
+      runId: idSchema,
+    }).strict(),
+  ]);
   const {
     createdById: _activityCreatedById,
     meta: _activityMeta,
@@ -3325,7 +4190,7 @@ export default async function plugin(bb: BbPluginApi) {
       "Read the record first and change only requested fields. Add an activity when context should be preserved.",
     parameters: z.discriminatedUnion("entity", [
       z.object({ entity: z.literal("company"), id: idSchema, data: companyUpdateDataSchema }),
-      z.object({ entity: z.literal("contact"), id: idSchema, data: contactUpdateDataSchema }),
+      z.object({ entity: z.literal("contact"), id: idSchema, data: contactAgentUpdateDataSchema }),
       z.object({ entity: z.literal("deal"), id: idSchema, data: dealUpdateDataSchema }),
     ]),
     execute(input) {
@@ -3417,11 +4282,80 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  bb.agents.registerTool({
+    name: "crm_record_contact_fact",
+    description:
+      "Record one evidence-backed contact fact as a proposal. Social profile URLs must use this path; unverified candidates are never written directly.",
+    instructions:
+      "Read the contact first. Include the exact source evidence you observed. This tool always creates a PROPOSED fact for a rep to review.",
+    parameters: contactFactToolInputSchema,
+    execute(input) {
+      contacts.getRequired(input.contactId);
+      const fact = evidenceStore.facts.create({
+        ...input,
+        status: "PROPOSED",
+      });
+      changedContactEvidence("contact-fact", "created", fact.id, fact.contactId);
+      return JSON.stringify(fact);
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_record_contact_brief",
+    description:
+      "Write a sourced, immutable background brief version for a contact.",
+    instructions:
+      "Only include claims supported by the supplied source URL. The brief is stored as a new version and never silently overwrites history.",
+    parameters: contactBriefToolInputSchema,
+    execute(input) {
+      contacts.getRequired(input.contactId);
+      const brief = evidenceStore.briefs.create(input);
+      changedContactEvidence("contact-brief", "created", brief.id, brief.contactId);
+      return JSON.stringify(brief);
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_record_contact_work_history",
+    description:
+      "Record one evidence-backed contact work-history role as a proposal.",
+    instructions:
+      "Read the contact's LinkedIn URL before using this tool. Include the source evidence and leave uncertain dates or employers empty instead of guessing.",
+    parameters: contactWorkHistoryToolInputSchema,
+    execute(input) {
+      contacts.getRequired(input.contactId);
+      const role = evidenceStore.workHistory.create({
+        ...input,
+        status: "PROPOSED",
+      });
+      changedContactEvidence("contact-work-history", "created", role.id, role.contactId);
+      return JSON.stringify(role);
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "crm_finalize_enrichment",
+    description:
+      "Mark a queued enrichment complete only after a verified CRM write or evidence row was actually recorded.",
+    instructions:
+      "Do not call this after a summary alone. For contacts, record a sourced fact, brief, or work-history row first. For companies, update a sourced enrichment field and provide its source URL. A missing write leaves the request incomplete.",
+    parameters: enrichmentFinalizeInputSchema,
+    execute(input) {
+      const result = finalizeEnrichment(
+        input.runId,
+        input.entity,
+        input.recordId,
+        input.entity === "company" ? input.sourceUrl : undefined,
+      );
+      return JSON.stringify(result);
+    },
+  });
+
   bb.agents.configure(() => ({
     tools: [...agentToolNames],
     skills: ["crm"],
     instructions:
-      "CRM tools are available. Search before creating, preserve source money, and record evidence or timeline context for consequential updates.",
+      "CRM tools are available. Search before creating, preserve source money, and record evidence for enrichment. Never write an unverified social URL or claim an external result that a provider tool did not confirm.",
   }));
 
   const CRM_ROOT_HELP = [

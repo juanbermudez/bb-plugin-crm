@@ -16,6 +16,7 @@ vi.mock("@get-bb/plugin-sdk/app", () => ({
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 const author = {
@@ -150,6 +151,88 @@ describe("ActivityTimeline", () => {
     expect(rpc.call).toHaveBeenCalledWith("activity_timeline", {
       contactId: "con_ada",
       filter: "email",
+      limit: 30,
+    });
+  });
+
+  it("renders stage and enrichment transitions with sticky day groups", async () => {
+    const stage = activity({
+      id: "act_stage",
+      type: "STAGE_CHANGE",
+      subject: "Stage changed",
+      meta: { from: "DEMO_BOOKED", to: "QUALIFIED_TO_BUY" },
+    });
+    const enrichment = activity({
+      id: "act_enrichment",
+      type: "ENRICHMENT",
+      subject: "Enrichment status changed",
+      meta: { from: "RUNNING", to: "COMPLETE" },
+    });
+    const rpc = makeRpc(async (method) => {
+      if (method === "activity_timeline") {
+        return { entries: [stage, enrichment], nextCursor: null } satisfies TimelineOutput;
+      }
+      if (method === "activity_timelineCounts") return { ...counts, all: 2 };
+      return stage;
+    });
+
+    render(<ActivityTimeline anchor={{ dealId: "deal_acme" }} rpcClient={rpc} />);
+
+    expect(await screen.findByText("Demo booked → Qualified to buy")).toBeDefined();
+    expect(screen.getByText("Running → Complete")).toBeDefined();
+    expect(
+      screen.getByRole("heading", { name: "Aug 25, 2026" }).className,
+    ).toContain("sticky");
+  });
+
+  it("loads an older cursor page when the timeline sentinel intersects", async () => {
+    const current = activity();
+    const older = activity({
+      id: "act_older",
+      subject: "Older note",
+      occurredAt: "2026-08-20T14:00:00.000Z",
+      createdAt: "2026-08-20T14:00:00.000Z",
+    });
+    const observers: Array<{ trigger: () => void }> = [];
+    class TestIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback) {
+        observers.push({
+          trigger: () =>
+            callback(
+              [{ isIntersecting: true } as IntersectionObserverEntry],
+              this as unknown as IntersectionObserver,
+            ),
+        });
+      }
+
+      observe() {}
+
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "activity_timeline") {
+        const timelineInput = input as { cursor?: string };
+        if (timelineInput.cursor === "cursor-old") {
+          return { entries: [older], nextCursor: null } satisfies TimelineOutput;
+        }
+        return { entries: [current], nextCursor: "cursor-old" } satisfies TimelineOutput;
+      }
+      if (method === "activity_timelineCounts") return counts;
+      return current;
+    });
+
+    render(<ActivityTimeline anchor={{ companyId: "cmp_acme" }} rpcClient={rpc} />);
+    expect(await screen.findByText("Kickoff notes")).toBeDefined();
+    expect(screen.getByTestId("older-activity-sentinel")).toBeDefined();
+    expect(observers.length).toBeGreaterThan(0);
+
+    observers[0]!.trigger();
+    expect(await screen.findByText("Older note")).toBeDefined();
+    expect(rpc.call).toHaveBeenCalledWith("activity_timeline", {
+      companyId: "cmp_acme",
+      filter: "all",
+      cursor: "cursor-old",
       limit: 30,
     });
   });

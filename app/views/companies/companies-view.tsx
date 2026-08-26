@@ -333,6 +333,8 @@ interface CompanyOverviewProps {
   company: Company;
   mutationBusy: boolean;
   mutationError: string | null;
+  onEnrich: () => void;
+  onResearch: () => void;
   onArchive: () => void;
   onRestore: () => void;
   onPurge: () => void;
@@ -342,6 +344,8 @@ function CompanyOverview({
   company,
   mutationBusy,
   mutationError,
+  onEnrich,
+  onResearch,
   onArchive,
   onRestore,
   onPurge,
@@ -399,6 +403,35 @@ function CompanyOverview({
           </dd>
         </div>
       </dl>
+      <section
+        className="space-y-3 border-t border-border pt-5"
+        aria-label="Company enrichment"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium">Enrichment</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Provider-backed work is queued only when a research boundary is configured.
+            </p>
+          </div>
+          <span className="text-xs font-medium text-muted-foreground">
+            {company.enrichmentStatus ?? "PENDING"}
+          </span>
+        </div>
+        {company.enrichmentError ? (
+          <p className="text-xs text-destructive" role="alert">
+            {company.enrichmentError}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={mutationBusy || Boolean(company.archivedAt)} onClick={onEnrich}>
+            Enrich company
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={mutationBusy || Boolean(company.archivedAt) || (!company.domain && !company.website)} onClick={onResearch}>
+            Research company
+          </Button>
+        </div>
+      </section>
       {company.description ? (
         <section className="space-y-2 border-t border-border pt-5">
           <h3 className="text-sm font-medium">Description</h3>
@@ -945,6 +978,29 @@ export function CompaniesView({
     [record, rpc],
   );
 
+  const requestRecordEnrichment = useCallback(
+    async (method: "companies_enrich" | "companies_research") => {
+      if (record === null) return;
+      setMutationBusy(true);
+      setMutationError(null);
+      try {
+        const result = await rpc.call(method, { id: record.id });
+        setRecord({
+          ...record,
+          enrichmentStatus: result.status as Company["enrichmentStatus"],
+          enrichmentError: result.reason ?? null,
+        });
+        if (result.reason) setMutationError(result.reason);
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setMutationError(errorMessage(cause));
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [record, rpc],
+  );
+
   const purgeRecord = useCallback(async () => {
     if (record === null) return;
     if (
@@ -1311,6 +1367,21 @@ export function CompaniesView({
                   variant="outline"
                   size="sm"
                   disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "companies_bulkEnrich",
+                      { ids: selectedIds },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "company" : "companies"} queued for enrichment.`,
+                    )
+                  }
+                >
+                  Enrich selected
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
                   onClick={() => {
                     const confirmed =
                       typeof window === "undefined" ||
@@ -1577,6 +1648,8 @@ export function CompaniesView({
                 company={record}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
+                onEnrich={() => void requestRecordEnrichment("companies_enrich")}
+                onResearch={() => void requestRecordEnrichment("companies_research")}
                 onArchive={() => void runArchiveMutation("companies_archive")}
                 onRestore={() => void runArchiveMutation("companies_restore")}
                 onPurge={() => void purgeRecord()}

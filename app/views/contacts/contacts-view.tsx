@@ -378,6 +378,8 @@ interface ContactOverviewProps {
   onEvidenceChanged: () => void;
   mutationBusy: boolean;
   mutationError: string | null;
+  onEnrich: () => void;
+  onResearch: (focus: "socials" | "work-history" | "brief") => void;
   onArchive: () => void;
   onRestore: () => void;
   onPurge: () => void;
@@ -389,6 +391,8 @@ function ContactOverview({
   onEvidenceChanged,
   mutationBusy,
   mutationError,
+  onEnrich,
+  onResearch,
   onArchive,
   onRestore,
   onPurge,
@@ -449,6 +453,38 @@ function ContactOverview({
           </dd>
         </div>
       </dl>
+      <section
+        className="space-y-3 border-t border-border pt-5"
+        aria-label="Contact enrichment"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium">Enrichment &amp; research</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Social and work-history candidates remain proposals until their evidence is reviewed.
+            </p>
+          </div>
+          <span className="text-xs font-medium text-muted-foreground">
+            {contact.enrichmentStatus ?? "PENDING"}
+          </span>
+        </div>
+        {contact.enrichmentError ? (
+          <p className="text-xs text-destructive" role="alert">
+            {contact.enrichmentError}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" disabled={mutationBusy || Boolean(contact.archivedAt)} onClick={onEnrich}>
+            Enrich contact
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={mutationBusy || Boolean(contact.archivedAt)} onClick={() => onResearch("socials")}>
+            Research socials
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={mutationBusy || Boolean(contact.archivedAt) || !contact.linkedinUrl} onClick={() => onResearch("work-history")}>
+            Research work history
+          </Button>
+        </div>
+      </section>
       <RecordFieldsEditor entity="CONTACT" recordId={contact.id} />
       <ContactEvidence
         contact={contact}
@@ -749,6 +785,34 @@ export function ContactsView({
                     : null,
               },
         );
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setMutationError(errorMessage(cause));
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [record, rpc],
+  );
+
+  const requestRecordEnrichment = useCallback(
+    async (
+      method: "contacts_enrich" | "contacts_research",
+      focus?: "socials" | "work-history" | "brief",
+    ) => {
+      if (record === null) return;
+      setMutationBusy(true);
+      setMutationError(null);
+      try {
+        const result = method === "contacts_research"
+          ? await rpc.call(method, { id: record.id, focus: focus ?? "brief" })
+          : await rpc.call(method, { id: record.id });
+        setRecord({
+          ...record,
+          enrichmentStatus: result.status as Contact["enrichmentStatus"],
+          enrichmentError: result.reason ?? null,
+        });
+        if (result.reason) setMutationError(result.reason);
         setRefreshKey((value) => value + 1);
       } catch (cause) {
         setMutationError(errorMessage(cause));
@@ -1130,6 +1194,21 @@ export function ContactsView({
                 >
                   Assign owner
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() =>
+                    void runBulk(
+                      "contacts_bulkEnrich",
+                      { ids: selectedIds },
+                      `${selectedIds.length} ${selectedIds.length === 1 ? "contact" : "contacts"} queued for enrichment.`,
+                    )
+                  }
+                >
+                  Enrich selected
+                </Button>
                 <Input
                   className="h-8 w-40 text-xs"
                   aria-label="Bulk company ID"
@@ -1429,6 +1508,8 @@ export function ContactsView({
                 onEvidenceChanged={() => setRecordRefreshKey((value) => value + 1)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
+                onEnrich={() => void requestRecordEnrichment("contacts_enrich")}
+                onResearch={(focus) => void requestRecordEnrichment("contacts_research", focus)}
                 onArchive={() => void runArchiveMutation("contacts_archive")}
                 onRestore={() => void runArchiveMutation("contacts_restore")}
                 onPurge={() => void purgeRecord()}

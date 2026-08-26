@@ -412,6 +412,33 @@ export type CurrencyRateUpsertManualInput = z.infer<
   typeof currencyRateUpsertManualInputSchema
 >;
 
+/**
+ * Input for a fetched rate supplied by a configured integration boundary.
+ *
+ * The CRM intentionally does not perform arbitrary outbound HTTP from the
+ * plugin.  A provider integration (or a trusted host-side job) must supply a
+ * non-empty provider name with the observed rate, so a fetched row can never
+ * be mistaken for a locally invented default.
+ */
+export const currencyRateUpsertFetchedInputSchema = z
+  .object({
+    id: idSchema.optional(),
+    baseCurrency: currencyCodeSchema,
+    quoteCurrency: currencyCodeSchema,
+    rate: z.number().finite().positive(),
+    asOf: timestampSchema.optional(),
+    provider: nonEmptyText,
+    actorId: idSchema.nullable().optional(),
+  })
+  .strict()
+  .refine((value) => value.baseCurrency !== value.quoteCurrency, {
+    message: "An exchange-rate pair must contain two different currencies.",
+    path: ["quoteCurrency"],
+  });
+export type CurrencyRateUpsertFetchedInput = z.infer<
+  typeof currencyRateUpsertFetchedInputSchema
+>;
+
 /** Input for removing only the manual row for a currency pair. */
 export const currencyRateRemoveManualInputSchema = z
   .object({
@@ -895,6 +922,44 @@ export const bulkResultSchema = z
   })
   .strict();
 export type BulkResult = z.infer<typeof bulkResultSchema>;
+
+/** A single enrichment request reports queue state, never fabricated data. */
+export const enrichmentRequestInputSchema = z
+  .object({
+    id: idSchema,
+    /** Optional override for the configured research agent. */
+    agentId: idSchema.optional(),
+  })
+  .strict();
+export type EnrichmentRequestInput = z.infer<typeof enrichmentRequestInputSchema>;
+
+export const enrichmentFocusSchema = z.enum(["socials", "work-history", "brief"]);
+export type EnrichmentFocus = z.infer<typeof enrichmentFocusSchema>;
+
+/** Contact research has separate provider-backed focus areas. */
+export const contactResearchInputSchema = z
+  .object({
+    id: idSchema,
+    focus: enrichmentFocusSchema.default("brief"),
+    agentId: idSchema.optional(),
+  })
+  .strict();
+export type ContactResearchInput = z.infer<typeof contactResearchInputSchema>;
+
+/**
+ * Extra fields are optional to keep this compatible with the source API's
+ * `{ id, queued }` response while exposing explicit external blockers to BB.
+ */
+export const enrichmentRequestOutputSchema = z
+  .object({
+    id: idSchema,
+    queued: z.boolean(),
+    status: enrichmentStatusSchema.optional(),
+    runId: idSchema.nullable().optional(),
+    reason: nullableText.optional(),
+  })
+  .strict();
+export type EnrichmentRequestOutput = z.infer<typeof enrichmentRequestOutputSchema>;
 
 export const ownerRefSchema = z
   .object({

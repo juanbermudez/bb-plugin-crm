@@ -63,6 +63,21 @@ export type AgentActionStatus = z.infer<typeof agentActionStatusSchema>;
 export type AgentThreadKind = z.infer<typeof agentThreadKindSchema>;
 export type AgentRecordType = z.infer<typeof agentRecordTypeSchema>;
 
+/** Events emitted by transactional CRM domain writes. */
+export const crmEventTypes = [
+  "company.created",
+  "contact.created",
+  "deal.created",
+  "deal.stage.changed",
+  "deal.opened",
+  "deal.closed",
+] as const;
+export const crmEventTypeSchema = z.enum(crmEventTypes);
+export type CrmEventType = z.infer<typeof crmEventTypeSchema>;
+export const agentEventTriggerConfigSchema = z
+  .object({ event: crmEventTypeSchema })
+  .strict();
+
 export const agentDefinitionSchema = z
   .object({
     id: idSchema,
@@ -381,7 +396,18 @@ export const agentTriggerCreateDataSchema = z
     nextRunAt: timestampSchema.nullable().default(null),
     lastRunAt: timestampSchema.nullable().default(null),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.type !== "EVENT") return;
+    const parsed = agentEventTriggerConfigSchema.safeParse(value.config);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config"],
+        message: "EVENT triggers require config.event to be a supported CRM event.",
+      });
+    }
+  });
 
 export const agentTriggerCreateInputSchema = z
   .object({ agentId: idSchema, data: agentTriggerCreateDataSchema })
@@ -398,10 +424,53 @@ export const agentTriggerUpdateDataSchema = z
     lastRunAt: timestampSchema.nullable().optional(),
   })
   .strict()
-  .refine((value) => Object.keys(value).length > 0, "Agent trigger update has no changes.");
+  .refine((value) => Object.keys(value).length > 0, "Agent trigger update has no changes.")
+  .superRefine((value, ctx) => {
+    if (value.type !== "EVENT" || value.config === undefined) return;
+    const parsed = agentEventTriggerConfigSchema.safeParse(value.config);
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config"],
+        message: "EVENT triggers require config.event to be a supported CRM event.",
+      });
+    }
+  });
 
 export const agentTriggerUpdateInputSchema = z
   .object({ id: idSchema, data: agentTriggerUpdateDataSchema })
+  .strict();
+
+export const agentWebhookTokenSchema = z
+  .object({
+    id: idSchema,
+    triggerId: idSchema,
+    tokenHint: z.string().regex(/^[A-Za-z0-9_-]{8}$/u),
+    createdAt: timestampSchema,
+    lastUsedAt: timestampSchema.nullable(),
+    revokedAt: timestampSchema.nullable(),
+  })
+  .strict();
+
+export const provisionedAgentWebhookTokenSchema = z
+  .object({
+    ...agentWebhookTokenSchema.shape,
+    token: z.string().regex(/^crm_wh_[A-Za-z0-9_-]{32,}$/u),
+  })
+  .strict();
+
+export const agentWebhookTokenListInputSchema = z
+  .object({ triggerId: idSchema })
+  .strict();
+
+export const agentWebhookTokenProvisionInputSchema = z
+  .object({ triggerId: idSchema, at: timestampSchema.optional() })
+  .strict();
+
+export const agentWebhookTokenRotateInputSchema = agentWebhookTokenProvisionInputSchema;
+
+export const agentWebhookTokenRevokeInputSchema = z
+  .object({ id: idSchema, at: timestampSchema.optional() })
   .strict();
 
 export const agentTriggerDeleteInputSchema = agentIdActionInputSchema;

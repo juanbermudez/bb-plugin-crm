@@ -8,6 +8,7 @@ import {
   requiredText,
   type Db,
 } from "./types.js";
+import { CRM_EVENT_CATALOG } from "./crm-events.js";
 
 /** Agent definition lifecycle states persisted by the CRM agent workspace. */
 export const AGENT_DEFINITION_STATUSES = [
@@ -779,6 +780,14 @@ function normalizeJsonObject(value: unknown, label: string, fallback: AgentJsonO
   return cloneJson(candidate, label) as AgentJsonObject;
 }
 
+function validateTriggerConfig(type: AgentTriggerType, config: AgentJsonObject): void {
+  if (type !== "EVENT") return;
+  const event = config.event;
+  if (typeof event !== "string" || !(event in CRM_EVENT_CATALOG)) {
+    throw new Error("EVENT triggers require config.event to be a supported CRM event.");
+  }
+}
+
 function encodeJson(value: unknown, label: string): string {
   const cloned = cloneJson(value, label);
   const encoded = JSON.stringify(cloned);
@@ -1247,13 +1256,16 @@ function normalizeTriggerCreate(value: AgentTriggerCreateInput, agentId: string,
   assertKeys(object, AGENT_TRIGGER_CREATE_KEYS, "Agent trigger input");
   const name = requiredText(stringValue(object.name, "Agent trigger name"), "Agent trigger name");
   if (name.length > 160) throw new Error("Agent trigger name must be at most 160 characters.");
+  const type = assertEnum(object.type, AGENT_TRIGGER_TYPES, "agent trigger type");
+  const config = normalizeJsonObject(object.config, "Agent trigger config");
+  validateTriggerConfig(type, config);
   return {
     id: object.id === undefined ? newRecordId("agent-trigger") : identifier(object.id, "Agent trigger id"),
     agentId,
     versionId: identifier(object.versionId, "Agent trigger version id"),
-    type: assertEnum(object.type, AGENT_TRIGGER_TYPES, "agent trigger type"),
+    type,
     name,
-    config: normalizeJsonObject(object.config, "Agent trigger config"),
+    config,
     createdById: normalizeActor(actorId ?? object.createdById, "Agent trigger creator"),
     enabled: object.enabled === undefined ? false : assertBoolean(object.enabled, "Agent trigger enabled"),
     nextRunAt: normalizeTimestamp(
@@ -1281,6 +1293,7 @@ function normalizeTriggerUpdate(input: unknown): AgentTriggerUpdateInput {
   if (data.versionId !== undefined) result.versionId = identifier(data.versionId, "Agent trigger version id");
   if (data.type !== undefined) result.type = assertEnum(data.type, AGENT_TRIGGER_TYPES, "agent trigger type");
   if (data.config !== undefined) result.config = normalizeJsonObject(data.config, "Agent trigger config");
+  if (result.type === "EVENT" && result.config !== undefined) validateTriggerConfig(result.type, result.config);
   if (data.enabled !== undefined) result.enabled = assertBoolean(data.enabled, "Agent trigger enabled");
   if (data.nextRunAt !== undefined) {
     result.nextRunAt = normalizeTimestamp(
@@ -1905,6 +1918,7 @@ export class AgentStore {
       const versionId = value.versionId ?? before.versionId;
       const version = this.getVersionRequired(versionId);
       if (version.agentId !== agent.id) throw new RecordNotFoundError("agent version", versionId);
+      validateTriggerConfig(value.type ?? before.type, value.config ?? before.config);
       const enabled = value.enabled ?? before.enabled;
       if (enabled && (agent.status !== "LIVE" || version.status !== "DEPLOYED")) {
         throw new AgentStateError("Only a deployed version on a live agent can have an enabled trigger.");
@@ -1926,6 +1940,13 @@ export class AgentStore {
       }
       sets.push("updated_at = @updatedAt");
       this.db.prepare(`UPDATE agent_triggers SET ${sets.join(", ")} WHERE id = @id`).run(params);
+      if (before.type === "WEBHOOK" && (value.type ?? before.type) !== "WEBHOOK") {
+        this.db.prepare(`
+          UPDATE agent_webhook_tokens
+          SET revoked_at = COALESCE(revoked_at, @revokedAt)
+          WHERE trigger_id = @triggerId AND revoked_at IS NULL
+        `).run({ triggerId, revokedAt: params.updatedAt });
+      }
       const after = this.getTriggerRequired(triggerId);
       this.insertAudit({
         agentId: agent.id,

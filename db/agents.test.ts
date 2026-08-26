@@ -17,8 +17,8 @@ describe("CRM agent workspace persistence", () => {
   it("keeps the migration v5 agent graph intact after later migrations", async () => {
     const { db, lifecycle } = withDatabase();
     try {
-      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("6");
-      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(5);
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("7");
+      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(6);
       const tables = db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'agent_%' ORDER BY name",
       ).all() as Array<{ name: string }>;
@@ -31,6 +31,7 @@ describe("CRM agent workspace persistence", () => {
         "agent_thread_links",
         "agent_triggers",
         "agent_versions",
+        "agent_webhook_tokens",
       ]);
       const indexes = db.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'agent_%' ORDER BY name",

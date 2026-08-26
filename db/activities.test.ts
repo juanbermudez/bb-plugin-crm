@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { createCompany, purgeCompany } from "./companies.js";
-import { createContact } from "./contacts.js";
-import { createDeal } from "./deals.js";
+import { createCompany, purgeCompany, updateCompany } from "./companies.js";
+import { createContact, updateContact } from "./contacts.js";
+import { createDeal, updateDeal } from "./deals.js";
 import { initializeSchema } from "./schema.js";
 import {
   ActivityStore,
@@ -210,6 +210,71 @@ describe("CRM activity persistence", () => {
       purgeCompany(db, company.id);
       expect(getActivity(db, task.id)).toBeNull();
       expect(getActivity(db, note.id)).toBeNull();
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("records deal stage and enrichment transitions on the anchored timelines", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const { company, contact, deal } = seedEntities(db);
+      const store = new ActivityStore(db);
+
+      const updatedDeal = updateDeal(db, deal.id, { stage: "QUALIFIED_TO_BUY" });
+      expect(updatedDeal.lastActivityAt).toEqual(expect.any(String));
+      const dealEntries = store.list({ dealId: deal.id }).entries;
+      expect(dealEntries).toHaveLength(1);
+      expect(dealEntries[0]).toMatchObject({
+        type: "STAGE_CHANGE",
+        subject: "Stage changed",
+        body: null,
+        companyId: company.id,
+        dealId: deal.id,
+        createdById: "local_user",
+        meta: { from: "DEMO_BOOKED", to: "QUALIFIED_TO_BUY" },
+      });
+
+      // Re-applying the same stage is an idempotent update, not another event.
+      updateDeal(db, deal.id, { stage: "QUALIFIED_TO_BUY" });
+      expect(store.list({ dealId: deal.id }).entries).toHaveLength(1);
+
+      updateCompany(db, company.id, { enrichmentStatus: "RUNNING" });
+      updateCompany(db, company.id, { enrichmentStatus: "COMPLETE" });
+      updateContact(db, contact.id, { enrichmentStatus: "RUNNING" });
+      updateContact(db, contact.id, { enrichmentStatus: "FAILED", enrichmentError: "Provider timeout" });
+
+      const companyEnrichment = store
+        .list({ companyId: company.id })
+        .entries.filter((entry) => entry.type === "ENRICHMENT" && entry.companyId === company.id && entry.contactId === null);
+      expect(companyEnrichment).toHaveLength(2);
+      expect(companyEnrichment.map((entry) => entry.meta)).toEqual(
+        expect.arrayContaining([
+          { from: "RUNNING", to: "COMPLETE" },
+          { from: "PENDING", to: "RUNNING" },
+        ]),
+      );
+      expect(companyEnrichment[0]?.createdById).toBe("local_user");
+
+      const contactEnrichment = store
+        .list({ contactId: contact.id })
+        .entries.filter((entry) => entry.type === "ENRICHMENT");
+      expect(contactEnrichment).toHaveLength(2);
+      expect(contactEnrichment[0]).toMatchObject({
+        contactId: contact.id,
+        companyId: company.id,
+        createdById: "local_user",
+      });
+      expect(contactEnrichment.map((entry) => entry.meta)).toEqual(
+        expect.arrayContaining([
+          { from: "RUNNING", to: "FAILED" },
+          { from: "PENDING", to: "RUNNING" },
+        ]),
+      );
+      expect(
+        contactEnrichment.find((entry) => entry.meta.to === "FAILED"),
+      ).toMatchObject({ body: "Provider timeout" });
+      expect(getActivity(db, contactEnrichment[0]!.id)?.id).toBe(contactEnrichment[0]!.id);
     } finally {
       await lifecycle.dispose();
     }

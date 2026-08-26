@@ -243,6 +243,10 @@ describe("CRM plugin foundation", () => {
       "crm_add_activity",
       "crm_list_tasks",
       "crm_set_field",
+      "crm_record_contact_fact",
+      "crm_record_contact_brief",
+      "crm_record_contact_work_history",
+      "crm_finalize_enrichment",
     ]);
 
     const created = JSON.parse(String(await harness.callAgentTool(
@@ -1055,7 +1059,10 @@ describe("CRM plugin foundation", () => {
       trend: expect.arrayContaining([expect.objectContaining({ month: expect.any(String) })]),
       biggestOpen: [expect.objectContaining({ id: openDeal.id, baseAmountCents: 40_000 })],
       overdueTasks: [expect.objectContaining({ subject: "Follow up" })],
-      recentActivity: [expect.objectContaining({ subject: "Follow up" })],
+      recentActivity: expect.arrayContaining([
+        expect.objectContaining({ subject: "Follow up" }),
+        expect.objectContaining({ type: "STAGE_CHANGE", subject: "Stage changed" }),
+      ]),
     });
     const summary = await harness.behavior.callRpc("dashboard_summary", {
       scope: "everyone",
@@ -1755,5 +1762,179 @@ describe("CRM plugin foundation", () => {
       await service.done;
       await harness.lifecycle.dispose();
     }
+  });
+
+  it("keeps enrichment requests explicit when the research provider is unavailable", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    const company = await harness.behavior.callRpc("companies_create", {
+      name: "No Provider Co",
+      domain: "no-provider.example",
+    }) as { id: string };
+    const result = await harness.behavior.callRpc("companies_enrich", { id: company.id }) as {
+      id: string;
+      queued: boolean;
+      status: string;
+      reason: string | null;
+    };
+
+    expect(result).toMatchObject({
+      id: company.id,
+      queued: false,
+      status: "SKIPPED",
+      reason: expect.stringContaining("credentials are not configured"),
+    });
+    await expect(harness.behavior.callRpc("companies_get", { id: company.id }))
+      .resolves.toMatchObject({
+        enrichmentStatus: "SKIPPED",
+        enrichmentError: expect.stringContaining("no external data was fetched"),
+      });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("queues provider-backed bulk enrichment and finalizes only after contact evidence", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: {
+        researchApiKey: "provider-test-key",
+        researchAgentId: "agent_enrichment_server",
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(
+      harness,
+      "agent_enrichment_server",
+      "version_enrichment_server",
+    );
+    const contact = await harness.behavior.callRpc("contacts_create", {
+      firstName: "Evidence",
+      lastName: "Candidate",
+      email: "candidate@example.com",
+    }) as { id: string };
+
+    const bulk = await harness.behavior.callRpc("contacts_bulkEnrich", {
+      ids: [contact.id],
+    });
+    expect(bulk).toMatchObject({ requested: 1, succeeded: 1, skipped: 0, failed: 0 });
+    const runs = await harness.behavior.callRpc("agents_runs_list", {
+      agentId: "agent_enrichment_server",
+      status: "QUEUED",
+    }) as Array<{ id: string; input: Record<string, unknown> }>;
+    expect(runs).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          kind: "CRM_ENRICHMENT_REQUEST",
+          entity: "CONTACT",
+          recordId: contact.id,
+          operation: "enrich",
+        }),
+      }),
+    ]);
+    const runId = runs[0]!.id;
+    await harness.behavior.callRpc("agents_runs_start", { id: runId });
+
+    await harness.callAgentTool("crm_record_contact_fact", {
+      contactId: contact.id,
+      field: "twitterUrl",
+      value: "https://x.com/evidence_candidate",
+      score: 0.8,
+      band: "PROBABLE",
+      evidence: [{
+        kind: "handle.name-form",
+        detail: "The profile handle matches the contact's name.",
+        sourceUrl: "https://x.com/evidence_candidate",
+      }],
+      method: "x.handle+citation",
+      sourceUrl: "https://x.com/evidence_candidate",
+    });
+    await expect(harness.callAgentTool("crm_finalize_enrichment", {
+      entity: "contact",
+      recordId: contact.id,
+      runId,
+    })).resolves.toContain('"completed":true');
+    await expect(harness.behavior.callRpc("contacts_get", { id: contact.id }))
+      .resolves.toMatchObject({ enrichmentStatus: "COMPLETE", enrichedAt: expect.any(String) });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("accepts fetched currency rates only through a provider-labelled RPC", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { currencyRateProvider: "test-provider" },
+    });
+    await plugin(bb);
+    await expect(harness.behavior.callRpc("currency_rates_upsertFetched", {
+      baseCurrency: "USD",
+      quoteCurrency: "EUR",
+      rate: 0.92,
+      provider: "test-provider",
+      asOf: "2026-08-26T00:00:00.000Z",
+    })).resolves.toMatchObject({
+      baseCurrency: "USD",
+      quoteCurrency: "EUR",
+      source: "FETCHED",
+      provider: "test-provider",
+      rate: 0.92,
+    });
+    await expect(harness.behavior.callRpc("currency_rates_upsertFetched", {
+      baseCurrency: "USD",
+      quoteCurrency: "GBP",
+      rate: 0.8,
+    })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("currency_rates_upsertFetched", {
+      baseCurrency: "USD",
+      quoteCurrency: "GBP",
+      rate: 0.8,
+      provider: "unconfigured-provider",
+    })).rejects.toThrow(/configured currencyRateProvider/);
+    await harness.lifecycle.dispose();
+  });
+
+  it("keeps social and work-history research provider-backed and evidence-oriented", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: {
+        researchApiKey: "provider-test-key",
+        researchAgentId: "agent_research_paths",
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(harness, "agent_research_paths", "version_research_paths");
+    const company = await harness.behavior.callRpc("companies_create", {
+      name: "Missing Domain Co",
+    }) as { id: string };
+    await expect(harness.behavior.callRpc("companies_research", { id: company.id }))
+      .resolves.toMatchObject({
+        queued: false,
+        status: "SKIPPED",
+        reason: expect.stringContaining("domain or website"),
+      });
+
+    const contact = await harness.behavior.callRpc("contacts_create", {
+      firstName: "No",
+      lastName: "Profile",
+    }) as { id: string };
+    await expect(harness.behavior.callRpc("contacts_research", {
+      id: contact.id,
+      focus: "work-history",
+    })).resolves.toMatchObject({
+      queued: false,
+      status: "SKIPPED",
+      reason: expect.stringContaining("LinkedIn URL"),
+    });
+    await expect(harness.behavior.callRpc("contacts_research", {
+      id: contact.id,
+      focus: "socials",
+    })).resolves.toMatchObject({ queued: true, status: "PENDING", runId: expect.any(String) });
+
+    await expect(harness.callAgentTool("crm_update_record", {
+      entity: "contact",
+      id: contact.id,
+      data: { twitterUrl: "https://x.com/unverified" },
+    })).rejects.toThrow();
+
+    await harness.lifecycle.dispose();
   });
 });

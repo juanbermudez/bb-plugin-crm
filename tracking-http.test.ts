@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin, {
+  CRM_AGENT_WEBHOOK_PATH,
   CRM_TRACKING_COLLECTOR_PATH,
   CRM_TRACKING_LOADER_PATH,
 } from "./server.js";
@@ -14,6 +15,7 @@ describe("tracking HTTP routes", () => {
         ["GET", CRM_TRACKING_LOADER_PATH, "none"],
         ["OPTIONS", CRM_TRACKING_COLLECTOR_PATH, "none"],
         ["POST", CRM_TRACKING_COLLECTOR_PATH, "none"],
+        ["POST", CRM_AGENT_WEBHOOK_PATH, "none"],
       ]);
 
       const site = await harness.behavior.callRpc("tracking_sites_create", {

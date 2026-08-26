@@ -1,4 +1,7 @@
+import { createActivity } from "./activities.js";
 import { newRecordId, nowIso, nullableText, normalizeDomain, normalizeLimit, normalizeOffset, normalizeEmail, requiredText, RecordNotFoundError, type Db, type EnrichmentStatus, type ListOptions, type RecordSource, ENRICHMENT_STATUSES, RECORD_SOURCES } from "./types.js";
+
+const SYSTEM_ACTIVITY_AUTHOR_ID = "local_user";
 
 export interface Company {
   id: string;
@@ -391,6 +394,7 @@ export class CompanyStore {
     return this.db.transaction(() => {
       const current = this.getRequired(id);
       const next: Company = { ...current };
+      let enrichmentStatusChanged = false;
       const has = (key: keyof CompanyUpdateInput): boolean =>
         input[key] !== undefined;
       if (has("name")) next.name = requiredText(input.name as string, "Company name");
@@ -420,6 +424,7 @@ export class CompanyStore {
       if (has("primaryContactId")) next.primaryContactId = nullableText(input.primaryContactId);
       if (has("enrichmentStatus")) {
         next.enrichmentStatus = assertEnum(input.enrichmentStatus as string, ENRICHMENT_STATUSES, "enrichment status");
+        enrichmentStatusChanged = next.enrichmentStatus !== current.enrichmentStatus;
       }
       if (has("enrichedAt")) next.enrichedAt = input.enrichedAt ?? null;
       if (has("enrichmentError")) next.enrichmentError = nullableText(input.enrichmentError);
@@ -431,6 +436,33 @@ export class CompanyStore {
       this.db
         .prepare(`UPDATE companies SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
         .run(values);
+      if (enrichmentStatusChanged) {
+        const occurredAt = next.updatedAt;
+        createActivity(
+          this.db,
+          {
+            type: "ENRICHMENT",
+            subject: "Enrichment status changed",
+            body: next.enrichmentError,
+            occurredAt,
+            companyId: next.id,
+            createdById: SYSTEM_ACTIVITY_AUTHOR_ID,
+            meta: { from: current.enrichmentStatus, to: next.enrichmentStatus },
+          },
+          SYSTEM_ACTIVITY_AUTHOR_ID,
+        );
+        this.db
+          .prepare(`
+            UPDATE companies
+            SET last_activity_at = CASE
+              WHEN last_activity_at IS NULL OR last_activity_at < @occurredAt
+                THEN @occurredAt
+              ELSE last_activity_at
+            END
+            WHERE id = @id
+          `)
+          .run({ id: next.id, occurredAt });
+      }
       return this.getRequired(id);
     })();
   }

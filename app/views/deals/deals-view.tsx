@@ -41,6 +41,7 @@ import { ActivityTimeline } from "../activity/index.js";
 import { SavedViewBar } from "../saved-views/index.js";
 import { RecordFieldsEditor } from "../record-fields/index.js";
 import { RecordAgentTab, type RecordAgentRpcClient } from "../../components/record-agent-tab.js";
+import { cn } from "../../../lib/utils.js";
 import {
   customFieldFacets,
   facetOptionsFromCounts,
@@ -140,6 +141,10 @@ function formatDate(value: string | null | undefined): string {
 
 function displayValue(value: string | null | undefined): string {
   return value?.trim() || "—";
+}
+
+function stageIndex(stage: DealStage): number {
+  return DEAL_STAGES.indexOf(stage);
 }
 
 function customFieldDisplay(
@@ -517,6 +522,57 @@ function DealOverview({
                 </option>
               ))}
             </select>
+            <ol
+              className="flex min-w-0 items-start gap-1 overflow-x-auto pt-1"
+              aria-label="Deal stage stepper"
+            >
+              {DEAL_STAGES.map((stage, index) => {
+                const active = stage === stageDraft;
+                const complete = index < stageIndex(stageDraft);
+                return (
+                  <li key={stage} className="flex min-w-20 flex-1 items-start gap-1">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex min-w-0 flex-1 flex-col items-center gap-1 rounded-md px-1 py-1 text-center text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                        active
+                          ? "text-foreground"
+                          : complete
+                            ? "text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                            : "text-muted-foreground/70 hover:bg-state-hover hover:text-foreground",
+                      )}
+                      aria-label={`Set stage to ${stageLabel(stage)}`}
+                      aria-pressed={active}
+                      disabled={mutationBusy}
+                      onClick={() => setStageDraft(stage)}
+                    >
+                      <span
+                        className={cn(
+                          "inline-flex size-6 items-center justify-center rounded-full border text-[10px] font-semibold",
+                          active
+                            ? "border-foreground bg-foreground text-background"
+                            : complete
+                              ? "border-border bg-muted text-foreground"
+                              : "border-border bg-background",
+                        )}
+                      >
+                        {index + 1}
+                      </span>
+                      <span className="max-w-24 leading-tight">{stageLabel(stage)}</span>
+                    </button>
+                    {index < DEAL_STAGES.length - 1 ? (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "mt-3 h-px min-w-2 flex-1 bg-border",
+                          complete && "bg-foreground/40",
+                        )}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
           </div>
           <Button
             type="submit"

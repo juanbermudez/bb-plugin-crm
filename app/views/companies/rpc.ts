@@ -23,6 +23,14 @@ export interface CompaniesRpcClient {
   call(method: "companies_archive", input: { id: Id }): Promise<Company>;
   call(method: "companies_restore", input: { id: Id }): Promise<Company>;
   call(method: "companies_purge", input: { id: Id }): Promise<Company>;
+  call(
+    method: "companies_enrich" | "companies_research",
+    input: { id: Id; agentId?: Id },
+  ): Promise<{ id: Id; queued: boolean; status?: string; runId?: Id | null; reason?: string | null }>;
+  call(
+    method: "companies_bulkEnrich",
+    input: { ids: Id[] },
+  ): Promise<{ requested: number; succeeded: number; skipped?: number; failed: number; message: string | null }>;
 }
 
 /** Use the BB client but expose only the typed methods this view consumes. */

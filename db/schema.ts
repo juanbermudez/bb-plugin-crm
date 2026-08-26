@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 6;
+export const CRM_SCHEMA_VERSION = 7;
 
 const MIGRATIONS: string[] = [
   `
@@ -922,6 +922,201 @@ const MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '6', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    -- CRM event rows are written by SQLite triggers so every supported domain
+    -- mutation (RPC, CLI, native tool, or direct store use) produces one
+    -- transactional event before its agent run is queued.
+    CREATE TABLE IF NOT EXISTS crm_event_outbox (
+      id TEXT PRIMARY KEY NOT NULL,
+      type TEXT NOT NULL CHECK (type IN (
+        'company.created',
+        'contact.created',
+        'deal.created',
+        'deal.stage.changed',
+        'deal.opened',
+        'deal.closed'
+      )),
+      record_kind TEXT NOT NULL CHECK (record_kind IN ('company', 'contact', 'deal')),
+      record_id TEXT NOT NULL CHECK (length(trim(record_id)) > 0),
+      occurred_at TEXT NOT NULL CHECK (length(trim(occurred_at)) > 0),
+      data TEXT NOT NULL DEFAULT '{}'
+        CHECK (json_valid(data) AND json_type(data) = 'object'),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      processed_at TEXT,
+      CHECK (
+        (type = 'company.created' AND record_kind = 'company') OR
+        (type = 'contact.created' AND record_kind = 'contact') OR
+        (type IN ('deal.created', 'deal.stage.changed', 'deal.opened', 'deal.closed')
+          AND record_kind = 'deal')
+      )
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_webhook_tokens (
+      id TEXT PRIMARY KEY NOT NULL,
+      trigger_id TEXT NOT NULL REFERENCES agent_triggers(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+      token_hint TEXT NOT NULL CHECK (length(token_hint) BETWEEN 4 AND 32),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      last_used_at TEXT,
+      revoked_at TEXT
+    );
+
+    CREATE TRIGGER IF NOT EXISTS crm_company_created_event
+    AFTER INSERT ON companies
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'company.created',
+        'company',
+        NEW.id,
+        NEW.created_at,
+        json_object(
+          'name', NEW.name,
+          'domain', NEW.domain
+        )
+      );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS crm_contact_created_event
+    AFTER INSERT ON contacts
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'contact.created',
+        'contact',
+        NEW.id,
+        NEW.created_at,
+        json_object(
+          'firstName', NEW.first_name,
+          'lastName', NEW.last_name,
+          'email', NEW.email,
+          'companyId', NEW.company_id
+        )
+      );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS crm_deal_created_event
+    AFTER INSERT ON deals
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'deal.created',
+        'deal',
+        NEW.id,
+        NEW.created_at,
+        json_object(
+          'name', NEW.name,
+          'companyId', NEW.company_id,
+          'stage', NEW.stage
+        )
+      );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS crm_deal_created_closed_event
+    AFTER INSERT ON deals
+    WHEN NEW.stage IN ('CLOSED_WON', 'CLOSED_LOST')
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'deal.closed',
+        'deal',
+        NEW.id,
+        NEW.created_at,
+        json_object(
+          'companyId', NEW.company_id,
+          'from', NULL,
+          'to', NEW.stage
+        )
+      );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS crm_deal_stage_changed_event
+    AFTER UPDATE OF stage ON deals
+    WHEN OLD.stage <> NEW.stage
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'deal.stage.changed',
+        'deal',
+        NEW.id,
+        NEW.stage_changed_at,
+        json_object(
+          'from', OLD.stage,
+          'to', NEW.stage,
+          'companyId', NEW.company_id
+        )
+      );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS crm_deal_opened_event
+    AFTER UPDATE OF stage ON deals
+    WHEN OLD.stage <> NEW.stage
+      AND OLD.stage IN ('CLOSED_WON', 'CLOSED_LOST')
+      AND NEW.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'deal.opened',
+        'deal',
+        NEW.id,
+        NEW.stage_changed_at,
+        json_object(
+          'from', OLD.stage,
+          'to', NEW.stage,
+          'companyId', NEW.company_id
+        )
+      );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS crm_deal_closed_event
+    AFTER UPDATE OF stage ON deals
+    WHEN OLD.stage <> NEW.stage
+      AND OLD.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+      AND NEW.stage IN ('CLOSED_WON', 'CLOSED_LOST')
+    BEGIN
+      INSERT INTO crm_event_outbox (
+        id, type, record_kind, record_id, occurred_at, data
+      ) VALUES (
+        'crm-event-' || lower(hex(randomblob(16))),
+        'deal.closed',
+        'deal',
+        NEW.id,
+        NEW.stage_changed_at,
+        json_object(
+          'from', OLD.stage,
+          'to', NEW.stage,
+          'companyId', NEW.company_id
+        )
+      );
+    END;
+
+    CREATE INDEX IF NOT EXISTS crm_event_outbox_pending_idx
+      ON crm_event_outbox(processed_at, created_at, id);
+    CREATE INDEX IF NOT EXISTS crm_event_outbox_record_idx
+      ON crm_event_outbox(record_kind, record_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS crm_event_outbox_type_idx
+      ON crm_event_outbox(type, processed_at, created_at);
+    CREATE INDEX IF NOT EXISTS agent_webhook_tokens_trigger_active_idx
+      ON agent_webhook_tokens(trigger_id, revoked_at, created_at DESC);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '7', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;

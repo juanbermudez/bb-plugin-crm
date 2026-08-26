@@ -35,6 +35,12 @@ import {
   agentTriggerListInputSchema,
   agentTriggerSchema,
   agentTriggerUpdateInputSchema,
+  agentWebhookTokenListInputSchema,
+  agentWebhookTokenProvisionInputSchema,
+  agentWebhookTokenRevokeInputSchema,
+  agentWebhookTokenRotateInputSchema,
+  agentWebhookTokenSchema,
+  provisionedAgentWebhookTokenSchema,
   agentUpdateInputSchema,
   agentVersionCreateInputSchema,
   agentVersionListInputSchema,
@@ -64,6 +70,7 @@ import {
   companySchema,
   companyUpdateInputSchema,
   contactCreateInputSchema,
+  contactResearchInputSchema,
   contactFactCreateInputSchema,
   contactFactDecisionInputSchema,
   contactFactListInputSchema,
@@ -92,6 +99,7 @@ import {
   currencyRateListOutputSchema,
   currencyRateRemoveManualInputSchema,
   currencyRateSchema,
+  currencyRateUpsertFetchedInputSchema,
   currencyRateUpsertManualInputSchema,
   dashboardSummaryInputSchema,
   dashboardSummaryOutputSchema,
@@ -145,6 +153,8 @@ import {
   savedViewSetDefaultOutputSchema,
   savedViewUpdateInputSchema,
   setDealStageInputSchema,
+  enrichmentRequestInputSchema,
+  enrichmentRequestOutputSchema,
 } from "./core.js";
 import {
   connectionDiagnosticsSchema,
@@ -357,6 +367,18 @@ export const rpcContract = defineRpcContract({
     input: bulkOwnerInputSchema,
     output: bulkResultSchema,
   },
+  companies_enrich: {
+    input: enrichmentRequestInputSchema,
+    output: enrichmentRequestOutputSchema,
+  },
+  companies_bulkEnrich: {
+    input: bulkIdsInputSchema,
+    output: bulkResultSchema,
+  },
+  companies_research: {
+    input: enrichmentRequestInputSchema,
+    output: enrichmentRequestOutputSchema,
+  },
   companies_bulkArchive: {
     input: bulkIdsInputSchema,
     output: bulkResultSchema,
@@ -404,6 +426,18 @@ export const rpcContract = defineRpcContract({
   contacts_bulkAssignCompany: {
     input: bulkCompanyInputSchema,
     output: bulkResultSchema,
+  },
+  contacts_enrich: {
+    input: enrichmentRequestInputSchema,
+    output: enrichmentRequestOutputSchema,
+  },
+  contacts_bulkEnrich: {
+    input: bulkIdsInputSchema,
+    output: bulkResultSchema,
+  },
+  contacts_research: {
+    input: contactResearchInputSchema,
+    output: enrichmentRequestOutputSchema,
   },
   contacts_bulkArchive: {
     input: bulkIdsInputSchema,
@@ -543,6 +577,10 @@ export const rpcContract = defineRpcContract({
   },
   currency_rates_upsertManual: {
     input: currencyRateUpsertManualInputSchema,
+    output: currencyRateSchema,
+  },
+  currency_rates_upsertFetched: {
+    input: currencyRateUpsertFetchedInputSchema,
     output: currencyRateSchema,
   },
   currency_rates_removeManual: {
@@ -762,6 +800,22 @@ export const rpcContract = defineRpcContract({
   agents_triggers_enable: {
     input: agentTriggerEnableInputSchema,
     output: agentTriggerSchema,
+  },
+  agents_webhooks_list: {
+    input: agentWebhookTokenListInputSchema,
+    output: z.array(agentWebhookTokenSchema),
+  },
+  agents_webhooks_provision: {
+    input: agentWebhookTokenProvisionInputSchema,
+    output: provisionedAgentWebhookTokenSchema,
+  },
+  agents_webhooks_rotate: {
+    input: agentWebhookTokenRotateInputSchema,
+    output: provisionedAgentWebhookTokenSchema,
+  },
+  agents_webhooks_revoke: {
+    input: agentWebhookTokenRevokeInputSchema,
+    output: agentWebhookTokenSchema,
   },
   agents_runs_list: {
     input: agentRunListInputSchema,

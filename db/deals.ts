@@ -1,3 +1,4 @@
+import { createActivity } from "./activities.js";
 import {
   DEAL_STAGES,
   isClosedStage,
@@ -13,6 +14,8 @@ import {
   type DealStage,
   type ListOptions,
 } from "./types.js";
+
+const SYSTEM_ACTIVITY_AUTHOR_ID = "local_user";
 
 export interface Deal {
   id: string;
@@ -351,6 +354,7 @@ export class DealStore {
     return this.db.transaction(() => {
       const current = this.getRequired(id);
       const next: Deal = { ...current };
+      let stageChanged = false;
       const has = (key: keyof DealUpdateInput): boolean => input[key] !== undefined;
       if (has("name")) next.name = requiredText(input.name as string, "Deal name");
       if (has("description")) next.description = nullableText(input.description);
@@ -365,6 +369,7 @@ export class DealStore {
       if (has("stage")) {
         const stage = assertStage(input.stage as string);
         if (stage !== current.stage) {
+          stageChanged = true;
           next.stage = stage;
           next.stageChangedAt = nowIso();
           if (isClosedStage(stage)) {
@@ -381,6 +386,44 @@ export class DealStore {
       this.db
         .prepare(`UPDATE deals SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
         .run(values);
+      if (stageChanged) {
+        const occurredAt = next.stageChangedAt;
+        createActivity(
+          this.db,
+          {
+            type: "STAGE_CHANGE",
+            subject: "Stage changed",
+            body: next.closedReason,
+            occurredAt,
+            dealId: next.id,
+            createdById: SYSTEM_ACTIVITY_AUTHOR_ID,
+            meta: { from: current.stage, to: next.stage },
+          },
+          SYSTEM_ACTIVITY_AUTHOR_ID,
+        );
+        this.db
+          .prepare(`
+            UPDATE deals
+            SET last_activity_at = CASE
+              WHEN last_activity_at IS NULL OR last_activity_at < @occurredAt
+                THEN @occurredAt
+              ELSE last_activity_at
+            END
+            WHERE id = @id
+          `)
+          .run({ id: next.id, occurredAt });
+        this.db
+          .prepare(`
+            UPDATE companies
+            SET last_activity_at = CASE
+              WHEN last_activity_at IS NULL OR last_activity_at < @occurredAt
+                THEN @occurredAt
+              ELSE last_activity_at
+            END
+            WHERE id = @companyId
+          `)
+          .run({ companyId: next.companyId, occurredAt });
+      }
       return this.getRequired(id);
     })();
   }

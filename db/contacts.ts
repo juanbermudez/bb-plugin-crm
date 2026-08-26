@@ -1,3 +1,4 @@
+import { createActivity } from "./activities.js";
 import {
   ENRICHMENT_STATUSES,
   newRecordId,
@@ -14,6 +15,8 @@ import {
   type ListOptions,
   type RecordSource,
 } from "./types.js";
+
+const SYSTEM_ACTIVITY_AUTHOR_ID = "local_user";
 
 export interface Contact {
   id: string;
@@ -370,6 +373,7 @@ export class ContactStore {
     return this.db.transaction(() => {
       const current = this.getRequired(id);
       const next: Contact = { ...current };
+      let enrichmentStatusChanged = false;
       const has = (key: keyof ContactUpdateInput): boolean => input[key] !== undefined;
       if (has("firstName")) next.firstName = requiredText(input.firstName as string, "Contact first name");
       if (has("lastName")) next.lastName = nullableText(input.lastName);
@@ -385,6 +389,7 @@ export class ContactStore {
       if (has("socialsCheckedAt")) next.socialsCheckedAt = input.socialsCheckedAt ?? null;
       if (has("enrichmentStatus")) {
         next.enrichmentStatus = assertEnum(input.enrichmentStatus as string, ENRICHMENT_STATUSES, "enrichment status");
+        enrichmentStatusChanged = next.enrichmentStatus !== current.enrichmentStatus;
       }
       if (has("enrichedAt")) next.enrichedAt = input.enrichedAt ?? null;
       if (has("enrichmentError")) next.enrichmentError = nullableText(input.enrichmentError);
@@ -398,6 +403,46 @@ export class ContactStore {
       this.db
         .prepare(`UPDATE contacts SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
         .run(values);
+      if (enrichmentStatusChanged) {
+        const occurredAt = next.updatedAt;
+        createActivity(
+          this.db,
+          {
+            type: "ENRICHMENT",
+            subject: "Enrichment status changed",
+            body: next.enrichmentError,
+            occurredAt,
+            contactId: next.id,
+            createdById: SYSTEM_ACTIVITY_AUTHOR_ID,
+            meta: { from: current.enrichmentStatus, to: next.enrichmentStatus },
+          },
+          SYSTEM_ACTIVITY_AUTHOR_ID,
+        );
+        this.db
+          .prepare(`
+            UPDATE contacts
+            SET last_activity_at = CASE
+              WHEN last_activity_at IS NULL OR last_activity_at < @occurredAt
+                THEN @occurredAt
+              ELSE last_activity_at
+            END
+            WHERE id = @id
+          `)
+          .run({ id: next.id, occurredAt });
+        if (next.companyId) {
+          this.db
+            .prepare(`
+              UPDATE companies
+              SET last_activity_at = CASE
+                WHEN last_activity_at IS NULL OR last_activity_at < @occurredAt
+                  THEN @occurredAt
+                ELSE last_activity_at
+              END
+              WHERE id = @companyId
+            `)
+            .run({ companyId: next.companyId, occurredAt });
+        }
+      }
       return this.getRequired(id);
     })();
   }

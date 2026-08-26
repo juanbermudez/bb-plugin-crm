@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -158,6 +159,70 @@ function activityTimestamp(entry: ActivityEntry): number {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+const DEAL_STAGE_LABELS: Record<string, string> = {
+  DEMO_BOOKED: "Demo booked",
+  QUALIFIED_TO_BUY: "Qualified to buy",
+  UNQUALIFIED_TO_BUY: "Unqualified to buy",
+  DECISION_MAKER_BOUGHT_IN: "Decision maker bought in",
+  CONTRACT_SENT: "Contract sent",
+  CLOSED_WON: "Closed won",
+  CLOSED_LOST: "Closed lost",
+};
+
+const ENRICHMENT_STATUS_LABELS: Record<string, string> = {
+  PENDING: "Pending",
+  RUNNING: "Running",
+  COMPLETE: "Complete",
+  FAILED: "Failed",
+  SKIPPED: "Skipped",
+};
+
+function metaText(entry: ActivityEntry, key: string): string | null {
+  const value = entry.meta[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function titleCaseToken(value: string): string {
+  return value
+    .toLowerCase()
+    .split(/[_-]+/u)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function stageLabel(value: string): string {
+  return DEAL_STAGE_LABELS[value] ?? titleCaseToken(value);
+}
+
+function enrichmentStatusLabel(value: string): string {
+  return ENRICHMENT_STATUS_LABELS[value] ?? titleCaseToken(value);
+}
+
+function activityTitle(entry: ActivityEntry): string {
+  const fallback = ACTIVITY_TYPE_META[entry.type].label;
+  const subject = entry.subject?.trim();
+  if (entry.type === "STAGE_CHANGE") {
+    const from = metaText(entry, "from") ?? metaText(entry, "fromStage");
+    const to = metaText(entry, "to") ?? metaText(entry, "toStage");
+    if (from && to) return `${stageLabel(from)} → ${stageLabel(to)}`;
+    if (to) return `Stage changed to ${stageLabel(to)}`;
+  }
+  if (entry.type === "ENRICHMENT") {
+    const from = metaText(entry, "from") ?? metaText(entry, "fromStatus");
+    const to = metaText(entry, "to") ?? metaText(entry, "toStatus");
+    if (from && to) {
+      return `${enrichmentStatusLabel(from)} → ${enrichmentStatusLabel(to)}`;
+    }
+    if (to) return `Enrichment ${enrichmentStatusLabel(to)}`;
+  }
+  return subject || fallback;
+}
+
+function isNoteLikeActivityType(type: ActivityType): boolean {
+  return type === "NOTE" || type === "CALL" || type === "EMAIL" || type === "MEETING";
+}
+
 function mergeEntries(
   current: readonly ActivityEntry[],
   incoming: readonly ActivityEntry[],
@@ -165,7 +230,10 @@ function mergeEntries(
   const byId = new Map<string, ActivityEntry>();
   [...current, ...incoming].forEach((entry) => byId.set(entry.id, entry));
   return [...byId.values()].sort(
-    (left, right) => activityTimestamp(right) - activityTimestamp(left),
+    (left, right) => {
+      const timestampDifference = activityTimestamp(right) - activityTimestamp(left);
+      return timestampDifference === 0 ? right.id.localeCompare(left.id) : timestampDifference;
+    },
   );
 }
 
@@ -455,7 +523,7 @@ function TimelineEntry({
   const meta = ACTIVITY_TYPE_META[entry.type];
   const isTask = entry.type === "TASK";
   const isComplete = entry.completedAt !== null;
-  const subject = entry.subject?.trim() || meta.label;
+  const subject = activityTitle(entry);
   const completionLabel = isComplete ? "Reopen task" : "Complete task";
   const completionBusy = completingId === entry.id;
 
@@ -558,6 +626,7 @@ export function ActivityTimeline({
   const [countsError, setCountsError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const olderSentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -625,7 +694,7 @@ export function ActivityTimeline({
       setCounts((current) => {
         if (!current) return current;
         const next = { ...current, all: current.all + 1 };
-        if (entry.type !== "TASK") next.notes += 1;
+        if (isNoteLikeActivityType(entry.type)) next.notes += 1;
         if (entry.type === "EMAIL") next.email += 1;
         if (entry.type === "MEETING") next.meetings += 1;
         if (entry.type === "TASK" && entry.completedAt === null) next.upcoming += 1;
@@ -669,7 +738,7 @@ export function ActivityTimeline({
     [rpc],
   );
 
-  const loadOlder = async () => {
+  const loadOlder = useCallback(async () => {
     if (!nextCursor || loadingOlder || loading) return;
     setLoadingOlder(true);
     setError(null);
@@ -685,7 +754,23 @@ export function ActivityTimeline({
     } finally {
       setLoadingOlder(false);
     }
-  };
+  }, [anchorInput, filter, loading, loadingOlder, nextCursor, rpc]);
+
+  useEffect(() => {
+    if (!nextCursor || loading || loadingOlder) return;
+    const target = olderSentinelRef.current;
+    if (!target || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (observations) => {
+        if (observations.some((observation) => observation.isIntersecting)) {
+          void loadOlder();
+        }
+      },
+      { rootMargin: "320px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [loadOlder, loading, loadingOlder, nextCursor]);
 
   return (
     <section
@@ -784,7 +869,7 @@ export function ActivityTimeline({
               <section key={group.key} aria-labelledby={`${timelineId}-day-${group.key}`}>
                 <h3
                   id={`${timelineId}-day-${group.key}`}
-                  className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                  className="sticky top-0 z-10 mb-3 bg-background/95 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur"
                 >
                   {group.label}
                 </h3>
@@ -801,17 +886,25 @@ export function ActivityTimeline({
               </section>
             ))}
             {nextCursor ? (
-              <div className="flex justify-center pt-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={loadingOlder}
-                  onClick={() => void loadOlder()}
-                >
-                  <Icon name="ArrowDown" aria-hidden="true" />
-                  {loadingOlder ? "Loading older…" : "Load older activity"}
-                </Button>
+              <div className="space-y-2 pt-1">
+                <div
+                  ref={olderSentinelRef}
+                  data-testid="older-activity-sentinel"
+                  className="h-px w-full"
+                  aria-hidden="true"
+                />
+                <div className="flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loadingOlder}
+                    onClick={() => void loadOlder()}
+                  >
+                    <Icon name="ArrowDown" aria-hidden="true" />
+                    {loadingOlder ? "Loading older…" : "Load older activity"}
+                  </Button>
+                </div>
               </div>
             ) : null}
           </div>
