@@ -115,6 +115,7 @@ describe("CRM RPC contract", () => {
       "fields_byKey",
       "fields_filters",
       "fields_coverage",
+      "fields_backfill",
       "fields_create",
       "fields_update",
       "fields_reorder",

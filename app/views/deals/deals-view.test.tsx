@@ -379,4 +379,44 @@ describe("DealsView", () => {
       }),
     );
   });
+
+  it("converts an optimistic deal amount edit to typed minor units", async () => {
+    let current = deal;
+    let resolveUpdate: ((value: Deal) => void) | undefined;
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "deals_list") return listResult([current]);
+      if (method === "deals_get") return current;
+      if (method === "deals_update") {
+        expect(input).toEqual({
+          id: deal.id,
+          data: { amountCents: 250050 },
+        });
+        current = { ...current, amountCents: 250050 };
+        return new Promise<Deal>((resolve) => {
+          resolveUpdate = resolve;
+        });
+      }
+      return current;
+    });
+
+    render(<DealsView rpcClient={rpc} />);
+    await screen.findByText("Acme Expansion");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Expansion/ }));
+    await screen.findByRole("dialog", { name: "Acme Expansion" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Amount" }));
+    const amountInput = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(amountInput, { target: { value: "2500.50" } });
+    fireEvent.keyDown(amountInput, { key: "Enter" });
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("deals_update", {
+        id: deal.id,
+        data: { amountCents: 250050 },
+      }),
+    );
+    expect(
+      within(screen.getByRole("dialog", { name: "Acme Expansion" })).getByText("$2,500.50"),
+    ).toBeDefined();
+    resolveUpdate?.(current);
+  });
 });

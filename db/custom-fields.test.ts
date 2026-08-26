@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { createCompany } from "./companies.js";
+import { archiveCompany, createCompany } from "./companies.js";
 import { createContact } from "./contacts.js";
 import { createDeal } from "./deals.js";
 import { initializeSchema } from "./schema.js";
 import {
   CustomFieldStore,
+  CUSTOM_FIELD_BACKFILL_MAX_RECORDS,
   FieldConflictError,
   FieldValueError,
   createFieldDefinition,
@@ -316,6 +317,35 @@ describe("CRM custom-field persistence", () => {
       expect(() => listFieldOptions(db, field.id)).toThrow("No field");
       expect(db.prepare("SELECT COUNT(*) AS count FROM field_values WHERE id = 'value_cascade'").pluck().get()).toBe(0);
       expect(db.prepare("SELECT COUNT(*) AS count FROM field_options WHERE id = 'option_cascade'").pluck().get()).toBe(0);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("returns only active records missing a typed value within the backfill cap", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const first = createCompany(db, { id: "cmp_missing_first", name: "First" });
+      const filled = createCompany(db, { id: "cmp_missing_filled", name: "Filled" });
+      const archived = createCompany(db, { id: "cmp_missing_archived", name: "Archived" });
+      const store = new CustomFieldStore(db);
+      const text = store.create({ id: "field_missing_text", entity: "COMPANY", label: "Research note", type: "TEXT" });
+      store.upsertValue({ entity: "COMPANY", recordId: filled.id, fieldId: text.id, value: "confirmed" });
+      store.archive(text.id);
+      expect(() => store.missingRecordIds(text.id)).toThrow("No field");
+
+      const activeText = store.restore(text.id);
+      archiveCompany(db, archived.id);
+      expect(store.missingRecordIds(activeText.id)).toEqual([first.id]);
+      expect(() => store.missingRecordIds(activeText.id, 0)).toThrow("from 1 to");
+      expect(() => store.missingRecordIds(activeText.id, CUSTOM_FIELD_BACKFILL_MAX_RECORDS + 1)).toThrow(
+        `from 1 to ${CUSTOM_FIELD_BACKFILL_MAX_RECORDS}`,
+      );
+      for (let index = 0; index < CUSTOM_FIELD_BACKFILL_MAX_RECORDS; index += 1) {
+        const suffix = String(index).padStart(3, "0");
+        createCompany(db, { id: `cmp_missing_batch_${suffix}`, name: `Batch ${suffix}` });
+      }
+      expect(store.missingRecordIds(activeText.id)).toHaveLength(CUSTOM_FIELD_BACKFILL_MAX_RECORDS);
     } finally {
       await lifecycle.dispose();
     }

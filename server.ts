@@ -83,7 +83,10 @@ import {
   createSavedViewStore,
   type SavedView as StoredSavedView,
 } from "./db/saved-views.js";
-import { createCustomFieldStore } from "./db/custom-fields.js";
+import {
+  CUSTOM_FIELD_BACKFILL_MAX_RECORDS,
+  createCustomFieldStore,
+} from "./db/custom-fields.js";
 import { createEvidenceStore } from "./db/evidence.js";
 import {
   createAgentStore,
@@ -2392,6 +2395,7 @@ export default async function plugin(bb: BbPluginApi) {
   };
 
   const ENRICHMENT_RUN_KIND = "CRM_ENRICHMENT_REQUEST";
+  const FIELD_BACKFILL_RUN_KIND = "CRM_FIELD_BACKFILL";
   const ACTIVE_AGENT_RUN_STATUSES = [
     "QUEUED",
     "RUNNING",
@@ -2645,6 +2649,84 @@ export default async function plugin(bb: BbPluginApi) {
       const failed = updateEnrichmentState(entity, id, "FAILED", reason);
       return enrichmentOutput(failed.id, false, failed.enrichmentStatus, null, reason);
     }
+  }
+
+  /**
+   * Queue one bounded run per missing value. The deterministic idempotency key
+   * makes repeated clicks safe while the missing-record query prevents a
+   * second request once an agent has filled the selected field.
+   */
+  async function backfillField(id: string): Promise<{ queued: boolean }> {
+    const field = customFields.getRequired(id);
+    if (field.archived || !field.agentFilled) {
+      throw new Error("Only active agent-filled fields can be filled by an agent.");
+    }
+
+    const settingsValue = await settings.get();
+    const researchKey = typeof settingsValue.researchApiKey === "string"
+      ? settingsValue.researchApiKey.trim()
+      : "";
+    if (researchKey === "") return { queued: false };
+
+    const agentId = typeof settingsValue.researchAgentId === "string"
+      ? settingsValue.researchAgentId.trim()
+      : "";
+    if (agentId === "") return { queued: false };
+
+    let agent;
+    try {
+      agent = agents.getRequired(agentId);
+      if (agent.status !== "LIVE" || agent.currentVersionId === null) {
+        return { queued: false };
+      }
+      const version = agents.getVersionRequired(agent.currentVersionId);
+      if (version.status !== "DEPLOYED") return { queued: false };
+    } catch {
+      return { queued: false };
+    }
+
+    const recordIds = customFields.missingRecordIds(
+      field.id,
+      CUSTOM_FIELD_BACKFILL_MAX_RECORDS,
+    );
+    let queued = false;
+    for (const recordId of recordIds) {
+      const idempotencyKey = `crm-field-backfill:${field.entity}:${field.id}:${recordId}`;
+      try {
+        const run = agents.queueRun(
+          agent.id,
+          {
+            triggerType: "MANUAL",
+            initiatedById: LOCAL_OWNER_ID,
+            idempotencyKey,
+            correlationId: idempotencyKey,
+            input: {
+              kind: FIELD_BACKFILL_RUN_KIND,
+              entity: field.entity,
+              recordId,
+              fieldId: field.id,
+              fieldKeys: [field.key],
+              fieldLabel: field.label,
+              fieldType: field.type,
+              agentBrief: field.agentBrief,
+              onlyIfMissing: true,
+              writePolicy:
+                "Use CRM tools and confirmed external evidence only. Write only the selected field; if evidence is unavailable, leave it blank. Never guess or fabricate a value.",
+              requestedAt: new Date().toISOString(),
+              requiresExternalProvider: true,
+            },
+          },
+          LOCAL_OWNER_ID,
+        );
+        changed("agent-run", "queued", run.id);
+        changed("agent", "run-queued", run.agentId);
+        queued = true;
+      } catch {
+        // A single record must not make this bounded batch fabricate a result
+        // or prevent the remaining records from being attempted.
+      }
+    }
+    return { queued };
   }
 
   async function bulkEnrichment(
@@ -3921,6 +4003,9 @@ export default async function plugin(bb: BbPluginApi) {
     },
     fields_coverage({ id }) {
       return customFields.coverage(id);
+    },
+    fields_backfill({ id }) {
+      return backfillField(id);
     },
     fields_create(input) {
       const field = customFields.create(input);

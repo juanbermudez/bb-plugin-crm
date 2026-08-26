@@ -2118,12 +2118,17 @@ export const fieldCoverageOutputSchema = z
   .strict();
 export type FieldCoverageOutput = z.infer<typeof fieldCoverageOutputSchema>;
 
+/** Queue research only for the selected field's currently missing values. */
+export const fieldBackfillInputSchema = fieldIdInputSchema;
+export type FieldBackfillInput = z.infer<typeof fieldBackfillInputSchema>;
+
 export const fieldDeleteOutputSchema = z
   .object({ id: idSchema })
   .strict();
 export const fieldBackfillOutputSchema = z
   .object({ queued: z.boolean() })
   .strict();
+export type FieldBackfillOutput = z.infer<typeof fieldBackfillOutputSchema>;
 
 /* Source-compatible aliases used by the first API slices. */
 export const companyListInput = companyListInputSchema;

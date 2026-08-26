@@ -119,6 +119,8 @@ import {
   fieldDefinitionSchema,
   fieldDefinitionUpdateInputSchema,
   fieldByKeyInputSchema,
+  fieldBackfillInputSchema,
+  fieldBackfillOutputSchema,
   fieldCoverageOutputSchema,
   fieldEntityInputSchema,
   fieldListInputSchema,
@@ -658,6 +660,10 @@ export const rpcContract = defineRpcContract({
   fields_coverage: {
     input: fieldIdInputSchema,
     output: fieldCoverageOutputSchema,
+  },
+  fields_backfill: {
+    input: fieldBackfillInputSchema,
+    output: fieldBackfillOutputSchema,
   },
   fields_create: {
     input: fieldDefinitionCreateInputSchema,

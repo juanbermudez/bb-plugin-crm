@@ -202,6 +202,10 @@ const ENTITY_TABLES = {
 const FIELD_VALUE_COLUMNS = ["text", "number", "date", "bool", "option_id", "user_id"] as const;
 type FieldValueColumn = (typeof FIELD_VALUE_COLUMNS)[number];
 
+/** A fill-rest request is deliberately bounded to keep one click from
+ * creating an unbounded queue of external research runs. */
+export const CUSTOM_FIELD_BACKFILL_MAX_RECORDS = 500;
+
 const DEFINITION_SELECT = `
   SELECT
     id,
@@ -475,6 +479,20 @@ function rowString(value: unknown, label: string): string {
 function rowNullableString(value: unknown, label: string): string | null {
   if (value === null || value === undefined) return null;
   return stringValue(value, label);
+}
+
+function fieldValueColumn(type: CustomFieldType): FieldValueColumn {
+  return type === "CHECKBOX"
+    ? "bool"
+    : type === "NUMBER"
+      ? "number"
+      : type === "DATE"
+        ? "date"
+        : type === "SELECT"
+          ? "option_id"
+          : type === "USER"
+            ? "user_id"
+            : "text";
 }
 
 function optionFromRow(value: unknown): FieldOption {
@@ -766,17 +784,7 @@ export class CustomFieldStore {
   coverage(id: string): { filled: number; total: number } {
     const definition = this.requiredDefinition(id);
     const target = ENTITY_TABLES[definition.entity];
-    const column = definition.type === "CHECKBOX"
-      ? "bool"
-      : definition.type === "NUMBER"
-        ? "number"
-        : definition.type === "DATE"
-          ? "date"
-          : definition.type === "SELECT"
-            ? "option_id"
-            : definition.type === "USER"
-              ? "user_id"
-              : "text";
+    const column = fieldValueColumn(definition.type);
     const filled = (this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM field_values
@@ -784,6 +792,36 @@ export class CustomFieldStore {
     `).get({ fieldId: definition.id }) as { count: number }).count;
     const total = (this.db.prepare(`SELECT COUNT(*) AS count FROM ${target.table}`).get() as { count: number }).count;
     return { filled, total };
+  }
+
+  /**
+   * Return a stable, bounded batch of active records without a non-null value
+   * in the selected field's typed column. A value row with a null typed value
+   * is treated as missing, which keeps this safe in the presence of legacy or
+   * partially written rows.
+   */
+  missingRecordIds(id: string, limit = CUSTOM_FIELD_BACKFILL_MAX_RECORDS): string[] {
+    const definition = this.activeDefinition(id);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CUSTOM_FIELD_BACKFILL_MAX_RECORDS) {
+      throw new Error(`Field backfill limit must be an integer from 1 to ${CUSTOM_FIELD_BACKFILL_MAX_RECORDS}.`);
+    }
+    const target = ENTITY_TABLES[definition.entity];
+    const column = fieldValueColumn(definition.type);
+    const rows = this.db.prepare(`
+      SELECT records.id AS id
+      FROM ${target.table} AS records
+      WHERE records.archived_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM field_values AS fieldValues
+          WHERE fieldValues.field_id = @fieldId
+            AND fieldValues.${target.column} = records.id
+            AND fieldValues.${column} IS NOT NULL
+        )
+      ORDER BY records.created_at ASC, records.id ASC
+      LIMIT @limit
+    `).all({ fieldId: definition.id, limit });
+    return rows.map((row) => rowString(objectValue(row, "Missing field record row").id, "Field record id"));
   }
 
   create(input: FieldDefinitionCreateInput): FieldDefinition {
@@ -1263,6 +1301,14 @@ export function listFilterableFields(db: Db, entityValue: CustomFieldEntity): Fi
 
 export function getFieldCoverage(db: Db, id: string): { filled: number; total: number } {
   return new CustomFieldStore(db).coverage(id);
+}
+
+export function listMissingFieldRecordIds(
+  db: Db,
+  id: string,
+  limit = CUSTOM_FIELD_BACKFILL_MAX_RECORDS,
+): string[] {
+  return new CustomFieldStore(db).missingRecordIds(id, limit);
 }
 
 export function createFieldDefinition(db: Db, input: FieldDefinitionCreateInput): FieldDefinition {

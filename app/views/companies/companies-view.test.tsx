@@ -376,4 +376,50 @@ describe("CompaniesView", () => {
     );
     expect(screen.getByRole("dialog", { name: "Acme Corporation" })).toBeDefined();
   });
+
+  it("optimistically edits a company field and settles through the typed update RPC", async () => {
+    let current = company;
+    let resolveUpdate: ((value: Company) => void) | undefined;
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "companies_list") return listResult([current]);
+      if (method === "companies_get") return current;
+      if (method === "companies_update") {
+        expect(input).toEqual({
+          id: company.id,
+          data: { name: "Acme North" },
+        });
+        current = { ...current, name: "Acme North" };
+        return new Promise<Company>((resolve) => {
+          resolveUpdate = resolve;
+        });
+      }
+      return current;
+    });
+
+    render(<CompaniesView rpcClient={rpc} />);
+    await screen.findByText("Acme Corporation");
+    fireEvent.click(screen.getByRole("row", { name: /Open Acme Corporation/ }));
+    await screen.findByRole("dialog", { name: "Acme Corporation" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Name" }));
+    const nameInput = screen.getByLabelText("Name") as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: "Acme North" } });
+    fireEvent.keyDown(nameInput, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "Acme North" })).toBeDefined(),
+    );
+    expect(rpc.call).toHaveBeenCalledWith("companies_update", {
+      id: company.id,
+      data: { name: "Acme North" },
+    });
+    resolveUpdate?.(current);
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("dialog", { name: "Acme North" })).getByRole("button", {
+          name: "Name",
+        }).textContent,
+      ).toContain("Acme North"),
+    );
+  });
 });

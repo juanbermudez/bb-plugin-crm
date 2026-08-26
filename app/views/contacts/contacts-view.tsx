@@ -12,6 +12,7 @@ import { Input } from "../../../components/ui/input.js";
 import {
   ColumnPreferences,
   EmptyState,
+  InlineField,
   PageHeader,
   RecordDrawer,
   SearchField,
@@ -22,6 +23,7 @@ import {
 import type {
   Contact,
   ContactCreateInput,
+  ContactUpdateData,
   ContactListInput,
   ContactListOutput,
   FieldDefinition,
@@ -375,6 +377,7 @@ function ContactForm({
 interface ContactOverviewProps {
   contact: Contact;
   rpc: ContactsRpcClient;
+  onUpdate: (data: ContactUpdateData, optimistic: Partial<Contact>) => void;
   onEvidenceChanged: () => void;
   mutationBusy: boolean;
   mutationError: string | null;
@@ -388,6 +391,7 @@ interface ContactOverviewProps {
 function ContactOverview({
   contact,
   rpc,
+  onUpdate,
   onEvidenceChanged,
   mutationBusy,
   mutationError,
@@ -399,39 +403,113 @@ function ContactOverview({
 }: ContactOverviewProps) {
   return (
     <div className="space-y-6">
+      <section className="space-y-3" aria-label="Contact details">
+        <h3 className="text-sm font-medium">Details</h3>
+        <div className="grid gap-4 rounded-lg border border-border p-4">
+          <InlineField
+            label="First name"
+            value={contact.firstName}
+            saving={mutationBusy}
+            onSave={(firstName) => {
+              if (firstName) onUpdate({ firstName }, { firstName });
+            }}
+          />
+          <InlineField
+            label="Last name"
+            value={contact.lastName ?? null}
+            placeholder="Not set"
+            saving={mutationBusy}
+            onSave={(lastName) =>
+              onUpdate({ lastName: lastName || null }, { lastName: lastName || null })
+            }
+          />
+          <InlineField
+            label="Title"
+            value={contact.title ?? null}
+            placeholder="VP of Sales"
+            saving={mutationBusy}
+            onSave={(title) => onUpdate({ title: title || null }, { title: title || null })}
+          />
+          <InlineField
+            label="Email"
+            value={contact.email ?? null}
+            type="email"
+            placeholder="name@example.com"
+            saving={mutationBusy}
+            onSave={(email) => onUpdate({ email: email || null }, { email: email || null })}
+          />
+          <InlineField
+            label="Phone"
+            value={contact.phone ?? null}
+            type="tel"
+            placeholder="+1 555 0100"
+            saving={mutationBusy}
+            onSave={(phone) => onUpdate({ phone: phone || null }, { phone: phone || null })}
+          />
+          <InlineField
+            label="LinkedIn"
+            value={contact.linkedinUrl ?? null}
+            type="url"
+            placeholder="https://linkedin.com/in/name"
+            saving={mutationBusy}
+            onSave={(linkedinUrl) =>
+              onUpdate(
+                { linkedinUrl: linkedinUrl || null },
+                { linkedinUrl: linkedinUrl || null },
+              )
+            }
+          />
+          <InlineField
+            label="X"
+            value={contact.twitterUrl ?? null}
+            type="url"
+            placeholder="https://x.com/name"
+            saving={mutationBusy}
+            onSave={(twitterUrl) =>
+              onUpdate(
+                { twitterUrl: twitterUrl || null },
+                { twitterUrl: twitterUrl || null },
+              )
+            }
+          />
+          <InlineField
+            label="GitHub"
+            value={contact.githubUrl ?? null}
+            type="url"
+            placeholder="https://github.com/name"
+            saving={mutationBusy}
+            onSave={(githubUrl) =>
+              onUpdate(
+                { githubUrl: githubUrl || null },
+                { githubUrl: githubUrl || null },
+              )
+            }
+          />
+          <InlineField
+            label="Company"
+            value={contact.companyId ?? null}
+            placeholder="No company"
+            saving={mutationBusy}
+            render={(companyId) => contact.company?.name ?? companyId}
+            onSave={(companyId) => {
+              const next = companyId || null;
+              onUpdate({ companyId: next }, { companyId: next, company: null });
+            }}
+          />
+          <InlineField
+            label="Owner"
+            value={contact.ownerId ?? null}
+            placeholder="Unassigned"
+            saving={mutationBusy}
+            render={(ownerId) => contact.owner?.name ?? ownerId}
+            onSave={(ownerId) => {
+              const next = ownerId || null;
+              onUpdate({ ownerId: next }, { ownerId: next, owner: null });
+            }}
+          />
+        </div>
+      </section>
       <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">First name</dt>
-          <dd className="mt-1 text-sm">{displayValue(contact.firstName)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Last name</dt>
-          <dd className="mt-1 text-sm">{displayValue(contact.lastName)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Email</dt>
-          <dd className="mt-1 break-words text-sm">{displayValue(contact.email)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Phone</dt>
-          <dd className="mt-1 text-sm">{displayValue(contact.phone)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Title</dt>
-          <dd className="mt-1 text-sm">{displayValue(contact.title)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Company</dt>
-          <dd className="mt-1 text-sm">
-            {contact.company?.name ?? displayValue(contact.companyId)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
-          <dd className="mt-1 text-sm">
-            {contact.owner?.name ?? displayValue(contact.ownerId)}
-          </dd>
-        </div>
         <div>
           <dt className="text-xs font-medium text-muted-foreground">Source</dt>
           <dd className="mt-1 text-sm">{displayValue(contact.source)}</dd>
@@ -763,6 +841,60 @@ export function ContactsView({
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
+
+  const runRecordUpdate = useCallback(
+    async (data: ContactUpdateData, optimistic: Partial<Contact>) => {
+      if (record === null) return;
+      const previous = record;
+      const id = record.id;
+      const next = { ...record, ...optimistic };
+      setMutationBusy(true);
+      setMutationError(null);
+      setRecord(next);
+      setList((current) => ({
+        ...current,
+        rows: current.rows.map((row) =>
+          row.id === id ? { ...row, ...optimistic } : row,
+        ),
+      }));
+      try {
+        const result = await rpc.call("contacts_update", { id, data });
+        const settled = isContact(result)
+          ? {
+              ...next,
+              ...result,
+              company: result.company === undefined ? next.company : result.company,
+              owner: result.owner === undefined ? next.owner : result.owner,
+              deals: result.deals ?? next.deals,
+              facts: result.facts ?? next.facts,
+              brief: result.brief ?? next.brief,
+              workHistory: result.workHistory ?? next.workHistory,
+              relationship: result.relationship ?? next.relationship,
+            }
+          : next;
+        setRecord((current) => (current?.id === id ? settled : current));
+        setList((current) => ({
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === id ? { ...row, ...settled } : row,
+          ),
+        }));
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setRecord((current) => (current?.id === id ? previous : current));
+        setList((current) => ({
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === id ? { ...row, ...previous } : row,
+          ),
+        }));
+        setMutationError(errorMessage(cause));
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [record, rpc],
+  );
 
   const runArchiveMutation = useCallback(
     async (method: "contacts_archive" | "contacts_restore") => {
@@ -1505,6 +1637,7 @@ export function ContactsView({
               <ContactOverview
                 contact={record}
                 rpc={rpc}
+                onUpdate={(data, optimistic) => void runRecordUpdate(data, optimistic)}
                 onEvidenceChanged={() => setRecordRefreshKey((value) => value + 1)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}

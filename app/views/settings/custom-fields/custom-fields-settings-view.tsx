@@ -238,12 +238,15 @@ interface FieldDefinitionFormProps {
   saving: boolean;
   optionsLoading: boolean;
   optionBusyId: string | null;
+  coverage: CoverageState;
+  backfillBusy: boolean;
   error: string | null;
   optionError: string | null;
   onChange: (next: FieldFormValue) => void;
   onAddOption: () => void;
   onRemoveOption: (index: number) => void;
   onOptionMutation: (option: OptionDraft, mutation: OptionMutation) => void;
+  onFillRest: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }
 
@@ -255,12 +258,15 @@ function FieldDefinitionForm({
   saving,
   optionsLoading,
   optionBusyId,
+  coverage,
+  backfillBusy,
   error,
   optionError,
   onChange,
   onAddOption,
   onRemoveOption,
   onOptionMutation,
+  onFillRest,
   onSubmit,
 }: FieldDefinitionFormProps) {
   const update = <Key extends keyof FieldFormValue>(
@@ -446,6 +452,36 @@ function FieldDefinitionForm({
         </p>
       </div>
 
+      {editing && value.agentFilled && coverage !== null ? (
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border bg-muted/30 p-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Fill missing values</p>
+            <p className="mt-1 max-w-prose text-xs text-muted-foreground">
+              Queue the configured live research agent for records without a
+              value. It will use confirmed evidence and leave the field blank
+              when no reliable value is available.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Current coverage: {coverageText(coverage)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={
+              saving ||
+              backfillBusy ||
+              coverage.filled >= coverage.total
+            }
+            onClick={onFillRest}
+          >
+            <Icon name="Idea" aria-hidden="true" />
+            {backfillBusy ? "Queuing…" : "Fill the rest"}
+          </Button>
+        </div>
+      ) : null}
+
       {value.type === "SELECT" ? (
         <fieldset className="space-y-3 rounded-md border border-border p-4">
           <legend className="px-1 text-sm font-medium">Select options</legend>
@@ -623,6 +659,7 @@ export function CustomFieldsSettingsView({
   const [optionError, setOptionError] = useState<string | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [editorSaving, setEditorSaving] = useState(false);
+  const [backfillBusyId, setBackfillBusyId] = useState<string | null>(null);
   const [optionBusyId, setOptionBusyId] = useState<string | null>(null);
   const [fieldBusy, setFieldBusy] = useState<{
     id: string;
@@ -739,6 +776,30 @@ export function CustomFieldsSettingsView({
     if (!open) optionRequestRef.current += 1;
     setEditorOpen(open);
   }, []);
+
+  const fillRest = useCallback(
+    async (field: FieldDefinition) => {
+      if (field.archived || !field.agentFilled || backfillBusyId !== null) return;
+      const fieldCoverage = coverage[field.id] ?? null;
+      if (fieldCoverage === null || fieldCoverage.filled >= fieldCoverage.total) return;
+      setBackfillBusyId(field.id);
+      setEditorError(null);
+      try {
+        const result = await rpc.call("fields_backfill", { id: field.id });
+        setStatusMessage(
+          result.queued
+            ? `Fill-rest research queued for ${field.label}.`
+            : `No fill-rest runs were queued for ${field.label}; the field may already be complete or the live research agent is not configured.`,
+        );
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setEditorError(errorMessage(cause));
+      } finally {
+        setBackfillBusyId(null);
+      }
+    },
+    [backfillBusyId, coverage, rpc],
+  );
 
   const submitEditor = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -925,6 +986,10 @@ export function CustomFieldsSettingsView({
     () => new Map(activeFields.map((field, index) => [field.id, index])),
     [activeFields],
   );
+
+  const editingCoverage = editingField === null
+    ? null
+    : coverage[editingField.id] ?? null;
 
   return (
     <div className="flex min-h-full min-w-0 flex-col bg-background text-foreground">
@@ -1134,6 +1199,21 @@ export function CustomFieldsSettingsView({
                               style={{ width: `${coveragePercent(fieldCoverage)}%` }}
                             />
                           </div>
+                          {!isArchived && field.agentFilled && fieldCoverage !== null ? (
+                            <Button
+                              type="button"
+                              variant="link"
+                              size="sm"
+                              className="mt-1 h-auto p-0 text-xs"
+                              disabled={
+                                backfillBusyId === field.id ||
+                                fieldCoverage.filled >= fieldCoverage.total
+                              }
+                              onClick={() => void fillRest(field)}
+                            >
+                              {backfillBusyId === field.id ? "Queuing…" : "Fill the rest"}
+                            </Button>
+                          ) : null}
                         </div>
                       </td>
                       <td className="px-3 py-3 align-top">
@@ -1274,12 +1354,17 @@ export function CustomFieldsSettingsView({
           saving={editorSaving}
           optionsLoading={optionsLoading}
           optionBusyId={optionBusyId}
+          coverage={editingCoverage}
+          backfillBusy={backfillBusyId === editingField?.id}
           error={editorError}
           optionError={optionError}
           onChange={setEditorValue}
           onAddOption={addOption}
           onRemoveOption={removeOption}
           onOptionMutation={(option, mutation) => void mutateOption(option, mutation)}
+          onFillRest={() => {
+            if (editingField !== null) void fillRest(editingField);
+          }}
           onSubmit={submitEditor}
         />
       </RecordDrawer>

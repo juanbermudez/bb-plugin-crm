@@ -6,6 +6,8 @@ import { Input } from "../../../components/ui/input.js";
 import {
   EmptyState,
   ColumnPreferences,
+  InlineField,
+  InlineTextArea,
   PageHeader,
   RecordDrawer,
   SearchField,
@@ -16,6 +18,7 @@ import {
 import type {
   Company,
   CompanyCreateInput,
+  CompanyUpdateData,
   CompanyListInput,
   CompanyListOutput,
   Contact,
@@ -331,6 +334,7 @@ function CompanyForm({
 
 interface CompanyOverviewProps {
   company: Company;
+  onUpdate: (data: CompanyUpdateData, optimistic: Partial<Company>) => void;
   mutationBusy: boolean;
   mutationError: string | null;
   onEnrich: () => void;
@@ -342,6 +346,7 @@ interface CompanyOverviewProps {
 
 function CompanyOverview({
   company,
+  onUpdate,
   mutationBusy,
   mutationError,
   onEnrich,
@@ -355,21 +360,96 @@ function CompanyOverview({
   );
   return (
     <div className="space-y-6">
+      <section className="space-y-3" aria-label="Company details">
+        <h3 className="text-sm font-medium">Details</h3>
+        <div className="grid gap-4 rounded-lg border border-border p-4">
+          <InlineField
+            label="Name"
+            value={company.name}
+            saving={mutationBusy}
+            onSave={(name) => {
+              if (name) onUpdate({ name }, { name });
+            }}
+          />
+          <InlineField
+            label="Domain"
+            value={company.domain ?? null}
+            type="url"
+            placeholder="acme.example"
+            saving={mutationBusy}
+            onSave={(domain) => onUpdate({ domain: domain || null }, { domain: domain || null })}
+          />
+          <InlineField
+            label="Website"
+            value={company.website ?? null}
+            type="url"
+            placeholder="https://acme.example"
+            saving={mutationBusy}
+            onSave={(website) => onUpdate({ website: website || null }, { website: website || null })}
+          />
+          <InlineField
+            label="Phone"
+            value={company.phone ?? null}
+            type="tel"
+            placeholder="+1 555 0100"
+            saving={mutationBusy}
+            onSave={(phone) => onUpdate({ phone: phone || null }, { phone: phone || null })}
+          />
+          <InlineField
+            label="Email"
+            value={company.email ?? null}
+            type="email"
+            placeholder="sales@acme.example"
+            saving={mutationBusy}
+            onSave={(email) => onUpdate({ email: email || null }, { email: email || null })}
+          />
+          <InlineField
+            label="Industry"
+            value={company.industry ?? null}
+            placeholder="Software"
+            saving={mutationBusy}
+            onSave={(industry) => onUpdate({ industry: industry || null }, { industry: industry || null })}
+          />
+          <InlineField
+            label="City"
+            value={company.city ?? null}
+            placeholder="San Francisco"
+            saving={mutationBusy}
+            onSave={(city) => onUpdate({ city: city || null }, { city: city || null })}
+          />
+          <InlineField
+            label="Country"
+            value={company.country ?? null}
+            placeholder="United States"
+            saving={mutationBusy}
+            onSave={(country) => onUpdate({ country: country || null }, { country: country || null })}
+          />
+          <InlineField
+            label="Owner"
+            value={company.ownerId ?? null}
+            placeholder="Unassigned"
+            saving={mutationBusy}
+            render={(ownerId) => company.owner?.name ?? ownerId}
+            onSave={(ownerId) => {
+              const next = ownerId || null;
+              onUpdate({ ownerId: next }, { ownerId: next, owner: null });
+            }}
+          />
+          <InlineTextArea
+            label="Description"
+            value={company.description ?? null}
+            placeholder="What this company does and why it matters."
+            saving={mutationBusy}
+            onSave={(description) =>
+              onUpdate(
+                { description: description || null },
+                { description: description || null },
+              )
+            }
+          />
+        </div>
+      </section>
       <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Domain</dt>
-          <dd className="mt-1 text-sm">{displayValue(company.domain)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Industry</dt>
-          <dd className="mt-1 text-sm">{displayValue(company.industry)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
-          <dd className="mt-1 text-sm">
-            {company.owner?.name ?? displayValue(company.ownerId)}
-          </dd>
-        </div>
         <div>
           <dt className="text-xs font-medium text-muted-foreground">Primary contact</dt>
           <dd className="mt-1 text-sm">
@@ -432,14 +512,6 @@ function CompanyOverview({
           </Button>
         </div>
       </section>
-      {company.description ? (
-        <section className="space-y-2 border-t border-border pt-5">
-          <h3 className="text-sm font-medium">Description</h3>
-          <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-            {company.description}
-          </p>
-        </section>
-      ) : null}
       <RecordFieldsEditor entity="COMPANY" recordId={company.id} />
       <section className="flex flex-wrap items-center gap-2 border-t border-border pt-5">
         {company.archivedAt ? (
@@ -946,6 +1018,56 @@ export function CompaniesView({
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
+
+  const runRecordUpdate = useCallback(
+    async (data: CompanyUpdateData, optimistic: Partial<Company>) => {
+      if (record === null) return;
+      const previous = record;
+      const id = record.id;
+      const next = { ...record, ...optimistic };
+      setMutationBusy(true);
+      setMutationError(null);
+      setRecord(next);
+      setList((current) => ({
+        ...current,
+        rows: current.rows.map((row) =>
+          row.id === id ? { ...row, ...optimistic } : row,
+        ),
+      }));
+      try {
+        const result = await rpc.call("companies_update", { id, data });
+        const settled = isCompany(result)
+          ? {
+              ...next,
+              ...result,
+              owner: result.owner === undefined ? next.owner : result.owner,
+              contacts: result.contacts ?? next.contacts,
+              deals: result.deals ?? next.deals,
+            }
+          : next;
+        setRecord((current) => (current?.id === id ? settled : current));
+        setList((current) => ({
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === id ? { ...row, ...settled } : row,
+          ),
+        }));
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setRecord((current) => (current?.id === id ? previous : current));
+        setList((current) => ({
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === id ? { ...row, ...previous } : row,
+          ),
+        }));
+        setMutationError(errorMessage(cause));
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [record, rpc],
+  );
 
   const runArchiveMutation = useCallback(
     async (method: "companies_archive" | "companies_restore") => {
@@ -1646,6 +1768,7 @@ export function CompaniesView({
             {recordTab === "overview" ? (
               <CompanyOverview
                 company={record}
+                onUpdate={(data, optimistic) => void runRecordUpdate(data, optimistic)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
                 onEnrich={() => void requestRecordEnrichment("companies_enrich")}

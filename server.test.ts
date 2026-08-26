@@ -1186,6 +1186,86 @@ describe("CRM plugin foundation", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("queues bounded idempotent fill-rest runs only for missing agent-filled values", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: {
+        researchApiKey: "provider-test-key",
+        researchAgentId: "agent_field_backfill_server",
+      },
+    });
+    await plugin(bb);
+    await seedLiveServerAgent(
+      harness,
+      "agent_field_backfill_server",
+      "version_field_backfill_server",
+    );
+
+    const missingCompany = await harness.behavior.callRpc("companies_create", {
+      name: "Missing Field Co",
+    }) as { id: string };
+    const filledCompany = await harness.behavior.callRpc("companies_create", {
+      name: "Filled Field Co",
+    }) as { id: string };
+    const field = await harness.behavior.callRpc("fields_create", {
+      entity: "COMPANY",
+      label: "Research segment",
+      type: "TEXT",
+      agentFilled: true,
+      agentBrief: "Use confirmed company evidence only.",
+    }) as { id: string; key: string };
+    await harness.behavior.callRpc("fields_values_create", {
+      entity: "COMPANY",
+      recordId: filledCompany.id,
+      fieldId: field.id,
+      value: "Enterprise",
+    });
+
+    await expect(harness.behavior.callRpc("fields_backfill", { id: field.id }))
+      .resolves.toEqual({ queued: true });
+    await expect(harness.behavior.callRpc("fields_backfill", { id: field.id }))
+      .resolves.toEqual({ queued: true });
+
+    const runs = await harness.behavior.callRpc("agents_runs_list", {
+      agentId: "agent_field_backfill_server",
+      status: "QUEUED",
+      limit: 100,
+      includeEvents: false,
+      includeActions: false,
+    }) as Array<{ input: Record<string, unknown> }>;
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.input).toMatchObject({
+      kind: "CRM_FIELD_BACKFILL",
+      entity: "COMPANY",
+      recordId: missingCompany.id,
+      fieldId: field.id,
+      fieldKeys: [field.key],
+      onlyIfMissing: true,
+      requiresExternalProvider: true,
+    });
+    expect(runs[0]?.input.writePolicy).toEqual(expect.stringContaining("Never guess"));
+
+    await harness.behavior.callRpc("fields_values_create", {
+      entity: "COMPANY",
+      recordId: missingCompany.id,
+      fieldId: field.id,
+      value: "Mid-market",
+    });
+    await expect(harness.behavior.callRpc("fields_backfill", { id: field.id }))
+      .resolves.toEqual({ queued: false });
+
+    const manualField = await harness.behavior.callRpc("fields_create", {
+      entity: "COMPANY",
+      label: "Manual note",
+      type: "TEXT",
+      agentFilled: false,
+    }) as { id: string };
+    await expect(harness.behavior.callRpc("fields_backfill", { id: manualField.id }))
+      .rejects.toThrow("active agent-filled");
+
+    await harness.lifecycle.dispose();
+  });
+
   it("persists installation-owned saved views and their default selection", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
     await plugin(bb);

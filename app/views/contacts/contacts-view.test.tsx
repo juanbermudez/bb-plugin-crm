@@ -321,4 +321,51 @@ describe("ContactsView", () => {
       }),
     );
   });
+
+  it("rolls back an optimistic contact edit when the typed update fails", async () => {
+    let rejectUpdate: ((cause: Error) => void) | undefined;
+    const rpc = makeRpc(async (method, input) => {
+      if (method === "contacts_list") return listResult();
+      if (method === "contacts_get") return contact;
+      if (method === "contacts_update") {
+        expect(input).toEqual({
+          id: contact.id,
+          data: { title: "Head of Revenue" },
+        });
+        return new Promise<never>((_resolve, reject) => {
+          rejectUpdate = reject;
+        });
+      }
+      return contact;
+    });
+
+    render(<ContactsView rpcClient={rpc} />);
+    await screen.findByText("Ada Lovelace");
+    fireEvent.click(screen.getByRole("row", { name: /Open Ada Lovelace/ }));
+    await screen.findByRole("dialog", { name: "Ada Lovelace" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Title" }));
+    const titleInput = screen.getByLabelText("Title") as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: "Head of Revenue" } });
+    fireEvent.keyDown(titleInput, { key: "Enter" });
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("contacts_update", {
+        id: contact.id,
+        data: { title: "Head of Revenue" },
+      }),
+    );
+
+    expect(
+      within(screen.getByRole("dialog", { name: "Ada Lovelace" })).getByText("Head of Revenue"),
+    ).toBeDefined();
+    rejectUpdate?.(new Error("contact update failed"));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("dialog", { name: "Ada Lovelace" })).getByRole("button", {
+          name: "Title",
+        }).textContent,
+      ).toContain("VP Engineering"),
+    );
+    expect(screen.getByRole("alert").textContent).toContain("contact update failed");
+  });
 });

@@ -19,6 +19,7 @@ import {
   type DealListInput,
   type DealListOutput,
   type DealStage,
+  type DealUpdateData,
   type DealUpdateInput,
   type SetDealStageInput,
   type DealListStatus,
@@ -29,6 +30,10 @@ import {
 import {
   ColumnPreferences,
   EmptyState,
+  InlineDateField,
+  InlineField,
+  InlineSelectField,
+  InlineTextArea,
   PageHeader,
   RecordDrawer,
   SearchField,
@@ -456,6 +461,7 @@ function DealForm({
 
 interface DealOverviewProps {
   deal: Deal;
+  onUpdate: (data: DealUpdateData, optimistic: Partial<Deal>) => void;
   mutationBusy: boolean;
   mutationError: string | null;
   onSetStage: (stage: DealStage, closedReason?: string) => Promise<void> | void;
@@ -466,6 +472,7 @@ interface DealOverviewProps {
 
 function DealOverview({
   deal,
+  onUpdate,
   mutationBusy,
   mutationError,
   onSetStage,
@@ -477,6 +484,7 @@ function DealOverview({
   const [closedReasonDraft, setClosedReasonDraft] = useState(
     deal.closedReason ?? "",
   );
+  const [amountError, setAmountError] = useState<string | null>(null);
 
   useEffect(() => {
     setStageDraft(deal.stage);
@@ -602,25 +610,112 @@ function DealOverview({
         </p>
       </form>
 
+      <section className="space-y-3" aria-label="Deal details">
+        <h3 className="text-sm font-medium">Details</h3>
+        <div className="grid gap-4 rounded-lg border border-border p-4">
+          <InlineField
+            label="Name"
+            value={deal.name}
+            saving={mutationBusy}
+            onSave={(name) => {
+              if (name) onUpdate({ name }, { name });
+            }}
+          />
+          <InlineField
+            label="Amount"
+            value={deal.amountCents === null ? null : String(deal.amountCents / 100)}
+            type="number"
+            placeholder="0.00"
+            saving={mutationBusy}
+            render={(value) => formatMinorAmount(Math.round(Number(value) * 100), deal.currency)}
+            onSave={(amount) => {
+              const raw = amount.trim();
+              if (raw === "") {
+                setAmountError(null);
+                onUpdate({ amountCents: null }, { amountCents: null });
+                return;
+              }
+              const parsed = Number(raw);
+              const cents = Math.round(parsed * 100);
+              if (!Number.isFinite(parsed) || parsed < 0 || !Number.isSafeInteger(cents)) {
+                setAmountError("Amount must be a non-negative number.");
+                return;
+              }
+              setAmountError(null);
+              onUpdate({ amountCents: cents }, { amountCents: cents });
+            }}
+          />
+          {amountError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {amountError}
+            </p>
+          ) : null}
+          <InlineSelectField
+            label="Currency"
+            value={deal.currency}
+            options={CURRENCY_CODES.map((currency) => ({
+              value: currency,
+              label: currency,
+            }))}
+            saving={mutationBusy}
+            onSave={(currency) => {
+              setAmountError(null);
+              onUpdate(
+                { currency: currency as CurrencyCode },
+                { currency: currency as CurrencyCode },
+              );
+            }}
+          />
+          <InlineDateField
+            label="Expected close date"
+            value={deal.expectedCloseDate}
+            saving={mutationBusy}
+            onSave={(expectedCloseDate) => {
+              const next = expectedCloseDate || null;
+              onUpdate({ expectedCloseDate: next }, { expectedCloseDate: next });
+            }}
+          />
+          <InlineField
+            label="Company"
+            value={deal.companyId ?? null}
+            placeholder="Company ID"
+            saving={mutationBusy}
+            render={(companyId) => deal.company?.name ?? companyId}
+            onSave={(companyId) => {
+              if (!companyId) return;
+              onUpdate(
+                { companyId },
+                { companyId, company: undefined },
+              );
+            }}
+          />
+          <InlineField
+            label="Owner"
+            value={deal.ownerId ?? null}
+            placeholder="Owner ID"
+            saving={mutationBusy}
+            render={(ownerId) => deal.owner?.name ?? ownerId}
+            onSave={(ownerId) => {
+              if (!ownerId) return;
+              onUpdate({ ownerId }, { ownerId, owner: undefined });
+            }}
+          />
+          <InlineTextArea
+            label="Description"
+            value={deal.description ?? null}
+            placeholder="What the customer is buying, why now, and what stands in the way."
+            saving={mutationBusy}
+            onSave={(description) =>
+              onUpdate(
+                { description: description || null },
+                { description: description || null },
+              )
+            }
+          />
+        </div>
+      </section>
+
       <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Company</dt>
-          <dd className="mt-1 text-sm">
-            {deal.company?.name ?? displayValue(deal.companyId)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Owner</dt>
-          <dd className="mt-1 text-sm">
-            {deal.owner?.name ?? displayValue(deal.ownerId)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Source amount</dt>
-          <dd className="mt-1 text-sm">
-            {formatMinorAmount(deal.amountCents, deal.currency)}
-          </dd>
-        </div>
         <div>
           <dt className="text-xs font-medium text-muted-foreground">Frozen base amount</dt>
           <dd className="mt-1 text-sm">
@@ -631,10 +726,6 @@ function DealOverview({
                   deal.baseCurrency ?? deal.reportingCurrency ?? deal.currency,
                 )}
           </dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground">Expected close date</dt>
-          <dd className="mt-1 text-sm">{formatDate(deal.expectedCloseDate)}</dd>
         </div>
         <div>
           <dt className="text-xs font-medium text-muted-foreground">Closed at</dt>
@@ -668,15 +759,6 @@ function DealOverview({
           ? " This deal has no base conversion and is excluded from compatible reporting totals."
           : ""}
       </p>
-
-      {deal.description ? (
-        <section className="space-y-2 border-t border-border pt-5">
-          <h3 className="text-sm font-medium">Description</h3>
-          <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-            {deal.description}
-          </p>
-        </section>
-      ) : null}
 
       <RecordFieldsEditor entity="DEAL" recordId={deal.id} />
 
@@ -963,6 +1045,56 @@ export function DealsView({
     setRecordError(null);
     setMutationError(null);
   }, [onRecordIdChange]);
+
+  const runRecordUpdate = useCallback(
+    async (data: DealUpdateData, optimistic: Partial<Deal>) => {
+      if (record === null) return;
+      const previous = record;
+      const id = record.id;
+      const next = { ...record, ...optimistic };
+      setMutationBusy(true);
+      setMutationError(null);
+      setRecord(next);
+      setList((current) => ({
+        ...current,
+        rows: current.rows.map((row) =>
+          row.id === id ? { ...row, ...optimistic } : row,
+        ),
+      }));
+      try {
+        const result = await rpc.call("deals_update", { id, data });
+        const settled = isDeal(result)
+          ? {
+              ...next,
+              ...result,
+              company: result.company === undefined ? next.company : result.company,
+              owner: result.owner === undefined ? next.owner : result.owner,
+              contacts: result.contacts ?? next.contacts,
+            }
+          : next;
+        setRecord((current) => (current?.id === id ? settled : current));
+        setList((current) => ({
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === id ? { ...row, ...settled } : row,
+          ),
+        }));
+        setRefreshKey((value) => value + 1);
+      } catch (cause) {
+        setRecord((current) => (current?.id === id ? previous : current));
+        setList((current) => ({
+          ...current,
+          rows: current.rows.map((row) =>
+            row.id === id ? { ...row, ...previous } : row,
+          ),
+        }));
+        setMutationError(errorMessage(cause));
+      } finally {
+        setMutationBusy(false);
+      }
+    },
+    [record, rpc],
+  );
 
   const runSetStage = useCallback(
     async (stage: DealStage, closedReason?: string) => {
@@ -1746,6 +1878,7 @@ export function DealsView({
             {recordTab === "overview" ? (
               <DealOverview
                 deal={record}
+                onUpdate={(data, optimistic) => void runRecordUpdate(data, optimistic)}
                 mutationBusy={mutationBusy}
                 mutationError={mutationError}
                 onSetStage={runSetStage}

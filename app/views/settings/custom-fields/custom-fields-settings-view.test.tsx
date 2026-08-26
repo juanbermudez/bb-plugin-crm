@@ -274,6 +274,39 @@ describe("CustomFieldsSettingsView", () => {
     expect(confirm).toHaveBeenCalledTimes(3);
   });
 
+  it("queues fill-rest from the editor only for an incomplete agent-filled field", async () => {
+    const rpc = makeRpc([segment, seats], async (method, input) => {
+      if (method === "fields_list") return [segment, seats];
+      if (method === "fields_coverage") {
+        return (input as { id: string }).id === segment.id
+          ? { filled: 4, total: 10 }
+          : { filled: 10, total: 10 };
+      }
+      if (method === "fields_options_list") return [segmentOption];
+      if (method === "fields_backfill") return { queued: true };
+      return segment;
+    });
+    render(<CustomFieldsSettingsView rpcClient={rpc} />);
+    await screen.findByText("Segment");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit field “Segment”" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit Segment" });
+    const fillRest = within(dialog).getByRole("button", { name: "Fill the rest" });
+    expect((fillRest as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(fillRest);
+
+    await waitFor(() =>
+      expect(rpc.call).toHaveBeenCalledWith("fields_backfill", { id: segment.id }),
+    );
+    expect(screen.getByText("Fill-rest research queued for Segment.")).toBeDefined();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await screen.findByText("Seats");
+    fireEvent.click(screen.getByRole("button", { name: "Edit field “Seats”" }));
+    const manualDialog = await screen.findByRole("dialog", { name: "Edit Seats" });
+    expect(within(manualDialog).queryByRole("button", { name: "Fill the rest" })).toBeNull();
+  });
+
   it("keeps the list usable when a coverage request fails", async () => {
     const rpc = makeRpc([segment], async (method) => {
       if (method === "fields_list") return [segment];
