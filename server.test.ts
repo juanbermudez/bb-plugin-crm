@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.js";
+import { createCurrencyStore } from "./db/currency.js";
 
 describe("CRM plugin foundation", () => {
   it("registers status RPC and CLI over migrated storage", async () => {
@@ -180,6 +181,43 @@ describe("CRM plugin foundation", () => {
       stage: "CLOSED_LOST",
       closedReason: "Budget moved",
       closedAt: expect.any(String),
+    });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("freezes a configured exchange rate when a foreign-currency deal is created", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "USD" },
+    });
+    await plugin(bb);
+    createCurrencyStore(bb.storage.database()).upsertManual({
+      baseCurrency: "USD",
+      quoteCurrency: "EUR",
+      rate: 1.2,
+      asOf: "2026-08-25T12:00:00.000Z",
+      actorId: "owner_1",
+    });
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Global Pipeline",
+    })) as { id: string };
+
+    await expect(
+      harness.behavior.callRpc("deals_create", {
+        name: "European expansion",
+        companyId: company.id,
+        ownerId: "owner_1",
+        amountCents: 10_000,
+        currency: "EUR",
+      }),
+    ).resolves.toMatchObject({
+      amountCents: 10_000,
+      currency: "EUR",
+      baseAmountCents: 12_000,
+      baseCurrency: "USD",
+      fxRate: 1.2,
+      fxRateAt: "2026-08-25T12:00:00.000Z",
     });
 
     await harness.lifecycle.dispose();

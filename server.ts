@@ -26,6 +26,7 @@ import {
   type Deal as StoredDeal,
   type DealListOptions,
 } from "./db/deals.js";
+import { createCurrencyStore } from "./db/currency.js";
 import { CRM_SCHEMA_VERSION, initializeSchema } from "./db/schema.js";
 
 export const CRM_PLUGIN_VERSION = "0.1.0";
@@ -67,6 +68,7 @@ export default async function plugin(bb: BbPluginApi) {
   const companies = createCompanyStore(db);
   const contacts = createContactStore(db);
   const deals = createDealStore(db);
+  const currency = createCurrencyStore(db);
 
   function companyOutput(company: StoredCompany): CompanyOutput {
     const counts = db
@@ -491,15 +493,17 @@ export default async function plugin(bb: BbPluginApi) {
     async deals_create(input) {
       const { reportingCurrency: configuredCurrency } = await settings.get();
       const reportingCurrency = currencyCodeSchema.parse(configuredCurrency);
-      const currency = input.currency ?? reportingCurrency;
-      const sameCurrency = input.amountCents != null && currency === reportingCurrency;
+      const dealCurrency = input.currency ?? reportingCurrency;
+      const conversion = input.amountCents == null
+        ? null
+        : currency.convert(input.amountCents, dealCurrency, reportingCurrency);
       const deal = deals.create({
         ...input,
-        currency,
-        baseAmountCents: sameCurrency ? input.amountCents : null,
-        baseCurrency: sameCurrency ? reportingCurrency : null,
-        fxRate: sameCurrency ? 1 : null,
-        fxRateAt: sameCurrency ? new Date().toISOString() : null,
+        currency: dealCurrency,
+        baseAmountCents: conversion?.baseAmountCents ?? null,
+        baseCurrency: conversion?.baseCurrency ?? null,
+        fxRate: conversion?.fxRate ?? null,
+        fxRateAt: conversion?.fxRateAt ?? null,
       });
       changed("deal", "created", deal.id);
       return dealOutput(deal);
