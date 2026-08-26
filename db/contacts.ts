@@ -1,0 +1,357 @@
+import {
+  ENRICHMENT_STATUSES,
+  newRecordId,
+  nowIso,
+  nullableText,
+  normalizeEmail,
+  normalizeLimit,
+  normalizeOffset,
+  RECORD_SOURCES,
+  RecordNotFoundError,
+  requiredText,
+  type Db,
+  type EnrichmentStatus,
+  type ListOptions,
+  type RecordSource,
+} from "./types.js";
+
+export interface Contact {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  title: string | null;
+  seniority: string | null;
+  function: string | null;
+  linkedinUrl: string | null;
+  twitterUrl: string | null;
+  githubUrl: string | null;
+  imageUrl: string | null;
+  socialsCheckedAt: string | null;
+  enrichmentStatus: EnrichmentStatus;
+  enrichedAt: string | null;
+  enrichmentError: string | null;
+  companyId: string | null;
+  ownerId: string | null;
+  source: RecordSource;
+  lastActivityAt: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ContactCreateInput = Partial<Omit<Contact, "id" | "createdAt" | "updatedAt" | "archivedAt">> & {
+  id?: string;
+  firstName: string;
+};
+
+export type ContactUpdateInput = Partial<Omit<Contact, "id" | "createdAt" | "updatedAt" | "archivedAt">>;
+
+export interface ContactListOptions extends ListOptions {
+  companyId?: string | null;
+  ownerId?: string | null;
+  source?: RecordSource;
+  enrichmentStatus?: EnrichmentStatus;
+}
+
+const CONTACT_SELECT = `
+  SELECT
+    id,
+    first_name AS firstName,
+    last_name AS lastName,
+    email,
+    phone,
+    title,
+    seniority,
+    function,
+    linkedin_url AS linkedinUrl,
+    twitter_url AS twitterUrl,
+    github_url AS githubUrl,
+    image_url AS imageUrl,
+    socials_checked_at AS socialsCheckedAt,
+    enrichment_status AS enrichmentStatus,
+    enriched_at AS enrichedAt,
+    enrichment_error AS enrichmentError,
+    company_id AS companyId,
+    owner_id AS ownerId,
+    source,
+    last_activity_at AS lastActivityAt,
+    archived_at AS archivedAt,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM contacts`;
+
+const CONTACT_COLUMNS = [
+  "first_name",
+  "last_name",
+  "email",
+  "phone",
+  "title",
+  "seniority",
+  "function",
+  "linkedin_url",
+  "twitter_url",
+  "github_url",
+  "image_url",
+  "socials_checked_at",
+  "enrichment_status",
+  "enriched_at",
+  "enrichment_error",
+  "company_id",
+  "owner_id",
+  "source",
+  "last_activity_at",
+] as const;
+
+type ContactColumn = (typeof CONTACT_COLUMNS)[number];
+
+function assertEnum<T extends string>(value: string, values: readonly T[], label: string): T {
+  if ((values as readonly string[]).includes(value)) return value as T;
+  throw new Error(`Invalid ${label}: ${value}.`);
+}
+
+function row(value: unknown): Contact {
+  return value as Contact;
+}
+
+function normalizeCreate(input: ContactCreateInput): Contact {
+  const now = nowIso();
+  return {
+    id: input.id?.trim() || newRecordId("con"),
+    firstName: requiredText(input.firstName, "Contact first name"),
+    lastName: nullableText(input.lastName),
+    email: normalizeEmail(input.email),
+    phone: nullableText(input.phone),
+    title: nullableText(input.title),
+    seniority: nullableText(input.seniority),
+    function: nullableText(input.function),
+    linkedinUrl: nullableText(input.linkedinUrl),
+    twitterUrl: nullableText(input.twitterUrl),
+    githubUrl: nullableText(input.githubUrl),
+    imageUrl: nullableText(input.imageUrl),
+    socialsCheckedAt: input.socialsCheckedAt ?? null,
+    enrichmentStatus: assertEnum(
+      input.enrichmentStatus ?? "PENDING",
+      ENRICHMENT_STATUSES,
+      "enrichment status",
+    ),
+    enrichedAt: input.enrichedAt ?? null,
+    enrichmentError: nullableText(input.enrichmentError),
+    companyId: nullableText(input.companyId),
+    ownerId: nullableText(input.ownerId),
+    source: assertEnum(input.source ?? "MANUAL", RECORD_SOURCES, "source"),
+    lastActivityAt: input.lastActivityAt ?? null,
+    archivedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function dbValues(value: Contact): Record<string, string | null> {
+  return {
+    id: value.id,
+    first_name: value.firstName,
+    last_name: value.lastName,
+    email: value.email,
+    phone: value.phone,
+    title: value.title,
+    seniority: value.seniority,
+    function: value.function,
+    linkedin_url: value.linkedinUrl,
+    twitter_url: value.twitterUrl,
+    github_url: value.githubUrl,
+    image_url: value.imageUrl,
+    socials_checked_at: value.socialsCheckedAt,
+    enrichment_status: value.enrichmentStatus,
+    enriched_at: value.enrichedAt,
+    enrichment_error: value.enrichmentError,
+    company_id: value.companyId,
+    owner_id: value.ownerId,
+    source: value.source,
+    last_activity_at: value.lastActivityAt,
+    archived_at: value.archivedAt,
+    created_at: value.createdAt,
+    updated_at: value.updatedAt,
+  };
+}
+
+export class ContactStore {
+  constructor(private readonly db: Db) {}
+
+  get(id: string, options: { includeArchived?: boolean } = {}): Contact | null {
+    const condition = options.includeArchived === false ? " AND archived_at IS NULL" : "";
+    return row(
+      this.db.prepare(`${CONTACT_SELECT} WHERE id = ?${condition}`).get(id),
+    ) ?? null;
+  }
+
+  getRequired(id: string): Contact {
+    const value = this.get(id);
+    if (!value) throw new RecordNotFoundError("contact", id);
+    return value;
+  }
+
+  create(input: ContactCreateInput): Contact {
+    const value = normalizeCreate(input);
+    const insert = this.db.prepare(`
+      INSERT INTO contacts (
+        id, first_name, last_name, email, phone, title, seniority, function,
+        linkedin_url, twitter_url, github_url, image_url, socials_checked_at,
+        enrichment_status, enriched_at, enrichment_error, company_id, owner_id,
+        source, last_activity_at, archived_at, created_at, updated_at
+      ) VALUES (
+        @id, @first_name, @last_name, @email, @phone, @title, @seniority,
+        @function, @linkedin_url, @twitter_url, @github_url, @image_url,
+        @socials_checked_at, @enrichment_status, @enriched_at,
+        @enrichment_error, @company_id, @owner_id, @source, @last_activity_at,
+        @archived_at, @created_at, @updated_at
+      )`);
+    return this.db.transaction(() => {
+      insert.run(dbValues(value));
+      return this.getRequired(value.id);
+    })();
+  }
+
+  list(options: ContactListOptions = {}): Contact[] {
+    const clauses: string[] = [];
+    const params: Record<string, string | number> = {};
+    if (options.archivedOnly) clauses.push("archived_at IS NOT NULL");
+    else if (!options.includeArchived) clauses.push("archived_at IS NULL");
+    if (options.companyId === null) clauses.push("company_id IS NULL");
+    else if (options.companyId !== undefined) {
+      clauses.push("company_id = @companyId");
+      params.companyId = options.companyId;
+    }
+    if (options.ownerId === null) clauses.push("owner_id IS NULL");
+    else if (options.ownerId !== undefined) {
+      clauses.push("owner_id = @ownerId");
+      params.ownerId = options.ownerId;
+    }
+    if (options.source !== undefined) {
+      assertEnum(options.source, RECORD_SOURCES, "source");
+      clauses.push("source = @source");
+      params.source = options.source;
+    }
+    if (options.enrichmentStatus !== undefined) {
+      assertEnum(options.enrichmentStatus, ENRICHMENT_STATUSES, "enrichment status");
+      clauses.push("enrichment_status = @enrichmentStatus");
+      params.enrichmentStatus = options.enrichmentStatus;
+    }
+    const search = options.search?.trim();
+    if (search) {
+      clauses.push(`(
+        first_name LIKE @search COLLATE NOCASE OR
+        last_name LIKE @search COLLATE NOCASE OR
+        email LIKE @search COLLATE NOCASE OR
+        title LIKE @search COLLATE NOCASE
+      )`);
+      params.search = `%${search}%`;
+    }
+    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+    params.limit = normalizeLimit(options.limit);
+    params.offset = normalizeOffset(options.offset);
+    return this.db
+      .prepare(`${CONTACT_SELECT}${where} ORDER BY last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ASC, id ASC LIMIT @limit OFFSET @offset`)
+      .all(params)
+      .map(row);
+  }
+
+  update(id: string, input: ContactUpdateInput): Contact {
+    return this.db.transaction(() => {
+      const current = this.getRequired(id);
+      const next: Contact = { ...current };
+      const has = (key: keyof ContactUpdateInput): boolean => input[key] !== undefined;
+      if (has("firstName")) next.firstName = requiredText(input.firstName as string, "Contact first name");
+      if (has("lastName")) next.lastName = nullableText(input.lastName);
+      if (has("email")) next.email = normalizeEmail(input.email);
+      if (has("phone")) next.phone = nullableText(input.phone);
+      if (has("title")) next.title = nullableText(input.title);
+      if (has("seniority")) next.seniority = nullableText(input.seniority);
+      if (has("function")) next.function = nullableText(input.function);
+      if (has("linkedinUrl")) next.linkedinUrl = nullableText(input.linkedinUrl);
+      if (has("twitterUrl")) next.twitterUrl = nullableText(input.twitterUrl);
+      if (has("githubUrl")) next.githubUrl = nullableText(input.githubUrl);
+      if (has("imageUrl")) next.imageUrl = nullableText(input.imageUrl);
+      if (has("socialsCheckedAt")) next.socialsCheckedAt = input.socialsCheckedAt ?? null;
+      if (has("enrichmentStatus")) {
+        next.enrichmentStatus = assertEnum(input.enrichmentStatus as string, ENRICHMENT_STATUSES, "enrichment status");
+      }
+      if (has("enrichedAt")) next.enrichedAt = input.enrichedAt ?? null;
+      if (has("enrichmentError")) next.enrichmentError = nullableText(input.enrichmentError);
+      if (has("companyId")) next.companyId = nullableText(input.companyId);
+      if (has("ownerId")) next.ownerId = nullableText(input.ownerId);
+      if (has("source")) next.source = assertEnum(input.source as string, RECORD_SOURCES, "source");
+      if (has("lastActivityAt")) next.lastActivityAt = input.lastActivityAt ?? null;
+      next.updatedAt = nowIso();
+      const values = dbValues(next);
+      const changed: readonly ContactColumn[] = CONTACT_COLUMNS;
+      this.db
+        .prepare(`UPDATE contacts SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
+        .run(values);
+      return this.getRequired(id);
+    })();
+  }
+
+  archive(id: string): Contact {
+    return this.setArchived(id, nowIso());
+  }
+
+  restore(id: string): Contact {
+    return this.setArchived(id, null);
+  }
+
+  private setArchived(id: string, archivedAt: string | null): Contact {
+    return this.db.transaction(() => {
+      this.getRequired(id);
+      this.db.prepare("UPDATE contacts SET archived_at = @archivedAt, updated_at = @updatedAt WHERE id = @id").run({
+        id,
+        archivedAt,
+        updatedAt: nowIso(),
+      });
+      return this.getRequired(id);
+    })();
+  }
+
+  purge(id: string): Contact {
+    return this.db.transaction(() => {
+      const value = this.getRequired(id);
+      this.db.prepare("DELETE FROM contacts WHERE id = ?").run(id);
+      return value;
+    })();
+  }
+}
+
+export function createContactStore(db: Db): ContactStore {
+  return new ContactStore(db);
+}
+
+export function createContact(db: Db, input: ContactCreateInput): Contact {
+  return new ContactStore(db).create(input);
+}
+
+export function getContact(db: Db, id: string, options?: { includeArchived?: boolean }): Contact | null {
+  return new ContactStore(db).get(id, options);
+}
+
+export function listContacts(db: Db, options?: ContactListOptions): Contact[] {
+  return new ContactStore(db).list(options);
+}
+
+export function updateContact(db: Db, id: string, input: ContactUpdateInput): Contact {
+  return new ContactStore(db).update(id, input);
+}
+
+export function archiveContact(db: Db, id: string): Contact {
+  return new ContactStore(db).archive(id);
+}
+
+export function restoreContact(db: Db, id: string): Contact {
+  return new ContactStore(db).restore(id);
+}
+
+export function purgeContact(db: Db, id: string): Contact {
+  return new ContactStore(db).purge(id);
+}
+
+export const deleteContact = purgeContact;

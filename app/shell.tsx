@@ -12,6 +12,7 @@ import {
   parseCrmRoute,
   type CrmRouteKind,
 } from "./routes.js";
+import { CompaniesView } from "./views/companies/index.js";
 
 const NAV_ITEMS: ReadonlyArray<{
   kind: CrmRouteKind;
@@ -131,6 +132,15 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       <main className="min-h-0 min-w-0 flex-1 overflow-auto">
         {route.kind === "dashboard" ? (
           <FoundationDashboard />
+        ) : route.kind === "companies" ? (
+          <CompaniesView
+            initialRecordId={route.recordId}
+            onRecordIdChange={(recordId) => {
+              navigate.toPluginPanel("crm", {
+                subPath: crmRouteToSubPath({ kind: "companies", recordId }),
+              });
+            }}
+          />
         ) : (
           <PendingView kind={route.kind} />
         )}
