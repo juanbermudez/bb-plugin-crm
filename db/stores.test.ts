@@ -47,6 +47,26 @@ function withSchema9Database() {
   return { ...host, db, bb: host.bb, lifecycle: host.harness.lifecycle };
 }
 
+function insertActivity(
+  db: ReturnType<typeof withDatabase>["db"],
+  id: string,
+  createdAt: string,
+  refs: { companyId?: string; contactId?: string; dealId?: string } = {},
+): void {
+  db.prepare(`
+    INSERT INTO activities (
+      id, type, company_id, contact_id, deal_id, created_by_id, created_at, updated_at
+    ) VALUES (?, 'NOTE', ?, ?, ?, 'test-user', ?, ?)
+  `).run(
+    id,
+    refs.companyId ?? null,
+    refs.contactId ?? null,
+    refs.dealId ?? null,
+    createdAt,
+    createdAt,
+  );
+}
+
 describe("CRM SQLite foundation", () => {
   it("applies the append-only migration and creates normalized tables/indexes", async () => {
     const { bb, db, lifecycle } = withDatabase();
@@ -192,6 +212,13 @@ describe("CRM SQLite foundation", () => {
         title: "Principal Engineer",
       });
       expect(updatedContact.title).toBe("Principal Engineer");
+      const updatedDeal = updateDeal(db, deal.id, {
+        description: "Private expansion context",
+      });
+      expect(updatedDeal.description).toBe("Private expansion context");
+      expect(listCompanies(db, { search: "Software" })).toHaveLength(0);
+      expect(listContacts(db, { search: "Principal Engineer" })).toHaveLength(0);
+      expect(listDeals(db, { search: "Private expansion context" })).toHaveLength(0);
 
       archiveCompany(db, company.id);
       archiveContact(db, contact.id);
@@ -216,6 +243,98 @@ describe("CRM SQLite foundation", () => {
       expect(getDeal(db, deal.id)).toBeNull();
       expect(getContact(db, contact.id)).toBeNull();
       expect(getCompany(db, company.id)).toBeNull();
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("recomputes surviving activity stamps after direct contact, deal, and company purges", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const company = createCompany(db, { id: "cmp_stamp", name: "Stamp Co" });
+      const contact = createContact(db, {
+        id: "con_stamp_contact",
+        firstName: "Contact",
+        companyId: company.id,
+      });
+      insertActivity(db, "act_stamp_company_old", "2026-01-01T00:00:00.000Z", {
+        companyId: company.id,
+      });
+      insertActivity(db, "act_stamp_contact_new", "2026-01-02T00:00:00.000Z", {
+        companyId: company.id,
+        contactId: contact.id,
+      });
+      db.prepare("UPDATE companies SET last_activity_at = ? WHERE id = ?").run(
+        "2026-01-02T00:00:00.000Z",
+        company.id,
+      );
+
+      purgeContact(db, contact.id);
+      expect(getCompany(db, company.id)?.lastActivityAt).toBe("2026-01-01T00:00:00.000Z");
+
+      const deal = createDeal(db, {
+        id: "deal_stamp",
+        name: "Stamp deal",
+        companyId: company.id,
+        ownerId: "owner_stamp",
+      });
+      const dealContact = createContact(db, {
+        id: "con_stamp_deal",
+        firstName: "Deal contact",
+        companyId: company.id,
+      });
+      insertActivity(db, "act_stamp_deal_old", "2026-01-03T00:00:00.000Z", {
+        companyId: company.id,
+        contactId: dealContact.id,
+      });
+      insertActivity(db, "act_stamp_deal_new", "2026-01-04T00:00:00.000Z", {
+        companyId: company.id,
+        contactId: dealContact.id,
+        dealId: deal.id,
+      });
+      db.prepare("UPDATE companies SET last_activity_at = ? WHERE id = ?").run(
+        "2026-01-04T00:00:00.000Z",
+        company.id,
+      );
+      db.prepare("UPDATE contacts SET last_activity_at = ? WHERE id = ?").run(
+        "2026-01-04T00:00:00.000Z",
+        dealContact.id,
+      );
+      db.prepare("UPDATE deals SET last_activity_at = ? WHERE id = ?").run(
+        "2026-01-04T00:00:00.000Z",
+        deal.id,
+      );
+
+      purgeDeal(db, deal.id);
+      expect(getCompany(db, company.id)?.lastActivityAt).toBe("2026-01-03T00:00:00.000Z");
+      expect(getContact(db, dealContact.id)?.lastActivityAt).toBe("2026-01-03T00:00:00.000Z");
+
+      const purgedCompany = createCompany(db, { id: "cmp_stamp_purged", name: "Purged Stamp Co" });
+      const survivingContact = createContact(db, {
+        id: "con_stamp_company",
+        firstName: "Survivor",
+        companyId: purgedCompany.id,
+      });
+      const purgedDeal = createDeal(db, {
+        id: "deal_stamp_company",
+        name: "Purged company deal",
+        companyId: purgedCompany.id,
+        ownerId: "owner_stamp",
+      });
+      insertActivity(db, "act_stamp_company_purged", "2026-01-05T00:00:00.000Z", {
+        companyId: purgedCompany.id,
+        contactId: survivingContact.id,
+        dealId: purgedDeal.id,
+      });
+      db.prepare("UPDATE contacts SET last_activity_at = ? WHERE id = ?").run(
+        "2026-01-05T00:00:00.000Z",
+        survivingContact.id,
+      );
+
+      purgeCompany(db, purgedCompany.id);
+      expect(getContact(db, survivingContact.id)?.companyId).toBeNull();
+      expect(getContact(db, survivingContact.id)?.lastActivityAt).toBeNull();
+      expect(getDeal(db, purgedDeal.id)).toBeNull();
     } finally {
       await lifecycle.dispose();
     }
@@ -468,9 +587,9 @@ describe("CRM SQLite foundation", () => {
       });
       expect(changed.amountCents).toBe(20_000);
       expect(changed.currency).toBe("GBP");
-      expect(changed.baseAmountCents).toBe(11_000);
-      expect(changed.baseCurrency).toBe("USD");
-      expect(changed.fxRate).toBe(1.1);
+      expect(changed.baseAmountCents).toBeNull();
+      expect(changed.baseCurrency).toBeNull();
+      expect(changed.fxRate).toBeNull();
 
       // Core foreign keys cascade or null out according to relation semantics.
       purgeCompany(db, replacement.id);
@@ -720,16 +839,16 @@ describe("CRM SQLite foundation", () => {
     }
   });
 
-  it("sorts companies by all related deals, including closed deals", async () => {
+  it("sorts companies by open related deals and excludes closed deals", async () => {
     const { db, lifecycle } = withDatabase();
     try {
       const closedOnly = createCompany(db, {
         id: "cmp_closed_only",
         name: "A closed-only company",
       });
-      const noDeals = createCompany(db, {
-        id: "cmp_no_deals",
-        name: "Z no-deals company",
+      const openDealCompany = createCompany(db, {
+        id: "cmp_open_deal",
+        name: "Z open-deal company",
       });
       createDeal(db, {
         id: "deal_closed_only",
@@ -738,10 +857,17 @@ describe("CRM SQLite foundation", () => {
         ownerId: "owner_closed",
         stage: "CLOSED_WON",
       });
+      createDeal(db, {
+        id: "deal_open",
+        name: "Open deal",
+        companyId: openDealCompany.id,
+        ownerId: "owner_open",
+        stage: "DEMO_BOOKED",
+      });
 
       expect(listCompanies(db, { sortBy: "deals", sortDirection: "desc" }).map((value) => value.id).slice(0, 2)).toEqual([
+        openDealCompany.id,
         closedOnly.id,
-        noDeals.id,
       ]);
     } finally {
       await lifecycle.dispose();

@@ -1,5 +1,10 @@
 import { createActivity } from "./activities.js";
+import {
+  collectActivityStampTargets,
+  recomputeActivityStamps,
+} from "./activity-stamps.js";
 import { companyForEmail } from "./companies.js";
+import { purgeRecordArtifacts } from "./purge-artifacts.js";
 import {
   ENRICHMENT_STATUSES,
   activityFilterClause,
@@ -452,7 +457,6 @@ export class ContactStore {
         first_name LIKE @search COLLATE NOCASE OR
         last_name LIKE @search COLLATE NOCASE OR
         email LIKE @search COLLATE NOCASE OR
-        title LIKE @search COLLATE NOCASE OR
         company_id IN (
           SELECT id FROM companies
           WHERE name LIKE @search COLLATE NOCASE
@@ -580,8 +584,11 @@ export class ContactStore {
   purge(id: string): Contact {
     return this.db.transaction(() => {
       const value = this.getRequired(id);
+      purgeRecordArtifacts(this.db, "CONTACT", id);
+      const targets = collectActivityStampTargets(this.db, "contact_id = ?", [id]);
       this.db.prepare("DELETE FROM contacts WHERE id = ?").run(id);
       suppressContact(this.db, value);
+      recomputeActivityStamps(this.db, targets);
       return value;
     })();
   }

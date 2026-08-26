@@ -119,8 +119,8 @@ export const CRM_SCHEMA_MIGRATIONS: string[] = [
       closed_at TEXT,
       closed_reason TEXT,
 
-      -- Base money is a frozen snapshot. Re-rating is an explicit future operation;
-      -- ordinary record updates must never silently rewrite these columns.
+      -- Base money is a frozen snapshot. Source amount/currency edits refresh
+      -- it from the effective rate; unrelated edits leave it unchanged.
       base_amount_cents INTEGER
         CHECK (base_amount_cents IS NULL OR base_amount_cents >= 0),
       base_currency TEXT,

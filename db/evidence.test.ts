@@ -43,25 +43,23 @@ describe("CRM contact evidence storage", () => {
         firstName: "Ada",
         lastName: "Lovelace",
       });
-      const proposed = createContactFact(db, {
+      const applied = createContactFact(db, {
         id: "fact_title_1",
         contactId: contact.id,
         field: "title",
         value: "Principal Engineer",
-        score: 0.85,
-        band: "VERIFIED",
+        score: 0.01,
+        band: "POSSIBLE",
         evidence,
         method: "linkedin",
         sourceUrl: evidence[0].sourceUrl,
         observedAt: "2026-08-20T12:00:00.000Z",
       });
-      expect(proposed.status).toBe("PROPOSED");
-      expect(proposed.evidence[0]?.sourceUrl).toBe(evidence[0].sourceUrl);
-      expect(listContactFacts(db, contact.id, { field: "title" })).toHaveLength(1);
-
-      const applied = decideContactFact(db, proposed.id, "accept", "bb-user-1");
       expect(applied.status).toBe("APPLIED");
-      expect(applied.decidedById).toBe("bb-user-1");
+      expect(applied.score).toBe(0.85);
+      expect(applied.band).toBe("VERIFIED");
+      expect(applied.evidence[0]?.sourceUrl).toBe(evidence[0].sourceUrl);
+      expect(listContactFacts(db, contact.id, { field: "title" })).toHaveLength(1);
       expect(getContact(db, contact.id)?.title).toBe("Principal Engineer");
 
       const replacement = createContactFact(db, {
@@ -74,22 +72,33 @@ describe("CRM contact evidence storage", () => {
         evidence,
         method: "linkedin-refresh",
       });
-      decideContactFact(db, replacement.id, "accept", "bb-user-1");
-      expect(getContactFact(db, proposed.id)?.status).toBe("SUPERSEDED");
-      expect(getContactFact(db, proposed.id)?.supersededById).toBe(replacement.id);
+      expect(replacement.status).toBe("APPLIED");
+      expect(getContactFact(db, applied.id)?.status).toBe("SUPERSEDED");
+      expect(getContactFact(db, applied.id)?.supersededById).toBe(replacement.id);
       expect(getContact(db, contact.id)?.title).toBe("VP Engineering");
       expect(listContactFacts(db, contact.id, { includeSuperseded: false })).toHaveLength(1);
 
-      const dismissed = createContactFact(db, {
-        id: "fact_location_1",
+      createContactFact(db, {
         contactId: contact.id,
-        field: "location",
-        value: "London",
-        score: 0.4,
-        band: "POSSIBLE",
+        field: "employer",
+        value: "Evidence Systems",
         evidence,
         method: "profile",
       });
+      const secondaryEvidence = [{
+        kind: "web.cited-claim" as const,
+        detail: "A cited biography makes the claim.",
+        sourceUrl: "https://example.com/ada",
+      }];
+      const dismissed = createContactFact(db, {
+        id: "fact_location_1",
+        contactId: contact.id,
+        field: "employer",
+        value: "Difference Machines",
+        evidence: secondaryEvidence,
+        method: "profile",
+      });
+      expect(dismissed.status).toBe("PROPOSED");
       expect(decideContactFact(db, dismissed.id, "dismiss", "bb-user-2").status).toBe("DISMISSED");
       expect(() => decideContactFact(db, dismissed.id, "accept", "bb-user-2")).toThrow(/already been settled/);
 
@@ -100,7 +109,7 @@ describe("CRM contact evidence storage", () => {
         value: "Example Labs",
         score: 0.7,
         band: "PROBABLE",
-        evidence,
+        evidence: secondaryEvidence,
         method: "profile",
       });
       const newEmployer = createContactFact(db, {
@@ -110,13 +119,52 @@ describe("CRM contact evidence storage", () => {
         value: "Analytical Engines",
         score: 0.85,
         band: "VERIFIED",
-        evidence,
+        evidence: secondaryEvidence,
         method: "profile-refresh",
       });
       const superseded = supersedeContactFact(db, oldEmployer.id, newEmployer.id);
       expect(superseded.status).toBe("SUPERSEDED");
       expect(superseded.supersededById).toBe(newEmployer.id);
       expect(getContactFact(db, newEmployer.id)?.supersedesId).toBe(oldEmployer.id);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("derives confidence from evidence and protects human-entered fields", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const contact = createContact(db, {
+        id: "con_policy",
+        firstName: "Grace",
+        lastName: "Hopper",
+        title: "Rear Admiral",
+      });
+      expect(() => createContactFact(db, {
+        contactId: contact.id,
+        field: "title",
+        value: "Compiler Pioneer",
+        evidence,
+        method: "linkedin",
+      })).toThrow(/person already filled in title/i);
+      expect(() => createContactFact(db, {
+        contactId: contact.id,
+        field: "location",
+        value: "Arlington",
+        evidence: [{ kind: "employer-only", detail: "Only the employer matched." }],
+        method: "weak-search",
+      })).toThrow(/below the floor/i);
+      const contradicted = createContactFact(db, {
+        contactId: contact.id,
+        field: "location",
+        value: "Arlington",
+        evidence: [
+          ...evidence,
+          { kind: "contradiction", detail: "A second source lists New York." },
+        ],
+        method: "profile-check",
+      });
+      expect(contradicted).toMatchObject({ score: 0.45, band: "POSSIBLE", status: "APPLIED" });
     } finally {
       await lifecycle.dispose();
     }

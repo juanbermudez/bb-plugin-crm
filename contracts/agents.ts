@@ -777,6 +777,24 @@ export type AgentThreadRecordCreateInput = z.infer<
   typeof agentThreadRecordCreateInputSchema
 >;
 
+/** The host-owned new-thread composer request forwarded to BB unchanged. */
+export const agentThreadBuilderSpawnRequestSchema = z
+  .object({
+    projectId: idSchema,
+    providerId: nonEmptyText,
+    model: nonEmptyText,
+    reasoningLevel: nonEmptyText,
+    permissionMode: nonEmptyText,
+    serviceTier: nonEmptyText.optional(),
+    executionInputSources: jsonObject,
+    environment: jsonObject,
+    input: z.array(jsonObject).min(1).max(100),
+  })
+  .strict();
+export type AgentThreadBuilderSpawnRequest = z.infer<
+  typeof agentThreadBuilderSpawnRequestSchema
+>;
+
 /** Create a visible BB builder conversation for an agent. */
 export const agentThreadBuilderCreateInputSchema = z
   .object({
@@ -784,6 +802,10 @@ export const agentThreadBuilderCreateInputSchema = z
     versionId: idSchema.optional(),
     /** Reuse the newest builder link unless the user explicitly starts over. */
     newConversation: z.boolean().default(false),
+    /** Optional natural-language request to seed the first builder turn. */
+    initialPrompt: nonEmptyText.max(20_000).optional(),
+    /** BB's native new-thread request; selections are forwarded to spawn. */
+    spawnRequest: agentThreadBuilderSpawnRequestSchema.optional(),
   })
   .strict();
 export type AgentThreadBuilderCreateInput = z.infer<

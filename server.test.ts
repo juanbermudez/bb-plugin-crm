@@ -220,6 +220,88 @@ describe("CRM plugin foundation", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("runs strict bulk and purge CLI equivalents with deduplicated ids", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "crm" });
+    await plugin(bb);
+    const company = await harness.behavior.callRpc("companies_create", {
+      name: "Bulk CLI Company",
+    }) as { id: string };
+    const secondCompany = await harness.behavior.callRpc("companies_create", {
+      name: "Bulk CLI Second Company",
+    }) as { id: string };
+    const contact = await harness.behavior.callRpc("contacts_create", {
+      firstName: "Bulk",
+      lastName: "CLI",
+      companyId: company.id,
+    }) as { id: string };
+    const secondContact = await harness.behavior.callRpc("contacts_create", {
+      firstName: "Second",
+      lastName: "Bulk CLI",
+      companyId: company.id,
+    }) as { id: string };
+
+    const assigned = await harness.behavior.runCli([
+      "bulk",
+      "contact",
+      "assign-owner",
+      "--ids",
+      `${contact.id},${contact.id},${secondContact.id}`,
+      "--owner-id",
+      "owner_cli",
+      "--json",
+    ]);
+    expect(assigned.exitCode).toBe(0);
+    expect(JSON.parse(assigned.stdout)).toMatchObject({
+      requested: 2,
+      succeeded: 2,
+      failed: 0,
+    });
+    await expect(harness.behavior.callRpc("contacts_get", { id: contact.id }))
+      .resolves.toMatchObject({ ownerId: "owner_cli" });
+
+    const archived = await harness.behavior.runCli([
+      "bulk",
+      "archive",
+      "company",
+      JSON.stringify({ ids: [company.id, company.id] }),
+      "--json",
+    ]);
+    expect(archived.exitCode).toBe(0);
+    expect(JSON.parse(archived.stdout)).toMatchObject({ requested: 1, succeeded: 1, failed: 0 });
+
+    const singlePurge = await harness.behavior.runCli(["purge", "company", secondCompany.id, "--json"]);
+    expect(singlePurge.exitCode).toBe(0);
+    expect(JSON.parse(singlePurge.stdout)).toMatchObject({ id: secondCompany.id, name: "Bulk CLI Second Company" });
+
+    const bulkPurge = await harness.behavior.runCli([
+      "purge",
+      "contact",
+      "--ids",
+      `${contact.id},${contact.id},${secondContact.id}`,
+      "--json",
+    ]);
+    expect(bulkPurge.exitCode).toBe(0);
+    expect(JSON.parse(bulkPurge.stdout)).toMatchObject({ requested: 2, succeeded: 2, failed: 0 });
+
+    const help = await harness.behavior.runCli(["help", "bulk"]);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("bb crm bulk <entity> <operation>");
+    const invalid = await harness.behavior.runCli([
+      "bulk",
+      "company",
+      "archive",
+      "--ids",
+      secondCompany.id,
+      "--unexpected",
+      "value",
+      "--json",
+    ]);
+    expect(invalid.exitCode).toBe(2);
+    expect(invalid.stderr).toContain("Unknown option: --unexpected");
+
+    await harness.lifecycle.dispose();
+  });
+
   it("round-trips versioned JSON and CSV CLI exports through import", async () => {
     const source = createFakePluginHost({ pluginId: "crm" });
     await plugin(source.bb);
@@ -486,6 +568,25 @@ describe("CRM plugin foundation", () => {
       activityId: expect.any(String),
       dueAt: expect.any(String),
     });
+    const repeatedRecheck = JSON.parse(String(await harness.callAgentTool("schedule_recheck", {
+      contactId: contact.id,
+      days: 14,
+      reason: "The contact may change roles before the next deal review.",
+    }))) as { scheduled: boolean; reused: boolean; activityId: string; dueAt: string };
+    expect(repeatedRecheck).toMatchObject({
+      scheduled: true,
+      reused: true,
+      activityId: recheck.activityId,
+      dueAt: recheck.dueAt,
+    });
+    expect(
+      (bb.storage.database().prepare(`
+        SELECT COUNT(*) AS count
+        FROM activities
+        WHERE contact_id = ? AND type = 'TASK' AND subject = 'CRM recheck'
+          AND completed_at IS NULL
+      `).get(contact.id) as { count: number }).count,
+    ).toBe(1);
 
     await harness.lifecycle.dispose();
   });
@@ -632,7 +733,7 @@ describe("CRM plugin foundation", () => {
     ).resolves.toMatchObject({ total: 1 });
 
     await expect(
-      harness.behavior.callRpc("companies_bulkRestore", { ids: [id, "missing"] }),
+      harness.behavior.callRpc("companies_bulkRestore", { ids: [id, id, "missing"] }),
     ).resolves.toMatchObject({ requested: 2, succeeded: 1, failed: 1 });
     expect(harness.realtimeSignals).toEqual(
       expect.arrayContaining([
@@ -1344,60 +1445,57 @@ describe("CRM plugin foundation", () => {
       sourceUrl: "https://www.linkedin.com/in/ada",
     }] as const;
 
-    const proposed = (await harness.behavior.callRpc("contacts_facts_create", {
+    const applied = (await harness.behavior.callRpc("contacts_facts_create", {
       id: "fact_title_server_1",
       contactId: contact.id,
       field: "title",
       value: "Principal Engineer",
-      score: 0.85,
-      band: "VERIFIED",
       evidence,
       method: "linkedin",
       sourceUrl: evidence[0].sourceUrl,
       observedAt: "2026-08-20T12:00:00.000Z",
     })) as { id: string; status: string };
-    expect(proposed).toMatchObject({ id: "fact_title_server_1", status: "PROPOSED" });
+    expect(applied).toMatchObject({ id: "fact_title_server_1", status: "APPLIED" });
     await expect(
       harness.behavior.callRpc("contacts_facts_list", {
         contactId: contact.id,
         field: "title",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: proposed.id, contactId: contact.id })]);
+    ).resolves.toEqual([expect.objectContaining({ id: applied.id, contactId: contact.id })]);
     await expect(
-      harness.behavior.callRpc("contacts_facts_get", { id: proposed.id }),
-    ).resolves.toMatchObject({ id: proposed.id, evidence });
-    await expect(
-      harness.behavior.callRpc("contacts_facts_decide", {
-        id: proposed.id,
-        decision: "accept",
-        decidedById: "reviewer-1",
-      }),
-    ).resolves.toMatchObject({ status: "APPLIED", decidedById: "reviewer-1" });
+      harness.behavior.callRpc("contacts_facts_get", { id: applied.id }),
+    ).resolves.toMatchObject({ id: applied.id, evidence, score: 0.85, band: "VERIFIED" });
+    await expect(harness.behavior.callRpc("contacts_get", { id: contact.id }))
+      .resolves.toMatchObject({ title: "Principal Engineer" });
 
     const replacement = (await harness.behavior.callRpc("contacts_facts_create", {
       id: "fact_title_server_2",
       contactId: contact.id,
       field: "title",
       value: "VP Engineering",
-      score: 0.95,
-      band: "VERIFIED",
       evidence,
       method: "linkedin-refresh",
     })) as { id: string };
     await expect(
-      harness.behavior.callRpc("contacts_facts_supersede", {
-        id: proposed.id,
-        replacementId: replacement.id,
-      }),
+      harness.behavior.callRpc("contacts_facts_get", { id: applied.id }),
     ).resolves.toMatchObject({ status: "SUPERSEDED", supersededById: replacement.id });
+    await harness.behavior.callRpc("contacts_facts_create", {
+      contactId: contact.id,
+      field: "employer",
+      value: "Evidence Systems",
+      evidence,
+      method: "linkedin",
+    });
     const dismissed = (await harness.behavior.callRpc("contacts_facts_create", {
       contactId: contact.id,
-      field: "location",
-      value: "London",
-      score: 0.4,
-      band: "POSSIBLE",
-      evidence,
-      method: "profile",
+      field: "employer",
+      value: "Analytical Engines",
+      evidence: [{
+        kind: "web.cited-claim",
+        detail: "A company biography makes the claim.",
+        sourceUrl: "https://example.com/ada",
+      }],
+      method: "web-profile",
     })) as { id: string };
     await expect(
       harness.behavior.callRpc("contacts_facts_decide", {
@@ -1511,7 +1609,9 @@ describe("CRM plugin foundation", () => {
     });
     const hydrated = await harness.behavior.callRpc("contacts_get", { id: contact.id });
     expect(hydrated).toMatchObject({
-      facts: [expect.objectContaining({ id: replacement.id, status: "PROPOSED" })],
+      facts: expect.arrayContaining([
+        expect.objectContaining({ id: replacement.id, status: "APPLIED" }),
+      ]),
       brief: expect.objectContaining({ narrative: expect.stringContaining("now serves") }),
       workHistory: [expect.objectContaining({ id: currentRole.id, status: "PROPOSED" })],
       relationship: {
@@ -1525,7 +1625,7 @@ describe("CRM plugin foundation", () => {
     });
     expect(harness.realtimeSignals).toEqual(
       expect.arrayContaining([
-        { channel: "changed", payload: { entity: "contact-fact", action: "created", id: proposed.id } },
+        { channel: "changed", payload: { entity: "contact-fact", action: "created", id: applied.id } },
         { channel: "changed", payload: { entity: "contact-brief", action: "created", id: firstBrief.id } },
         { channel: "changed", payload: { entity: "contact-work-history", action: "created", id: oldRole.id } },
       ]),
@@ -1728,6 +1828,47 @@ describe("CRM plugin foundation", () => {
       baseAmountCents: 12_000,
       baseCurrency: "USD",
       fxRate: 1.2,
+      fxRateAt: "2026-08-25T12:00:00.000Z",
+    });
+
+    await harness.lifecycle.dispose();
+  });
+
+  it("recomputes deal money edits against the workspace reporting currency", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "crm",
+      settings: { reportingCurrency: "EUR" },
+    });
+    await plugin(bb);
+    await harness.behavior.callRpc("currency_rates_upsertManual", {
+      baseCurrency: "EUR",
+      quoteCurrency: "USD",
+      rate: 0.9,
+      asOf: "2026-08-25T12:00:00.000Z",
+    });
+    const company = (await harness.behavior.callRpc("companies_create", {
+      name: "Workspace Currency Co",
+    })) as { id: string };
+    const deal = (await harness.behavior.callRpc("deals_create", {
+      name: "Workspace currency deal",
+      companyId: company.id,
+      ownerId: "owner_1",
+      amountCents: 10_000,
+      currency: "USD",
+    })) as { id: string; baseAmountCents: number };
+    expect(deal.baseAmountCents).toBe(9_000);
+
+    await expect(
+      harness.behavior.callRpc("deals_update", {
+        id: deal.id,
+        data: { amountCents: 20_000 },
+      }),
+    ).resolves.toMatchObject({
+      amountCents: 20_000,
+      currency: "USD",
+      baseAmountCents: 18_000,
+      baseCurrency: "EUR",
+      fxRate: 0.9,
       fxRateAt: "2026-08-25T12:00:00.000Z",
     });
 
@@ -2701,6 +2842,17 @@ describe("CRM plugin foundation", () => {
     const first = await harness.behavior.callRpc("agents_threads_createBuilder", {
       agentId: "agent_builder_server",
       versionId: "version_builder_server",
+      initialPrompt: "Flag deals with no activity for 14 days.",
+      spawnRequest: {
+        projectId: "project-requested",
+        providerId: "provider-codex",
+        model: "model-default",
+        reasoningLevel: "medium",
+        permissionMode: "accept-edits",
+        executionInputSources: {},
+        environment: { type: "project-default" },
+        input: [{ type: "text", text: "Flag deals with no activity for 14 days.", mentions: [] }],
+      },
     }) as { id: string; threadId: string; kind: string; versionId: string | null };
     const second = await harness.behavior.callRpc("agents_threads_createBuilder", {
       agentId: "agent_builder_server",
@@ -2725,16 +2877,29 @@ describe("CRM plugin foundation", () => {
     });
     expect(spawn).toHaveBeenCalledTimes(2);
     expect(harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0]).toMatchObject({
-      projectId: "project-builder",
+      projectId: "project-requested",
+      providerId: "provider-codex",
+      model: "model-default",
+      reasoningLevel: "medium",
+      executionInputSources: {},
       visibility: "visible",
       permissionMode: "accept-edits",
     });
-    const prompt = String((harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0] as { input?: Array<{ text?: string }> }).input?.[0]?.text);
+    const spawnInput = (harness.inspection.sdk.callsTo("threads.spawn")[0]?.[0] as { input?: Array<{ text?: string; type?: string }> }).input;
+    const prompt = String(spawnInput?.[0]?.text);
     expect(prompt).toContain("[CRM AGENT BUILDER THREAD]");
     expect(prompt).toContain('"id":"agent_builder_server"');
     expect(prompt).toContain('"id":"version_builder_server"');
     expect(prompt).toContain("<<<CRM_AGENT_INSTRUCTIONS>>>");
     expect(prompt).toContain("<<<END_CRM_AGENT_INSTRUCTIONS>>>");
+    expect(prompt).toContain("<<<CRM_BUILDER_REQUEST>>>");
+    expect(prompt).toContain("Flag deals with no activity for 14 days.");
+    expect(prompt).toContain("<<<END_CRM_BUILDER_REQUEST>>>");
+    expect(spawnInput?.[1]).toEqual({
+      type: "text",
+      text: "Flag deals with no activity for 14 days.",
+      mentions: [],
+    });
     await expect(
       harness.behavior.callRpc("agents_threads_list", {
         agentId: "agent_builder_server",
@@ -3171,7 +3336,7 @@ describe("CRM plugin foundation", () => {
     }) as { id: string };
 
     const bulk = await harness.behavior.callRpc("contacts_bulkEnrich", {
-      ids: [contact.id],
+      ids: [contact.id, contact.id],
     });
     expect(bulk).toMatchObject({ requested: 1, succeeded: 1, skipped: 0, failed: 0 });
     const runs = await harness.behavior.callRpc("agents_runs_list", {
@@ -3195,8 +3360,6 @@ describe("CRM plugin foundation", () => {
       contactId: contact.id,
       field: "twitterUrl",
       value: "https://x.com/evidence_candidate",
-      score: 0.8,
-      band: "PROBABLE",
       evidence: [{
         kind: "handle.name-form",
         detail: "The profile handle matches the contact's name.",

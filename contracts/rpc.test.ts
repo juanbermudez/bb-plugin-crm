@@ -254,6 +254,33 @@ describe("CRM RPC contract", () => {
     expect(
       rpcContract.agents_threads_createBuilder.input.safeParse({
         agentId: "agent-1",
+        initialPrompt: "Flag stale deals for review.",
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.agents_threads_createBuilder.input.safeParse({
+        agentId: "agent-1",
+        spawnRequest: {
+          projectId: "project-1",
+          providerId: "provider-1",
+          model: "model-1",
+          reasoningLevel: "medium",
+          permissionMode: "accept-edits",
+          executionInputSources: {},
+          environment: { type: "project-default" },
+          input: [{ type: "text", text: "Flag stale deals for review.", mentions: [] }],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      rpcContract.agents_threads_createBuilder.input.safeParse({
+        agentId: "agent-1",
+        initialPrompt: "   ",
+      }).success,
+    ).toBe(false);
+    expect(
+      rpcContract.agents_threads_createBuilder.input.safeParse({
+        agentId: "agent-1",
       }).success,
     ).toBe(true);
     expect(
@@ -338,8 +365,6 @@ describe("CRM RPC contract", () => {
         contactId: "contact-1",
         field: "title",
         value: "Principal Engineer",
-        score: 0.9,
-        band: "VERIFIED",
         evidence: [evidence],
         method: "linkedin",
         sourceUrl: "https://www.linkedin.com/in/ada",

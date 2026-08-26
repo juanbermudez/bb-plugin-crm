@@ -1,5 +1,14 @@
 import { createActivity } from "./activities.js";
 import {
+  CurrencyService,
+  DEFAULT_REPORTING_CURRENCY,
+} from "./currency.js";
+import {
+  collectActivityStampTargets,
+  recomputeActivityStamps,
+} from "./activity-stamps.js";
+import { purgeRecordArtifacts } from "./purge-artifacts.js";
+import {
   DEAL_STAGES,
   activityFilterClause,
   isClosedStage,
@@ -31,7 +40,7 @@ export interface Deal {
   expectedCloseDate: string | null;
   closedAt: string | null;
   closedReason: string | null;
-  /** Frozen reporting-currency snapshot; ordinary edits never rewrite it. */
+  /** Frozen reporting-currency snapshot; source-money edits refresh it. */
   baseAmountCents: number | null;
   baseCurrency: string | null;
   fxRate: number | null;
@@ -51,7 +60,11 @@ export type DealCreateInput = Partial<
   ownerId: string;
 };
 
-/** Base money fields are intentionally absent: changing source money does not re-rate a deal. */
+export interface DealUpdateOptions {
+  /** Workspace reporting currency used when source money is edited. */
+  reportingCurrency?: string;
+}
+
 export type DealUpdateInput = Partial<
   Omit<
     Deal,
@@ -198,7 +211,14 @@ function dbValues(value: Deal): Record<string, string | number | null> {
 }
 
 export class DealStore {
-  constructor(private readonly db: Db) {}
+  private readonly currency: CurrencyService;
+
+  constructor(
+    private readonly db: Db,
+    reportingCurrency: string = DEFAULT_REPORTING_CURRENCY,
+  ) {
+    this.currency = new CurrencyService(db, reportingCurrency);
+  }
 
   get(id: string, options: { includeArchived?: boolean } = {}): Deal | null {
     const condition = options.includeArchived === false ? " AND archived_at IS NULL" : "";
@@ -352,8 +372,6 @@ export class DealStore {
     if (search) {
       clauses.push(`(
         name LIKE @search COLLATE NOCASE OR
-        description LIKE @search COLLATE NOCASE OR
-        currency LIKE @search COLLATE NOCASE OR
         company_id IN (
           SELECT id FROM companies
           WHERE name LIKE @search COLLATE NOCASE
@@ -369,13 +387,14 @@ export class DealStore {
     };
   }
 
-  update(id: string, input: DealUpdateInput): Deal {
+  update(id: string, input: DealUpdateInput, options: DealUpdateOptions = {}): Deal {
     return this.db.transaction(() => {
       const current = this.getRequired(id);
       const next: Deal = { ...current };
+      const has = (key: keyof DealUpdateInput): boolean => input[key] !== undefined;
+      const moneyChanged = has("amountCents") || has("currency");
       let stageChanged = false;
       let stageChangeReason: string | null = null;
-      const has = (key: keyof DealUpdateInput): boolean => input[key] !== undefined;
       if (has("name")) next.name = requiredText(input.name as string, "Deal name");
       if (has("description")) next.description = nullableText(input.description);
       if (has("companyId")) next.companyId = requiredText(input.companyId as string, "Deal company");
@@ -386,6 +405,19 @@ export class DealStore {
       if (has("closedAt")) next.closedAt = input.closedAt ?? null;
       if (has("closedReason")) next.closedReason = nullableText(input.closedReason);
       if (has("lastActivityAt")) next.lastActivityAt = input.lastActivityAt ?? null;
+      if (moneyChanged) {
+        const conversion = next.amountCents === null
+          ? null
+          : this.currency.convert(
+            next.amountCents,
+            next.currency,
+            options.reportingCurrency ?? this.currency.defaultReportingCurrency,
+          );
+        next.baseAmountCents = conversion?.baseAmountCents ?? null;
+        next.baseCurrency = conversion?.baseCurrency ?? null;
+        next.fxRate = conversion?.fxRate ?? null;
+        next.fxRateAt = conversion?.fxRateAt ?? null;
+      }
       if (has("stage")) {
         const stage = assertStage(input.stage as string);
         if (stage !== current.stage) {
@@ -407,6 +439,18 @@ export class DealStore {
       this.db
         .prepare(`UPDATE deals SET ${changed.map((column) => `${column} = @${column}`).join(", ")}, updated_at = @updated_at WHERE id = @id`)
         .run(values);
+      if (moneyChanged) {
+        this.db
+          .prepare(`
+            UPDATE deals
+            SET base_amount_cents = @base_amount_cents,
+                base_currency = @base_currency,
+                fx_rate = @fx_rate,
+                fx_rate_at = @fx_rate_at
+            WHERE id = @id
+          `)
+          .run(values);
+      }
       if (stageChanged) {
         const occurredAt = next.stageChangedAt;
         createActivity(
@@ -472,14 +516,20 @@ export class DealStore {
   purge(id: string): Deal {
     return this.db.transaction(() => {
       const value = this.getRequired(id);
+      purgeRecordArtifacts(this.db, "DEAL", id);
+      const targets = collectActivityStampTargets(this.db, "deal_id = ?", [id]);
       this.db.prepare("DELETE FROM deals WHERE id = ?").run(id);
+      recomputeActivityStamps(this.db, targets);
       return value;
     })();
   }
 }
 
-export function createDealStore(db: Db): DealStore {
-  return new DealStore(db);
+export function createDealStore(
+  db: Db,
+  reportingCurrency: string = DEFAULT_REPORTING_CURRENCY,
+): DealStore {
+  return new DealStore(db, reportingCurrency);
 }
 
 export function createDeal(db: Db, input: DealCreateInput): Deal {
@@ -494,8 +544,13 @@ export function listDeals(db: Db, options?: DealListOptions): Deal[] {
   return new DealStore(db).list(options);
 }
 
-export function updateDeal(db: Db, id: string, input: DealUpdateInput): Deal {
-  return new DealStore(db).update(id, input);
+export function updateDeal(
+  db: Db,
+  id: string,
+  input: DealUpdateInput,
+  options?: DealUpdateOptions,
+): Deal {
+  return new DealStore(db).update(id, input, options);
 }
 
 export function archiveDeal(db: Db, id: string): Deal {

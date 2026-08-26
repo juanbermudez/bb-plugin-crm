@@ -9,6 +9,7 @@ export * from "./saved-views.js";
 export * from "./custom-fields.js";
 export * from "./agents.js";
 export * from "./connections.js";
+export * from "./purge-artifacts.js";
 export {
   CURRENCIES,
   CURRENCY_CODES,

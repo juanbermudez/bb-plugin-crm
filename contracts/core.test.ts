@@ -232,13 +232,21 @@ describe("CRM core contracts", () => {
         contactId: "con_1",
         field: "title",
         value: "Principal Engineer",
-        score: 0.85,
-        band: "VERIFIED",
         evidence: [evidence],
         method: "linkedin",
         sourceUrl: evidence.sourceUrl,
       }).success,
     ).toBe(true);
+    expect(
+      contactFactCreateInputSchema.safeParse({
+        contactId: "con_1",
+        field: "title",
+        value: "Principal Engineer",
+        score: 0.85,
+        evidence: [evidence],
+        method: "linkedin",
+      }).success,
+    ).toBe(false);
     expect(
       contactFactCreateInputSchema.safeParse({
         contactId: "con_1",

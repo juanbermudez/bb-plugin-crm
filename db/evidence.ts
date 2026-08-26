@@ -86,8 +86,10 @@ export interface ContactFactCreateInput {
   contactId: string;
   field: FactField;
   value: string;
-  score: number;
-  band: FactBand;
+  /** Derived from evidence. Caller-provided confidence is never trusted. */
+  score?: number;
+  /** Derived from evidence. Caller-provided confidence is never trusted. */
+  band?: FactBand;
   evidence: readonly EvidenceInput[];
   method: string;
   sourceUrl?: string | null;
@@ -211,6 +213,57 @@ export class EvidenceConflictError extends Error {
   }
 }
 
+export const EVIDENCE_WEIGHTS: Readonly<Record<EvidenceKind, { weight: number; primary: boolean }>> = {
+  "profile.email-match": { weight: 0.95, primary: true },
+  "linkedin.employer-and-name": { weight: 0.85, primary: true },
+  "crm.thread-reply": { weight: 0.85, primary: true },
+  "crm.signature-block": { weight: 0.8, primary: true },
+  "github.account-identity": { weight: 0.8, primary: true },
+  "crm.meeting-attendance": { weight: 0.7, primary: true },
+  "web.cited-claim": { weight: 0.4, primary: false },
+  "handle.name-form": { weight: 0.35, primary: false },
+  "search.cites-profile": { weight: 0.35, primary: false },
+  "employer-only": { weight: 0.2, primary: false },
+  contradiction: { weight: 0, primary: false },
+};
+
+export const FACT_BAND_FLOORS = {
+  VERIFIED: 0.85,
+  PROBABLE: 0.55,
+  POSSIBLE: 0.3,
+} as const;
+
+export interface ScoredEvidence {
+  score: number;
+  band: FactBand | null;
+  hasPrimary: boolean;
+}
+
+export function bandForEvidence(scoreValue: number, hasPrimary: boolean): FactBand | null {
+  if (scoreValue >= FACT_BAND_FLOORS.VERIFIED && hasPrimary) return "VERIFIED";
+  if (scoreValue >= FACT_BAND_FLOORS.PROBABLE) return "PROBABLE";
+  if (scoreValue >= FACT_BAND_FLOORS.POSSIBLE) return "POSSIBLE";
+  return null;
+}
+
+/** Source-compatible independent-evidence combination with a contradiction cap. */
+export function scoreContactEvidence(input: readonly EvidenceInput[]): ScoredEvidence {
+  const evidence = normalizedEvidence(input);
+  const hasPrimary = evidence.some((item) => EVIDENCE_WEIGHTS[item.kind].primary);
+  const contradicted = evidence.some((item) => item.kind === "contradiction");
+  const remaining = evidence.reduce(
+    (product, item) => product * (1 - EVIDENCE_WEIGHTS[item.kind].weight),
+    1,
+  );
+  let scoreValue = Math.min(0.99, 1 - remaining);
+  if (contradicted) scoreValue = Math.min(scoreValue, 0.45);
+  return {
+    score: scoreValue,
+    band: bandForEvidence(scoreValue, hasPrimary),
+    hasPrimary,
+  };
+}
+
 type JsonValue =
   | string
   | number
@@ -325,6 +378,10 @@ function normalizedSections(input: BriefSections): BriefSections {
 
 function normalizeFactInput(input: ContactFactCreateInput): ContactFact {
   const now = nowIso();
+  const scored = scoreContactEvidence(input.evidence);
+  if (scored.band === null) {
+    throw new EvidenceConflictError("That evidence is below the floor for keeping on the contact record.");
+  }
   const status = assertOneOf(input.status ?? "PROPOSED", FACT_STATUSES, "fact status");
   const field = assertOneOf(input.field, FACT_FIELDS, "fact field");
   const fact: ContactFact = {
@@ -332,8 +389,8 @@ function normalizeFactInput(input: ContactFactCreateInput): ContactFact {
     contactId: requiredText(input.contactId, "Fact contact"),
     field,
     value: requiredText(input.value, "Fact value"),
-    score: score(input.score),
-    band: assertOneOf(input.band, FACT_BANDS, "fact band"),
+    score: scored.score,
+    band: scored.band,
     evidence: normalizedEvidence(input.evidence),
     method: requiredText(input.method, "Fact method"),
     sourceUrl: nullableText(input.sourceUrl),
@@ -449,6 +506,88 @@ function parseFact(value: unknown): ContactFact {
   };
 }
 
+const FACT_CONTACT_COLUMNS: Partial<Record<FactField, string>> = {
+  title: "title",
+  linkedinUrl: "linkedin_url",
+  twitterUrl: "twitter_url",
+  githubUrl: "github_url",
+  seniority: "seniority",
+  function: "function",
+};
+
+function canonicalFactValue(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, " ").toLowerCase();
+  try {
+    const url = new URL(normalized.includes("://") ? normalized : `https://${normalized}`);
+    const hostname = url.hostname === "twitter.com" || url.hostname === "mobile.twitter.com"
+      ? "x.com"
+      : url.hostname.replace(/^www\./, "");
+    const path = url.pathname.replace(/\/+$/, "");
+    return `${hostname}${path}${url.search}`;
+  } catch {
+    return normalized;
+  }
+}
+
+function sameFactValue(left: string, right: string): boolean {
+  return canonicalFactValue(left) === canonicalFactValue(right);
+}
+
+interface FactContactSubject {
+  email: string | null;
+  firstName: string;
+  lastName: string | null;
+  title: string | null;
+  linkedinUrl: string | null;
+  twitterUrl: string | null;
+  githubUrl: string | null;
+  seniority: string | null;
+  function: string | null;
+}
+
+function contactSubject(db: Db, contactId: string): FactContactSubject {
+  const value = db.prepare(`
+    SELECT
+      email,
+      first_name AS firstName,
+      last_name AS lastName,
+      title,
+      linkedin_url AS linkedinUrl,
+      twitter_url AS twitterUrl,
+      github_url AS githubUrl,
+      seniority,
+      function
+    FROM contacts
+    WHERE id = ?
+  `).get(contactId) as FactContactSubject | undefined;
+  if (!value) throw new RecordNotFoundError("contact", contactId);
+  return value;
+}
+
+function nameLooksEmailDerived(contact: FactContactSubject): boolean {
+  if (!contact.email) return false;
+  const local = contact.email.split("@", 1)[0]?.toLowerCase() ?? "";
+  const tokens = local.split(/[._+\-]+/).filter(Boolean);
+  const first = contact.firstName.trim().toLowerCase();
+  const last = contact.lastName?.trim().toLowerCase() ?? "";
+  return tokens.includes(first) && (last === "" || tokens.includes(last));
+}
+
+function contactFieldValue(contact: FactContactSubject, field: FactField): string | null {
+  const key: Partial<Record<FactField, keyof FactContactSubject>> = {
+    title: "title",
+    linkedinUrl: "linkedinUrl",
+    twitterUrl: "twitterUrl",
+    githubUrl: "githubUrl",
+    seniority: "seniority",
+    function: "function",
+  };
+  const property = key[field];
+  if (!property) return null;
+  const value = contact[property];
+  return typeof value === "string" ? value : null;
+}
+
 export class ContactFactStore {
   constructor(private readonly db: Db) {}
 
@@ -504,6 +643,36 @@ export class ContactFactStore {
   create(input: ContactFactCreateInput): ContactFact {
     const fact = normalizeFactInput(input);
     return this.db.transaction(() => {
+      const contact = contactSubject(this.db, fact.contactId);
+      const liveFacts = this.list(fact.contactId, {
+        field: fact.field,
+        statuses: ["APPLIED", "PROPOSED", "DISMISSED"],
+      });
+      if (liveFacts.some((item) => item.status === "DISMISSED" && sameFactValue(item.value, fact.value))) {
+        throw new EvidenceConflictError("A person already dismissed this exact value.");
+      }
+      const currentApplied = liveFacts.find((item) => item.status === "APPLIED");
+      if (currentApplied && sameFactValue(currentApplied.value, fact.value)) {
+        throw new EvidenceConflictError("That value is already on the record.");
+      }
+      const column = FACT_CONTACT_COLUMNS[fact.field];
+      const hasAgentFact = currentApplied !== undefined;
+      const humanOwns = fact.field === "name"
+        ? !nameLooksEmailDerived(contact)
+        : column !== undefined && !hasAgentFact && Boolean(contactFieldValue(contact, fact.field));
+      if (humanOwns) {
+        throw new EvidenceConflictError(`A person already filled in ${fact.field}; agent evidence cannot overwrite it.`);
+      }
+      const fillsBlank = !hasAgentFact && (fact.field === "name" || column === undefined || !contactFieldValue(contact, fact.field));
+      const applies = fact.band === "VERIFIED" || fillsBlank;
+      if (!applies && liveFacts.some((item) => item.status === "PROPOSED" && sameFactValue(item.value, fact.value))) {
+        throw new EvidenceConflictError("That exact value is already awaiting review.");
+      }
+      fact.status = applies ? "APPLIED" : "PROPOSED";
+      fact.decidedById = null;
+      fact.decidedAt = null;
+      fact.supersededAt = null;
+
       const superseded = fact.supersedesId
         ? this.getRequired(fact.supersedesId)
         : null;
@@ -558,6 +727,9 @@ export class ContactFactStore {
       `);
       const supersededAt = nowIso();
       for (const id of supersedeIds) supersede.run({ id, at: supersededAt, by: fact.id });
+      if (fact.status === "APPLIED") {
+        this.applyFactToContact(fact.contactId, fact.field, fact.value, fact.createdAt);
+      }
       return this.getRequired(fact.id);
     })();
   }
@@ -633,14 +805,6 @@ export class ContactFactStore {
   }
 
   private applyFactToContact(contactId: string, field: FactField, value: string, updatedAt: string): void {
-    const column: Partial<Record<FactField, string>> = {
-      title: "title",
-      linkedinUrl: "linkedin_url",
-      twitterUrl: "twitter_url",
-      githubUrl: "github_url",
-      seniority: "seniority",
-      function: "function",
-    };
     if (field === "name") {
       const [firstName, ...rest] = value.trim().split(/\s+/);
       this.db.prepare(`
@@ -655,7 +819,7 @@ export class ContactFactStore {
       });
       return;
     }
-    const target = column[field];
+    const target = FACT_CONTACT_COLUMNS[field];
     if (!target) return;
     this.db.prepare(`UPDATE contacts SET ${target} = @value, updated_at = @updatedAt WHERE id = @contactId`).run({
       contactId,

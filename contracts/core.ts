@@ -1192,8 +1192,6 @@ export const contactFactCreateInputSchema = z
     contactId: idSchema,
     field: factFieldSchema,
     value: nonEmptyText,
-    score: factScore,
-    band: factBandSchema,
     evidence: z.array(contactFactEvidenceInputSchema).min(1),
     method: nonEmptyText,
     sourceUrl: optionalNullableSourceUrl,

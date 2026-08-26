@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createCompany } from "./companies.js";
-import { createDeal, getDeal, updateDeal } from "./deals.js";
+import { createDeal, createDealStore, getDeal, updateDeal } from "./deals.js";
 import {
   CURRENCIES,
   CurrencyService,
@@ -126,7 +126,7 @@ describe("CRM currency persistence", () => {
     }
   });
 
-  it("re-rates only frozen deal money and leaves ordinary updates frozen", async () => {
+  it("refreshes frozen money for source edits, clears missing rates, and preserves unrelated edits", async () => {
     const { db, lifecycle } = withDatabase();
     try {
       const company = createCompany(db, { name: "Acme" });
@@ -150,6 +150,12 @@ describe("CRM currency persistence", () => {
         rate: 1.2,
         asOf: "2026-08-01T00:00:00.000Z",
       });
+      rates.upsertManual({
+        baseCurrency: "USD",
+        quoteCurrency: "EUR",
+        rate: 1.25,
+        asOf: "2026-08-02T00:00:00.000Z",
+      });
 
       const rerated = new CurrencyService(db).rerateDeal(deal.id, "USD");
       expect(rerated).toMatchObject({
@@ -157,28 +163,57 @@ describe("CRM currency persistence", () => {
         name: "Expansion",
         amountCents: 10_000,
         currency: "EUR",
-        baseAmountCents: 12_000,
+        baseAmountCents: 12_500,
         baseCurrency: "USD",
-        fxRate: 1.2,
-        fxRateAt: "2026-08-01T00:00:00.000Z",
+        fxRate: 1.25,
+        fxRateAt: "2026-08-02T00:00:00.000Z",
       });
       expect(rerated.updatedAt).toBe(createdUpdatedAt);
 
-      const ordinaryUpdate = updateDeal(db, deal.id, {
+      const amountUpdate = updateDeal(db, deal.id, {
+        amountCents: 20_000,
+      });
+      expect(amountUpdate).toMatchObject({
+        amountCents: 20_000,
+        currency: "EUR",
+        baseAmountCents: 25_000,
+        baseCurrency: "USD",
+        fxRate: 1.25,
+        fxRateAt: "2026-08-02T00:00:00.000Z",
+      });
+
+      rates.upsertManual({
+        baseCurrency: "USD",
+        quoteCurrency: "EUR",
+        rate: 1.5,
+        asOf: "2026-08-03T00:00:00.000Z",
+      });
+      const unrelatedUpdate = updateDeal(db, deal.id, {
+        description: "Unrelated edit",
+      });
+      expect(unrelatedUpdate).toMatchObject({
+        description: "Unrelated edit",
+        baseAmountCents: 25_000,
+        baseCurrency: "USD",
+        fxRate: 1.25,
+        fxRateAt: "2026-08-02T00:00:00.000Z",
+      });
+
+      const missingRateUpdate = updateDeal(db, deal.id, {
+        currency: "GBP",
+      });
+      expect(missingRateUpdate).toMatchObject({
         amountCents: 20_000,
         currency: "GBP",
-        description: "Source amount changed",
+        baseAmountCents: null,
+        baseCurrency: null,
+        fxRate: null,
+        fxRateAt: null,
       });
-      expect(ordinaryUpdate.amountCents).toBe(20_000);
-      expect(ordinaryUpdate.currency).toBe("GBP");
-      expect(ordinaryUpdate.baseAmountCents).toBe(12_000);
-      expect(ordinaryUpdate.baseCurrency).toBe("USD");
-      expect(ordinaryUpdate.fxRate).toBe(1.2);
-      expect(ordinaryUpdate.fxRateAt).toBe("2026-08-01T00:00:00.000Z");
 
       const missing = new CurrencyService(db).rerateAll("USD");
       expect(missing.missing).toEqual(["GBP"]);
-      expect(missing.cleared).toBe(1);
+      expect(missing.cleared).toBe(0);
       expect(getDeal(db, deal.id)).toMatchObject({
         amountCents: 20_000,
         currency: "GBP",
@@ -186,6 +221,44 @@ describe("CRM currency persistence", () => {
         baseCurrency: null,
         fxRate: null,
         fxRateAt: null,
+      });
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("uses the configured workspace reporting currency when source money changes", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const company = createCompany(db, { name: "Workspace currency" });
+      const deals = createDealStore(db, "EUR");
+      const rates = new ExchangeRateStore(db);
+      rates.upsertManual({
+        baseCurrency: "EUR",
+        quoteCurrency: "USD",
+        rate: 0.9,
+        asOf: "2026-08-04T00:00:00.000Z",
+      });
+      const deal = deals.create({
+        id: "deal_workspace_currency",
+        name: "Workspace currency deal",
+        companyId: company.id,
+        ownerId: "user_1",
+        amountCents: 10_000,
+        currency: "USD",
+        baseAmountCents: 9_000,
+        baseCurrency: "EUR",
+        fxRate: 0.9,
+        fxRateAt: "2026-08-04T00:00:00.000Z",
+      });
+
+      expect(deals.update(deal.id, { amountCents: 20_000 })).toMatchObject({
+        amountCents: 20_000,
+        currency: "USD",
+        baseAmountCents: 18_000,
+        baseCurrency: "EUR",
+        fxRate: 0.9,
+        fxRateAt: "2026-08-04T00:00:00.000Z",
       });
     } finally {
       await lifecycle.dispose();

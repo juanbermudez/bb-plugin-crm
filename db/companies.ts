@@ -1,4 +1,9 @@
 import { createActivity } from "./activities.js";
+import {
+  collectActivityStampTargets,
+  recomputeActivityStamps,
+} from "./activity-stamps.js";
+import { purgeRecordArtifacts } from "./purge-artifacts.js";
 import { activityFilterClause, domainFromEmail, isSqliteUniqueConstraint, newRecordId, nowIso, nullableText, normalizeDomain, normalizeLimit, normalizeOffset, normalizeEmail, RecordConflictError, requiredText, RecordNotFoundError, type Db, type EnrichmentStatus, type ListOptions, type RecordSource, ENRICHMENT_STATUSES, RECORD_SOURCES } from "./types.js";
 
 const SYSTEM_ACTIVITY_AUTHOR_ID = "local_user";
@@ -367,7 +372,7 @@ export class CompanyStore {
       // the only stable local ordering available for this relation.
       owner: "owner_id",
       contacts: "(SELECT COUNT(*) FROM contacts AS related_contacts WHERE related_contacts.company_id = companies.id)",
-      deals: "(SELECT COUNT(*) FROM deals AS related_deals WHERE related_deals.company_id = companies.id)",
+      deals: "(SELECT COUNT(*) FROM deals AS related_deals WHERE related_deals.company_id = companies.id AND related_deals.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST'))",
       createdAt: "created_at",
       lastActivity: "last_activity_at",
       archivedAt: "archived_at",
@@ -477,9 +482,7 @@ export class CompanyStore {
     if (search) {
       clauses.push(`(
         name LIKE @search COLLATE NOCASE OR
-        domain LIKE @search COLLATE NOCASE OR
-        email LIKE @search COLLATE NOCASE OR
-        industry LIKE @search COLLATE NOCASE
+        domain LIKE @search COLLATE NOCASE
       )`);
       params.search = `%${search}%`;
     }
@@ -615,7 +618,23 @@ export class CompanyStore {
   purge(id: string): Company {
     return this.db.transaction(() => {
       const value = this.getRequired(id);
+      // A company delete cascades its deals, so clean both record kinds while
+      // their rows still exist. The shared transaction keeps agent cleanup,
+      // activity cascades, and the company delete all-or-nothing.
+      const dealIds = (this.db.prepare(
+        "SELECT id FROM deals WHERE company_id = ? ORDER BY id ASC",
+      ).pluck().all(id) as unknown[]).filter((dealId): dealId is string => typeof dealId === "string");
+      purgeRecordArtifacts(this.db, "COMPANY", id);
+      for (const dealId of dealIds) purgeRecordArtifacts(this.db, "DEAL", dealId);
+      const targets = collectActivityStampTargets(
+        this.db,
+        `company_id = ? OR deal_id IN (
+          SELECT id FROM deals WHERE company_id = ?
+        )`,
+        [id, id],
+      );
       this.db.prepare("DELETE FROM companies WHERE id = ?").run(id);
+      recomputeActivityStamps(this.db, targets);
       return value;
     })();
   }
