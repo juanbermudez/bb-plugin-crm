@@ -6,6 +6,7 @@ import {
 import { ClarificationQuestion } from "./app/components/clarification-question.js";
 import { CLARIFICATION_RENDERER_ID } from "./contracts/clarification.js";
 import { SettingsView } from "./app/views/settings/index.js";
+import "./app.css";
 
 function CrmSettingsSection() {
   return <SettingsView embedded />;
@@ -15,7 +16,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "crm",
     title: "CRM",
-    icon: "Target",
+    icon: "Layers",
     path: "crm",
     component: CrmAppShell,
     headerContent: CrmHeaderContent,

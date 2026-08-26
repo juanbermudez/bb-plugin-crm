@@ -1,0 +1,7 @@
+/* The CRM identity belongs in BB's sidebar; the shared panel title stays typographic. */
+header:has([data-bb-plugin="crm"])
+  [data-testid="app-page-header-content-row"]
+  > div:first-child
+  :is([data-plugin-icon-asset], svg[data-icon]) {
+  display: none;
+}

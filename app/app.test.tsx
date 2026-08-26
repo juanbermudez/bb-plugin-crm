@@ -23,7 +23,7 @@ describe("CRM nav panel", () => {
     expect(panel).toMatchObject({
       id: "crm",
       title: "CRM",
-      icon: "Target",
+      icon: "Layers",
       path: "crm",
     });
 
@@ -115,6 +115,16 @@ describe("CRM nav panel", () => {
     const checklistDialog = headerSlot.getByRole("dialog", { name: "Set up your CRM workspace" });
     expect(within(checklistDialog).getByText("0 of 4 complete")).toBeDefined();
     fireEvent.click(within(checklistDialog).getByRole("button", { name: "Dismiss" }));
+    const headerNavigation = headerSlot
+      .getAllByRole("navigation", { name: "CRM sections" })
+      .find((element) => element.className.includes("lg:block"))!;
+    expect(headerNavigation).toBeDefined();
+    fireEvent.mouseDown(within(headerNavigation).getByRole("tab", { name: "Contacts" }), { button: 0 });
+    expect(headerSlot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "crm",
+      options: { subPath: "contacts" },
+    });
     expect(headerSlot.getByRole("button", { name: "Checklist, 0 of 4 complete" })).toBeDefined();
     expect(headerSlot.getByRole("button", { name: /Enrichment queue/ })).toBeDefined();
     fireEvent.click(headerSlot.getByRole("button", { name: /Enrichment queue/ }));

@@ -34,6 +34,7 @@ import {
   type CrmCreateAction,
   type CrmPanelKind,
   type CrmRoute,
+  type CrmRouteKind,
 } from "./routes.js";
 import { CompaniesView } from "./views/companies/index.js";
 import { ContactsView } from "./views/contacts/index.js";
@@ -57,6 +58,49 @@ const CRM_TABS: ReadonlyArray<{ kind: CrmPanelKind; label: string }> = [
   { kind: "deals", label: "Deals" },
   { kind: "agents", label: "Agents" },
 ];
+
+function CrmSectionTabs({
+  activeKind,
+  onNavigate,
+  placement,
+}: {
+  activeKind: CrmRouteKind;
+  onNavigate: (kind: CrmPanelKind) => void;
+  placement: "header" | "body";
+}) {
+  const inHeader = placement === "header";
+  return (
+    <nav
+      className={inHeader
+        ? "hidden shrink-0 lg:block"
+        : "shrink-0 border-b border-border px-4 lg:hidden sm:px-5"}
+      aria-label="CRM sections"
+    >
+      <Tabs
+        value={activeKind === "settings" ? "dashboard" : activeKind}
+        onValueChange={(value) => {
+          const tab = CRM_TABS.find(({ kind }) => kind === value);
+          if (tab) onNavigate(tab.kind);
+        }}
+      >
+        <TabsList className={inHeader
+          ? "h-10 gap-3 overflow-x-auto rounded-none bg-transparent p-0"
+          : "h-11 w-full justify-start gap-5 overflow-x-auto rounded-none bg-transparent p-0"}
+        >
+          {CRM_TABS.map((tab) => (
+            <TabsTrigger
+              key={tab.kind}
+              value={tab.kind}
+              className={`${inHeader ? "h-10 text-xs" : "h-11 text-sm"} rounded-none border-b-2 border-transparent px-0 shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none`}
+            >
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+    </nav>
+  );
+}
 
 export interface CrmPanelProps extends PluginNavPanelProps {
   panelKind?: CrmPanelKind;
@@ -113,6 +157,7 @@ function routeForQueueSubject(subject: EnrichmentQueueSubject): CrmRoute | null 
 /** Compact actions mounted in BB's host-owned title bar. */
 export function CrmHeaderContent({ subPath }: CrmPanelProps) {
   const goRoute = useCrmRouteNavigation();
+  const route = parseCrmPanelRoute("dashboard", subPath);
   const [createOpen, setCreateOpen] = useState(false);
   const [checklistOpen, setChecklistOpen] = useState(
     () => !readWorkspaceChecklistState().dismissed,
@@ -188,10 +233,15 @@ export function CrmHeaderContent({ subPath }: CrmPanelProps) {
   }, [createOpen, focusCreateButton]);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+    <div className="flex min-w-0 items-center gap-2">
+      <CrmSectionTabs
+        activeKind={route.kind}
+        onNavigate={(kind) => goRoute({ kind, recordId: null })}
+        placement="header"
+      />
       <GlobalSearch
         onOpen={(result) => goRoute(routeForSearchResult(result))}
-        className="hidden w-64 lg:block"
+        className="hidden w-56 xl:block"
       />
       <EnrichmentQueue
         onOpen={(subject) => {
@@ -323,27 +373,11 @@ export function CrmAppShell({ subPath, panelKind = "dashboard" }: CrmPanelProps)
 
   return (
     <div className="@container flex h-full min-h-0 flex-col bg-background text-foreground">
-      <nav className="shrink-0 border-b border-border px-4 sm:px-5" aria-label="CRM sections">
-        <Tabs
-          value={route.kind === "settings" ? "dashboard" : route.kind}
-          onValueChange={(value) => {
-            const tab = CRM_TABS.find(({ kind }) => kind === value);
-            if (tab) goRoute({ kind: tab.kind, recordId: null });
-          }}
-        >
-          <TabsList className="h-11 w-full justify-start gap-5 overflow-x-auto rounded-none bg-transparent p-0">
-            {CRM_TABS.map((tab) => (
-              <TabsTrigger
-                key={tab.kind}
-                value={tab.kind}
-                className="h-11 rounded-none border-b-2 border-transparent px-0 text-sm shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-              >
-                {tab.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </nav>
+      <CrmSectionTabs
+        activeKind={route.kind}
+        onNavigate={(kind) => goRoute({ kind, recordId: null })}
+        placement="body"
+      />
       <main className="min-h-0 min-w-0 flex-1 overflow-auto">
         {route.kind === "dashboard" ? (
           <DashboardView
