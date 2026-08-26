@@ -7,6 +7,7 @@ export * from "./evidence.js";
 export * from "./activities.js";
 export * from "./saved-views.js";
 export * from "./custom-fields.js";
+export * from "./agents.js";
 export {
   CURRENCIES,
   CURRENCY_CODES,

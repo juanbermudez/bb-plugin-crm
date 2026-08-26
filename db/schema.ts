@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 4;
+export const CRM_SCHEMA_VERSION = 5;
 
 const MIGRATIONS: string[] = [
   `
@@ -411,6 +411,370 @@ const MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '4', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    -- Agent definitions are soft-archived. Child rows use CASCADE so an
+    -- explicit purge cannot leave an orphaned run or thread link behind.
+    CREATE TABLE IF NOT EXISTS agent_definitions (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT', 'DEPLOYING', 'LIVE', 'PAUSED', 'ARCHIVED', 'DELETED')),
+      created_by_id TEXT NOT NULL CHECK (length(trim(created_by_id)) > 0),
+      current_version_id TEXT,
+      archived_at TEXT,
+      deleted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_versions (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL CHECK (number > 0),
+      status TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT', 'VALIDATING', 'READY', 'DEPLOYED', 'REJECTED')),
+      instructions TEXT NOT NULL,
+      manifest TEXT NOT NULL CHECK (json_valid(manifest)),
+      model_id TEXT NOT NULL CHECK (length(trim(model_id)) > 0),
+      model_context_window_tokens INTEGER NOT NULL DEFAULT 1000000
+        CHECK (model_context_window_tokens > 0),
+      sandbox_policy TEXT NOT NULL CHECK (json_valid(sandbox_policy)),
+      validation TEXT CHECK (validation IS NULL OR json_valid(validation)),
+      source_conversation_id TEXT,
+      created_by_id TEXT NOT NULL CHECK (length(trim(created_by_id)) > 0),
+      deployment_id TEXT,
+      approved_at TEXT,
+      deployed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (agent_id, number),
+      UNIQUE (id, agent_id)
+    );
+
+    -- SQLite cannot add a circular foreign key after both tables exist. This
+    -- trigger gives current_version_id the same ownership guarantee while the
+    -- composite child foreign keys below protect every other reference.
+    CREATE TRIGGER IF NOT EXISTS agent_definition_current_version_guard
+    BEFORE INSERT ON agent_definitions
+    WHEN NEW.current_version_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM agent_versions
+        WHERE id = NEW.current_version_id AND agent_id = NEW.id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'agent current version must belong to the agent');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_definition_current_version_update_guard
+    BEFORE UPDATE OF current_version_id ON agent_definitions
+    WHEN NEW.current_version_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM agent_versions
+        WHERE id = NEW.current_version_id AND agent_id = NEW.id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'agent current version must belong to the agent');
+    END;
+
+    CREATE TABLE IF NOT EXISTS agent_triggers (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+      version_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('MANUAL', 'SCHEDULE', 'EVENT', 'WEBHOOK')),
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      config TEXT NOT NULL CHECK (json_valid(config)),
+      created_by_id TEXT NOT NULL CHECK (length(trim(created_by_id)) > 0),
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+      next_run_at TEXT,
+      last_run_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (id, agent_id),
+      FOREIGN KEY (version_id, agent_id)
+        REFERENCES agent_versions(id, agent_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+      version_id TEXT NOT NULL,
+      trigger_id TEXT,
+      initiated_by_id TEXT,
+      trigger_type TEXT NOT NULL CHECK (trigger_type IN ('MANUAL', 'SCHEDULE', 'EVENT', 'WEBHOOK')),
+      status TEXT NOT NULL DEFAULT 'QUEUED'
+        CHECK (status IN ('QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'SUCCEEDED', 'FAILED', 'CANCELLED')),
+      principal_id TEXT,
+      session_id TEXT UNIQUE,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      correlation_id TEXT NOT NULL UNIQUE,
+      input TEXT CHECK (input IS NULL OR json_valid(input)),
+      result TEXT CHECK (result IS NULL OR json_valid(result)),
+      summary TEXT,
+      model_id TEXT,
+      input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
+      output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
+      cost_usd REAL CHECK (cost_usd IS NULL OR cost_usd >= 0),
+      error_code TEXT,
+      error_message TEXT,
+      approval_reason TEXT,
+      approval_requested_at TEXT,
+      approved_at TEXT,
+      approved_by_id TEXT,
+      next_event_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_event_sequence >= 0),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      started_at TEXT,
+      finished_at TEXT,
+      cancel_requested_at TEXT,
+      cancel_delivered_at TEXT,
+      UNIQUE (id, agent_id),
+      FOREIGN KEY (version_id, agent_id)
+        REFERENCES agent_versions(id, agent_id) ON DELETE CASCADE,
+      FOREIGN KEY (trigger_id, agent_id)
+        REFERENCES agent_triggers(id, agent_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_run_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL CHECK (sequence >= 0),
+      type TEXT NOT NULL CHECK (length(trim(type)) > 0),
+      data TEXT NOT NULL CHECK (json_valid(data)),
+      emitted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (run_id, sequence)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_actions (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (length(trim(type)) > 0),
+      provider TEXT NOT NULL CHECK (length(trim(provider)) > 0),
+      target_type TEXT,
+      target_id TEXT,
+      target_label TEXT,
+      summary TEXT NOT NULL CHECK (length(trim(summary)) > 0),
+      metadata TEXT CHECK (metadata IS NULL OR json_valid(metadata)),
+      status TEXT NOT NULL DEFAULT 'PLANNED'
+        CHECK (status IN ('PLANNED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED')),
+      idempotency_key TEXT NOT NULL UNIQUE,
+      request_hash TEXT,
+      external_id TEXT,
+      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+      error_code TEXT,
+      error_message TEXT,
+      planned_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      started_at TEXT,
+      completed_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      FOREIGN KEY (run_id, agent_id)
+        REFERENCES agent_runs(id, agent_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_audit_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+      version_id TEXT,
+      run_id TEXT,
+      actor_user_id TEXT,
+      actor_type TEXT NOT NULL DEFAULT 'SYSTEM' CHECK (length(trim(actor_type)) > 0),
+      actor_id TEXT,
+      type TEXT NOT NULL CHECK (length(trim(type)) > 0),
+      summary TEXT NOT NULL CHECK (length(trim(summary)) > 0),
+      before TEXT CHECK (before IS NULL OR json_valid(before)),
+      after TEXT CHECK (after IS NULL OR json_valid(after)),
+      request_id TEXT,
+      emitted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      FOREIGN KEY (version_id, agent_id)
+        REFERENCES agent_versions(id, agent_id) ON DELETE CASCADE,
+      FOREIGN KEY (run_id, agent_id)
+        REFERENCES agent_runs(id, agent_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_thread_links (
+      id TEXT PRIMARY KEY NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL CHECK (length(trim(thread_id)) > 0),
+      kind TEXT NOT NULL DEFAULT 'RECORD'
+        CHECK (kind IN ('RECORD', 'BUILDER', 'RUN')),
+      run_id TEXT,
+      version_id TEXT,
+      record_type TEXT CHECK (record_type IS NULL OR record_type IN ('COMPANY', 'CONTACT', 'DEAL')),
+      record_id TEXT,
+      summary TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE (thread_id),
+      FOREIGN KEY (run_id, agent_id)
+        REFERENCES agent_runs(id, agent_id) ON DELETE CASCADE,
+      FOREIGN KEY (version_id, agent_id)
+        REFERENCES agent_versions(id, agent_id) ON DELETE CASCADE,
+      CHECK ((record_type IS NULL) = (record_id IS NULL))
+    );
+
+    -- Version payload and provenance are append-only. Deployment metadata and
+    -- status are intentionally mutable so a version can be promoted/demoted
+    -- without ever rewriting the instructions or manifest it represents.
+    CREATE TRIGGER IF NOT EXISTS agent_versions_immutable_content
+    BEFORE UPDATE OF agent_id, number, instructions, manifest, model_id,
+      model_context_window_tokens, sandbox_policy, validation,
+      source_conversation_id, created_by_id, created_at ON agent_versions
+    BEGIN
+      SELECT RAISE(ABORT, 'agent versions are immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_definition_status_transition_guard
+    BEFORE UPDATE OF status ON agent_definitions
+    WHEN NOT (
+      OLD.status = NEW.status OR
+      (OLD.status = 'DRAFT' AND NEW.status IN ('DEPLOYING', 'LIVE')) OR
+      (OLD.status = 'DEPLOYING' AND NEW.status IN ('DRAFT', 'LIVE')) OR
+      (OLD.status = 'LIVE' AND NEW.status IN ('PAUSED', 'ARCHIVED')) OR
+      (OLD.status = 'PAUSED' AND NEW.status IN ('LIVE', 'ARCHIVED')) OR
+      (OLD.status = 'ARCHIVED' AND NEW.status = 'PAUSED') OR
+      (NEW.status = 'DELETED')
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid agent definition status transition');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_version_status_transition_guard
+    BEFORE UPDATE OF status ON agent_versions
+    WHEN NOT (
+      OLD.status = NEW.status OR
+      (OLD.status = 'DRAFT' AND NEW.status IN ('VALIDATING', 'READY', 'REJECTED', 'DEPLOYED')) OR
+      (OLD.status = 'VALIDATING' AND NEW.status IN ('DRAFT', 'READY', 'REJECTED')) OR
+      (OLD.status = 'READY' AND NEW.status IN ('DRAFT', 'DEPLOYED')) OR
+      (OLD.status = 'DEPLOYED' AND NEW.status IN ('READY', 'REJECTED')) OR
+      (OLD.status = 'REJECTED' AND NEW.status = 'DRAFT')
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid agent version status transition');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_run_status_transition_guard
+    BEFORE UPDATE OF status ON agent_runs
+    WHEN NOT (
+      OLD.status = NEW.status OR
+      (OLD.status = 'QUEUED' AND NEW.status IN ('RUNNING', 'FAILED', 'CANCELLED')) OR
+      (OLD.status = 'RUNNING' AND NEW.status IN ('WAITING_FOR_APPROVAL', 'SUCCEEDED', 'FAILED', 'CANCELLED')) OR
+      (OLD.status = 'WAITING_FOR_APPROVAL' AND NEW.status IN ('RUNNING', 'FAILED', 'CANCELLED'))
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid agent run status transition');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_action_status_transition_guard
+    BEFORE UPDATE OF status ON agent_actions
+    WHEN NOT (
+      OLD.status = NEW.status OR
+      (OLD.status = 'PLANNED' AND NEW.status IN ('RUNNING', 'FAILED', 'CANCELLED')) OR
+      (OLD.status = 'RUNNING' AND NEW.status IN ('SUCCEEDED', 'FAILED', 'CANCELLED'))
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid agent action status transition');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_definitions_updated_at
+    AFTER UPDATE OF name, description, status, current_version_id, archived_at, deleted_at ON agent_definitions
+    WHEN NEW.updated_at = OLD.updated_at
+    BEGIN
+      UPDATE agent_definitions
+      SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = NEW.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_triggers_updated_at
+    AFTER UPDATE OF version_id, type, name, config, enabled, next_run_at, last_run_at ON agent_triggers
+    WHEN NEW.updated_at = OLD.updated_at
+    BEGIN
+      UPDATE agent_triggers
+      SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = NEW.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS agent_actions_updated_at
+    AFTER UPDATE OF type, provider, target_type, target_id, target_label, summary,
+      metadata, status, request_hash, external_id, attempt_count, error_code,
+      error_message, started_at, completed_at ON agent_actions
+    WHEN NEW.updated_at = OLD.updated_at
+    BEGIN
+      UPDATE agent_actions
+      SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = NEW.id;
+    END;
+
+    CREATE INDEX IF NOT EXISTS agent_definitions_status_updated_idx
+      ON agent_definitions(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_definitions_created_by_idx
+      ON agent_definitions(created_by_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_definitions_current_version_idx
+      ON agent_definitions(current_version_id);
+
+    CREATE INDEX IF NOT EXISTS agent_versions_agent_created_idx
+      ON agent_versions(agent_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_versions_agent_number_idx
+      ON agent_versions(agent_id, number DESC);
+    CREATE INDEX IF NOT EXISTS agent_versions_status_created_idx
+      ON agent_versions(status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS agent_triggers_agent_enabled_idx
+      ON agent_triggers(agent_id, enabled);
+    CREATE INDEX IF NOT EXISTS agent_triggers_enabled_next_run_idx
+      ON agent_triggers(enabled, next_run_at);
+    CREATE INDEX IF NOT EXISTS agent_triggers_version_idx
+      ON agent_triggers(version_id);
+    CREATE INDEX IF NOT EXISTS agent_triggers_type_idx
+      ON agent_triggers(type, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS agent_runs_agent_created_idx
+      ON agent_runs(agent_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_runs_version_created_idx
+      ON agent_runs(version_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_runs_status_created_idx
+      ON agent_runs(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_runs_trigger_created_idx
+      ON agent_runs(trigger_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_runs_correlation_idx
+      ON agent_runs(correlation_id);
+
+    CREATE INDEX IF NOT EXISTS agent_run_events_run_emitted_idx
+      ON agent_run_events(run_id, emitted_at, sequence);
+    CREATE INDEX IF NOT EXISTS agent_actions_agent_planned_idx
+      ON agent_actions(agent_id, planned_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_actions_run_planned_idx
+      ON agent_actions(run_id, planned_at);
+    CREATE INDEX IF NOT EXISTS agent_actions_provider_external_idx
+      ON agent_actions(provider, external_id);
+    CREATE INDEX IF NOT EXISTS agent_actions_status_planned_idx
+      ON agent_actions(status, planned_at);
+
+    CREATE INDEX IF NOT EXISTS agent_audit_agent_emitted_idx
+      ON agent_audit_events(agent_id, emitted_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS agent_audit_version_emitted_idx
+      ON agent_audit_events(version_id, emitted_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_audit_run_emitted_idx
+      ON agent_audit_events(run_id, emitted_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_audit_actor_emitted_idx
+      ON agent_audit_events(actor_id, emitted_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_audit_type_emitted_idx
+      ON agent_audit_events(type, emitted_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_audit_request_idx
+      ON agent_audit_events(agent_id, type, request_id)
+      WHERE request_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS agent_thread_links_agent_created_idx
+      ON agent_thread_links(agent_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_thread_links_run_idx
+      ON agent_thread_links(run_id);
+    CREATE INDEX IF NOT EXISTS agent_thread_links_record_idx
+      ON agent_thread_links(record_type, record_id);
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '5', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;
