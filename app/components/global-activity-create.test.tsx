@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -130,4 +131,44 @@ describe("GlobalActivityCreate", () => {
       pageSize: 100,
     }));
   });
+
+  it.each(["note", "task"] as const)(
+    "returns focus to the persistent New trigger when a global %s closes",
+    async (type) => {
+      const rpc = makeRpc();
+      const returnFocusRef = { current: null as HTMLElement | null };
+      function Host() {
+        const [open, setOpen] = useState(true);
+        return (
+          <>
+            <button
+              ref={(element) => {
+                returnFocusRef.current = element;
+              }}
+              type="button"
+            >
+              New
+            </button>
+            {open ? (
+              <GlobalActivityCreate
+                type={type}
+                rpcClient={rpc}
+                returnFocusRef={returnFocusRef}
+                onClose={() => setOpen(false)}
+              />
+            ) : null}
+          </>
+        );
+      }
+
+      render(<Host />);
+      const trigger = screen.getByRole("button", { name: "New", hidden: true });
+      fireEvent.click(await screen.findByRole("button", { name: "Close record drawer" }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(document.activeElement).toBe(trigger);
+      });
+    },
+  );
 });

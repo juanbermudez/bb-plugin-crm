@@ -96,18 +96,19 @@ describe("CRM SQLite foundation", () => {
         "tracking_retention",
         "tracking_sites",
         "tracking_tokens",
+        "workspace_identity",
       ]);
 
       const migrationIds = db
         .prepare("SELECT id FROM _bb_migrations ORDER BY id")
         .all() as Array<{ id: number }>;
-      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(migrationIds.map(({ id }) => id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
       expect(
         db
           .prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'")
           .pluck()
           .get(),
-      ).toBe("10");
+      ).toBe("11");
 
       const indexNames = db
         .prepare(
@@ -132,7 +133,7 @@ describe("CRM SQLite foundation", () => {
       expect(
         (db.prepare("SELECT COUNT(*) AS count FROM _bb_migrations").get() as { count: number })
           .count,
-      ).toBe(10);
+      ).toBe(11);
     } finally {
       await lifecycle.dispose();
     }
@@ -334,8 +335,9 @@ describe("CRM SQLite foundation", () => {
       expect(db.prepare("PRAGMA table_info(tracking_events)").all()).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "medium" })]),
       );
-      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("10");
-      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(9);
+      expect(db.prepare("SELECT value FROM crm_metadata WHERE key = 'schema_version'").pluck().get()).toBe("11");
+      expect(db.prepare("SELECT MAX(id) FROM _bb_migrations").pluck().get()).toBe(10);
+      expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspace_identity'").get()).toBeDefined();
     } finally {
       await lifecycle.dispose();
     }
@@ -604,6 +606,142 @@ describe("CRM SQLite foundation", () => {
         zulu.id,
         alpha.id,
         inactive.id,
+      ]);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("defaults lists to newest first and keeps nullable ascending keys last", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const oldCompany = createCompany(db, {
+        id: "cmp_old",
+        name: "Old company",
+        industry: "Software",
+      });
+      const newCompany = createCompany(db, {
+        id: "cmp_new",
+        name: "New company",
+      });
+      const oldContact = createContact(db, {
+        id: "con_old",
+        firstName: "Old",
+        lastName: "Contact",
+        companyId: oldCompany.id,
+      });
+      const newContact = createContact(db, {
+        id: "con_new",
+        firstName: "New",
+        lastName: "Contact",
+        companyId: oldCompany.id,
+      });
+      const oldDeal = createDeal(db, {
+        id: "deal_old",
+        name: "Old deal",
+        companyId: oldCompany.id,
+        ownerId: "owner_old",
+      });
+      const newDeal = createDeal(db, {
+        id: "deal_new",
+        name: "New deal",
+        companyId: oldCompany.id,
+        ownerId: "owner_new",
+      });
+
+      db.prepare("UPDATE companies SET created_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", oldCompany.id);
+      db.prepare("UPDATE companies SET created_at = ? WHERE id = ?").run("2026-01-02T00:00:00.000Z", newCompany.id);
+      db.prepare("UPDATE contacts SET created_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", oldContact.id);
+      db.prepare("UPDATE contacts SET created_at = ? WHERE id = ?").run("2026-01-02T00:00:00.000Z", newContact.id);
+      db.prepare("UPDATE deals SET created_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", oldDeal.id);
+      db.prepare("UPDATE deals SET created_at = ? WHERE id = ?").run("2026-01-02T00:00:00.000Z", newDeal.id);
+
+      expect(listCompanies(db).map((value) => value.id)).toEqual([newCompany.id, oldCompany.id]);
+      expect(listContacts(db).map((value) => value.id)).toEqual([newContact.id, oldContact.id]);
+      expect(listDeals(db).map((value) => value.id)).toEqual([newDeal.id, oldDeal.id]);
+
+      const nullableIndustry = createCompany(db, {
+        id: "cmp_industry_null",
+        name: "Industry null",
+      });
+      const valuedIndustry = createCompany(db, {
+        id: "cmp_industry_value",
+        name: "Industry value",
+        industry: "Software",
+      });
+      expect(listCompanies(db, { sortBy: "industry", sortDirection: "asc" }).map((value) => value.id)).toEqual([
+        valuedIndustry.id,
+        oldCompany.id,
+        nullableIndustry.id,
+        newCompany.id,
+      ]);
+
+      const nullLastName = createContact(db, {
+        id: "con_null_last",
+        firstName: "Ava",
+        companyId: oldCompany.id,
+      });
+      const valuedLastName = createContact(db, {
+        id: "con_valued_last",
+        firstName: "Zoe",
+        lastName: "Adams",
+        companyId: oldCompany.id,
+      });
+      expect(listContacts(db, { sortBy: "name", sortDirection: "asc" }).map((value) => value.id)).toEqual([
+        valuedLastName.id,
+        newContact.id,
+        oldContact.id,
+        nullLastName.id,
+      ]);
+
+      const closeCompany = createCompany(db, {
+        id: "cmp_close_order",
+        name: "Close order",
+      });
+      const datedDeal = createDeal(db, {
+        id: "deal_dated_close",
+        name: "Dated close",
+        companyId: closeCompany.id,
+        ownerId: "owner_close",
+        expectedCloseDate: "2026-12-31",
+      });
+      const noCloseDeal = createDeal(db, {
+        id: "deal_no_close",
+        name: "No close",
+        companyId: closeCompany.id,
+        ownerId: "owner_close",
+      });
+      expect(listDeals(db, { companyId: closeCompany.id, sortBy: "expectedClose", sortDirection: "asc" }).map((value) => value.id)).toEqual([
+        datedDeal.id,
+        noCloseDeal.id,
+      ]);
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  it("sorts companies by all related deals, including closed deals", async () => {
+    const { db, lifecycle } = withDatabase();
+    try {
+      const closedOnly = createCompany(db, {
+        id: "cmp_closed_only",
+        name: "A closed-only company",
+      });
+      const noDeals = createCompany(db, {
+        id: "cmp_no_deals",
+        name: "Z no-deals company",
+      });
+      createDeal(db, {
+        id: "deal_closed_only",
+        name: "Closed deal",
+        companyId: closedOnly.id,
+        ownerId: "owner_closed",
+        stage: "CLOSED_WON",
+      });
+
+      expect(listCompanies(db, { sortBy: "deals", sortDirection: "desc" }).map((value) => value.id).slice(0, 2)).toEqual([
+        closedOnly.id,
+        noDeals.id,
       ]);
     } finally {
       await lifecycle.dispose();

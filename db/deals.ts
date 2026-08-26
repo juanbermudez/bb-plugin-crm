@@ -247,13 +247,18 @@ export class DealStore {
       lastActivity: "last_activity_at",
       archivedAt: "archived_at",
     };
-    const sortColumn = sortColumns[options.sortBy ?? "createdAt"];
-    const direction = options.sortDirection === "asc" ? "ASC" : "DESC";
-    const nullLast = options.sortBy === "amount" || options.sortBy === "lastActivity" || options.sortBy === "archivedAt"
+    const sortBy = options.sortBy ?? "createdAt";
+    const sortColumn = sortColumns[sortBy];
+    // Source list input falls back to createdAt DESC when no sort is given.
+    const direction = options.sortBy === undefined
+      ? "DESC"
+      : options.sortDirection === "asc" ? "ASC" : "DESC";
+    const nullLast = options.sortBy === "amount" || options.sortBy === "lastActivity" || options.sortBy === "archivedAt" ||
+      (direction === "ASC" && options.sortBy === "expectedClose")
       ? `${sortColumn} IS NULL ASC, `
       : "";
-    const secondarySort = options.sortBy === "stage"
-      ? `expected_close_date ASC, name COLLATE NOCASE ASC, id ${direction}`
+    const secondarySort = sortBy === "stage"
+      ? `expected_close_date IS NULL ASC, expected_close_date ASC, name COLLATE NOCASE ASC, id ${direction}`
       : `name COLLATE NOCASE ASC, id ${direction}`;
     return this.db
       .prepare(`${DEAL_SELECT}${where} ORDER BY ${nullLast}${sortColumn} COLLATE NOCASE ${direction}, ${secondarySort} LIMIT @limit OFFSET @offset`)

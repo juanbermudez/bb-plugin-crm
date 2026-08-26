@@ -891,8 +891,8 @@ export function ContactsView({
   const rpc = rpcClient ?? contextRpc;
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  const [sort, setSort] = useState("name");
-  const [dir, setDir] = useState<SortDirection>("asc");
+  const [sort, setSort] = useState("createdAt");
+  const [dir, setDir] = useState<SortDirection>("desc");
   const [filters, setFilters] = useState<ListFilters>({});
   const [showArchived, setShowArchived] = useState(false);
   const [list, setList] = useState<ContactListOutput>(EMPTY_LIST);

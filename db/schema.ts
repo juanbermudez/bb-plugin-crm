@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
 
-export const CRM_SCHEMA_VERSION = 10;
+export const CRM_SCHEMA_VERSION = 11;
 
 export const CRM_SCHEMA_MIGRATIONS: string[] = [
   `
@@ -1223,6 +1223,29 @@ export const CRM_SCHEMA_MIGRATIONS: string[] = [
 
     INSERT INTO crm_metadata (key, value, updated_at)
     VALUES ('schema_version', '10', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at;
+  `,
+  `
+    -- Installation identity mirrors the upstream workspace website and its
+    -- deliberately short, replaceable company profile. It is plugin-local
+    -- because BB 0.39 exposes settings reads but no server-side settings write.
+    CREATE TABLE IF NOT EXISTS workspace_identity (
+      id TEXT PRIMARY KEY NOT NULL CHECK (id = 'workspace'),
+      website TEXT NOT NULL,
+      narrative TEXT CHECK (
+        narrative IS NULL OR length(trim(narrative)) BETWEEN 40 AND 320
+      ),
+      sells TEXT CHECK (sells IS NULL OR length(sells) <= 140),
+      sells_to TEXT CHECK (sells_to IS NULL OR length(sells_to) <= 140),
+      edge TEXT CHECK (edge IS NULL OR length(edge) <= 140),
+      source_url TEXT,
+      refreshed_at TEXT NOT NULL
+    );
+
+    INSERT INTO crm_metadata (key, value, updated_at)
+    VALUES ('schema_version', '11', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(key) DO UPDATE SET
       value = excluded.value,
       updated_at = excluded.updated_at;

@@ -416,6 +416,27 @@ function handleDrawerTab(event: KeyboardEvent, panel: HTMLElement): void {
   });
 }
 
+function handleDrawerKeyDown(
+  event: KeyboardEvent,
+  panel: HTMLElement,
+  requestClose: () => void,
+): void {
+  if (event.defaultPrevented) {
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    requestClose();
+  } else if (event.key === "Tab") {
+    handleDrawerTab(event, panel);
+  }
+}
+
+function isTopOpenDrawer(panel: HTMLElement): boolean {
+  const stack = persistentDrawerStacks.get(panel.ownerDocument);
+  return stack?.entries[stack.entries.length - 1]?.panel() === panel;
+}
+
 function registerOpenDrawer(
   ownerDocument: Document,
   entry: PersistentDrawerStackEntry,
@@ -432,16 +453,15 @@ function registerOpenDrawer(
       if (topEntry === undefined || panel === null) {
         return;
       }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        topEntry.requestClose();
-      } else if (event.key === "Tab") {
-        handleDrawerTab(event, panel);
-      }
+      handleDrawerKeyDown(event, panel, topEntry.requestClose);
     };
     stack = { entries, handleKeyDown };
     persistentDrawerStacks.set(ownerDocument, stack);
-    ownerDocument.addEventListener("keydown", handleKeyDown);
+    // Capture before React or a child control can stop propagation. This is
+    // important for compact drawers rendered through a portal: a Tab event
+    // must not fall through to document/body when a descendant's handler (or
+    // another portaled overlay) has already moved focus.
+    ownerDocument.addEventListener("keydown", handleKeyDown, true);
   }
   stack.entries.push(entry);
 
@@ -455,7 +475,7 @@ function registerOpenDrawer(
       currentStack.entries.splice(index, 1);
     }
     if (currentStack.entries.length === 0) {
-      ownerDocument.removeEventListener("keydown", currentStack.handleKeyDown);
+      ownerDocument.removeEventListener("keydown", currentStack.handleKeyDown, true);
       persistentDrawerStacks.delete(ownerDocument);
     }
   };
@@ -690,6 +710,13 @@ export function PersistentResponsiveDrawerShell({
           transform: open ? "translate3d(0, 0, 0)" : "translate3d(0, 100%, 0)",
           transition,
           willChange: open ? "transform" : undefined,
+        }}
+        onKeyDownCapture={(event) => {
+          const panel = event.currentTarget;
+          if (!isTopOpenDrawer(panel)) {
+            return;
+          }
+          handleDrawerKeyDown(event.nativeEvent, panel, requestClose);
         }}
         onTransitionEnd={(event) => {
           if (

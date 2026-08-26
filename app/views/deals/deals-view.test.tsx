@@ -137,7 +137,14 @@ describe("DealsView", () => {
     expect(screen.getByText(/Open pipeline \(EUR\)/)).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith(
       "deals_list",
-      expect.objectContaining({ status: "open", page: 1, pageSize: 25, archived: false }),
+      expect.objectContaining({
+        status: "all",
+        sort: "createdAt",
+        dir: "desc",
+        page: 1,
+        pageSize: 25,
+        archived: false,
+      }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Closed" }));

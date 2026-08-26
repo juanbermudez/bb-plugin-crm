@@ -10,10 +10,13 @@ import { ConnectionsSettingsView } from "./connections/index.js";
 import type { ConnectionsRpcClient } from "./connections/rpc.js";
 import { TrackingSettingsView } from "./tracking/index.js";
 import type { TrackingRpcClient } from "./tracking/rpc.js";
+import { WorkspaceSettingsView } from "./workspace/index.js";
+import type { WorkspaceRpcClient } from "./workspace/rpc.js";
 
-export type SettingsSection = "currency" | "custom-fields" | "connections" | "tracking";
+export type SettingsSection = "workspace" | "currency" | "custom-fields" | "connections" | "tracking";
 
 const SECTIONS = [
+  { id: "workspace", label: "Workspace", icon: "Layers" },
   { id: "currency", label: "Currency", icon: "ChartColumn" },
   { id: "custom-fields", label: "Custom fields", icon: "Edit" },
   { id: "connections", label: "Connections", icon: "ElectricPlugs" },
@@ -27,15 +30,17 @@ export interface SettingsViewProps {
   customFieldsRpcClient?: CustomFieldsRpcClient;
   connectionsRpcClient?: ConnectionsRpcClient;
   trackingRpcClient?: TrackingRpcClient;
+  workspaceRpcClient?: WorkspaceRpcClient;
 }
 
 export function SettingsView({
-  initialSection = "currency",
+  initialSection = "workspace",
   onSectionChange,
   currencyRpcClient,
   customFieldsRpcClient,
   connectionsRpcClient,
   trackingRpcClient,
+  workspaceRpcClient,
 }: SettingsViewProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
 
@@ -75,7 +80,9 @@ export function SettingsView({
         </div>
       </header>
       <div className="min-h-0 min-w-0 flex-1" role="tabpanel">
-        {section === "currency" ? (
+        {section === "workspace" ? (
+          <WorkspaceSettingsView rpcClient={workspaceRpcClient} />
+        ) : section === "currency" ? (
           <CurrencySettingsView rpcClient={currencyRpcClient} />
         ) : section === "custom-fields" ? (
           <CustomFieldsSettingsView rpcClient={customFieldsRpcClient} />

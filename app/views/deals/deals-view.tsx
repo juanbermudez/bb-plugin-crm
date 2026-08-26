@@ -1339,7 +1339,7 @@ export function DealsView({
   const rpc = rpcClient ?? contextRpc;
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState<DealListStatus>("open");
+  const [status, setStatus] = useState<DealListStatus>("all");
   const [sort, setSort] = useState("createdAt");
   const [dir, setDir] = useState<SortDirection>("desc");
   const [filters, setFilters] = useState<ListFilters>({});

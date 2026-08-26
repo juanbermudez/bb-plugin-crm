@@ -367,14 +367,21 @@ export class CompanyStore {
       // the only stable local ordering available for this relation.
       owner: "owner_id",
       contacts: "(SELECT COUNT(*) FROM contacts AS related_contacts WHERE related_contacts.company_id = companies.id)",
-      deals: "(SELECT COUNT(*) FROM deals AS related_deals WHERE related_deals.company_id = companies.id AND related_deals.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST'))",
+      deals: "(SELECT COUNT(*) FROM deals AS related_deals WHERE related_deals.company_id = companies.id)",
       createdAt: "created_at",
       lastActivity: "last_activity_at",
       archivedAt: "archived_at",
     };
-    const sortColumn = sortColumns[options.sortBy ?? "name"];
-    const direction = options.sortDirection === "desc" ? "DESC" : "ASC";
-    const nullLast = options.sortBy === "lastActivity" || options.sortBy === "archivedAt"
+    const sortBy = options.sortBy ?? "createdAt";
+    const sortColumn = sortColumns[sortBy];
+    // Source list input falls back to createdAt DESC when no sort is given.
+    // PostgreSQL's ordinary ASC ordering puts nullable values last; explicit
+    // null-last fields stay null-last in either direction.
+    const direction = options.sortBy === undefined
+      ? "DESC"
+      : options.sortDirection === "desc" ? "DESC" : "ASC";
+    const nullLast = options.sortBy === "lastActivity" || options.sortBy === "archivedAt" ||
+      (direction === "ASC" && ["domain", "industry", "owner"].includes(sortBy))
       ? `${sortColumn} IS NULL ASC, `
       : "";
     return this.db

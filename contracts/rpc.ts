@@ -231,6 +231,11 @@ import {
   enrichmentQueueInputSchema,
   enrichmentQueueOutputSchema,
 } from "./enrichment-queue.js";
+import {
+  workspaceIdentityGetInputSchema,
+  workspaceIdentitySchema,
+  workspaceIdentityUpdateInputSchema,
+} from "./workspace.js";
 
 export const rpcContract = defineRpcContract({
   status: {
@@ -243,6 +248,14 @@ export const rpcContract = defineRpcContract({
         reportingCurrency: z.string(),
       })
       .strict(),
+  },
+  workspace_identity_get: {
+    input: workspaceIdentityGetInputSchema,
+    output: workspaceIdentitySchema,
+  },
+  workspace_identity_update: {
+    input: workspaceIdentityUpdateInputSchema,
+    output: workspaceIdentitySchema,
   },
   enrichment_queue: {
     input: enrichmentQueueInputSchema,

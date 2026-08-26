@@ -76,7 +76,14 @@ describe("CompaniesView", () => {
     expect(screen.getByText("2")).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith(
       "companies_list",
-      expect.objectContaining({ q: "", page: 1, pageSize: 25, archived: false }),
+      expect.objectContaining({
+        q: "",
+        sort: "createdAt",
+        dir: "desc",
+        page: 1,
+        pageSize: 25,
+        archived: false,
+      }),
     );
 
     fireEvent.click(screen.getByRole("row", { name: /Open Acme Corporation/ }));

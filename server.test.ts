@@ -87,6 +87,19 @@ describe("CRM plugin foundation", () => {
       workspaceName: "Revenue",
       reportingCurrency: "EUR",
     });
+    await expect(harness.behavior.callRpc("workspace_identity_get", null)).resolves.toEqual({
+      workspaceName: "Revenue",
+      website: null,
+      profile: null,
+    });
+    await expect(harness.behavior.callRpc("workspace_identity_update", {
+      website: "revenue.example",
+      narrative: "",
+    })).resolves.toEqual({
+      workspaceName: "Revenue",
+      website: "https://revenue.example",
+      profile: null,
+    });
 
     const result = await harness.behavior.runCli(["status"]);
     expect(result.exitCode).toBe(0);
@@ -277,7 +290,18 @@ describe("CRM plugin foundation", () => {
       "crm_add_activity",
       "crm_list_tasks",
       "crm_complete_task",
+      "list_deals",
+      "list_outstanding_work",
+      "list_fields",
+      "manage_fields",
+      "archive_field",
       "crm_set_field",
+      "read_crm_history",
+      "read_company_history",
+      "read_deal_history",
+      "get_contact_work_history",
+      "record_job_change",
+      "schedule_recheck",
       "crm_record_contact_fact",
       "crm_record_contact_brief",
       "crm_record_contact_work_history",
@@ -299,6 +323,52 @@ describe("CRM plugin foundation", () => {
       data: { industry: "Software" },
     })).resolves.toContain("Software");
 
+    const contact = JSON.parse(String(await harness.callAgentTool(
+      "crm_create_record",
+      {
+        entity: "contact",
+        data: {
+          firstName: "Agent",
+          lastName: "Contact",
+          email: "agent.contact@agent.example",
+          companyId: created.id,
+        },
+      },
+    ))) as { id: string };
+    const deal = JSON.parse(String(await harness.callAgentTool(
+      "crm_create_record",
+      {
+        entity: "deal",
+        data: {
+          name: "Agent Pipeline",
+          companyId: created.id,
+          ownerId: "local_user",
+          amountCents: 25_000,
+        },
+      },
+    ))) as { id: string };
+    const dealList = JSON.parse(String(await harness.callAgentTool("list_deals", {}))) as {
+      deals: Array<{ id: string; name: string; company: { id: string } }>;
+      hasMore: boolean;
+    };
+    expect(dealList.hasMore).toBe(false);
+    expect(dealList.deals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: deal.id, name: "Agent Pipeline" }),
+    ]));
+    expect(dealList.deals.find((row) => row.id === deal.id)?.company.id).toBe(created.id);
+    const outstanding = JSON.parse(String(await harness.callAgentTool("list_outstanding_work", {}))) as {
+      count: number;
+      contacts: Array<{ id: string; needs: { brief: boolean; socials: boolean } }>;
+    };
+    expect(outstanding.count).toBe(1);
+    expect(outstanding.contacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: contact.id }),
+    ]));
+    expect(outstanding.contacts.find((row) => row.id === contact.id)?.needs).toMatchObject({
+      brief: true,
+      socials: true,
+    });
+
     const field = (await harness.behavior.callRpc("fields_create", {
       entity: "COMPANY",
       label: "Account note",
@@ -310,6 +380,48 @@ describe("CRM plugin foundation", () => {
       key: field.key,
       value: "Agent maintained",
     })).resolves.toContain("Agent maintained");
+    const manualField = (await harness.behavior.callRpc("fields_create", {
+      entity: "COMPANY",
+      label: "Manual account owner",
+      type: "TEXT",
+      agentFilled: false,
+    })) as { key: string };
+    await expect(harness.callAgentTool("crm_set_field", {
+      entity: "COMPANY",
+      recordId: created.id,
+      key: manualField.key,
+      value: "Do not write",
+    })).rejects.toThrow(/manual only/u);
+    const fields = JSON.parse(String(await harness.callAgentTool("list_fields", {
+      entity: "COMPANY",
+    }))) as { fields: Array<{ key: string; agentFilled: boolean }> };
+    expect(fields.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: field.key, agentFilled: true }),
+      expect.objectContaining({ key: manualField.key, agentFilled: false }),
+    ]));
+    const managedField = JSON.parse(String(await harness.callAgentTool("manage_fields", {
+      action: "create",
+      entity: "CONTACT",
+      label: "Agent segment",
+      type: "TEXT",
+      agentBrief: "The segment named by the account plan.",
+    }))) as { id: string; key: string; agentBrief: string };
+    expect(managedField).toMatchObject({
+      key: "agent_segment",
+      agentBrief: "The segment named by the account plan.",
+    });
+    await expect(harness.callAgentTool("manage_fields", {
+      action: "update-brief",
+      entity: "CONTACT",
+      key: managedField.key,
+      agentBrief: "Updated segment guidance.",
+      agentFilled: false,
+    })).resolves.toContain("Updated segment guidance");
+    const archivedField = JSON.parse(String(await harness.callAgentTool("archive_field", {
+      entity: "CONTACT",
+      key: managedField.key,
+    }))) as { archived: boolean; field: { archived: boolean } };
+    expect(archivedField).toMatchObject({ archived: true, field: { archived: true } });
     await expect(harness.callAgentTool("crm_get_record", {
       entity: "company",
       id: created.id,
@@ -332,6 +444,48 @@ describe("CRM plugin foundation", () => {
     })).resolves.toContain("Agent follow-up");
     await expect(harness.callAgentTool("crm_complete_task", { id: task.id })).resolves.toContain("completedAt");
     await expect(harness.callAgentTool("crm_complete_task", { id: task.id, unknown: true })).rejects.toThrow();
+
+    await harness.callAgentTool("crm_add_activity", {
+      type: "NOTE",
+      contactId: contact.id,
+      subject: "Agent contact note",
+      body: "A local CRM note.",
+    });
+    const contactHistory = JSON.parse(String(await harness.callAgentTool("read_crm_history", {
+      contactId: contact.id,
+    }))) as { found: boolean; activities: Array<{ subject: string }> };
+    expect(contactHistory).toMatchObject({
+      found: true,
+      activities: [expect.objectContaining({ subject: "Agent contact note" })],
+    });
+    const companyHistory = JSON.parse(String(await harness.callAgentTool("read_company_history", {
+      companyId: created.id,
+    }))) as { found: boolean; people: Array<{ id: string }>; deals: Array<{ id: string }> };
+    expect(companyHistory).toMatchObject({
+      found: true,
+      people: [expect.objectContaining({ id: contact.id })],
+      deals: [expect.objectContaining({ id: deal.id })],
+    });
+    const dealHistory = JSON.parse(String(await harness.callAgentTool("read_deal_history", {
+      dealId: deal.id,
+    }))) as { found: boolean; deal: { id: string }; people: unknown[] };
+    expect(dealHistory).toMatchObject({ found: true, deal: { id: deal.id }, people: [] });
+    await expect(harness.callAgentTool("get_contact_work_history", {
+      contactId: contact.id,
+    })).resolves.toContain("no LinkedIn URL");
+    await expect(harness.callAgentTool("record_job_change", {
+      contactId: contact.id,
+    })).resolves.toContain("No employer change");
+    const recheck = JSON.parse(String(await harness.callAgentTool("schedule_recheck", {
+      contactId: contact.id,
+      days: 14,
+      reason: "The contact may change roles before the next deal review.",
+    }))) as { scheduled: boolean; activityId: string; dueAt: string };
+    expect(recheck).toMatchObject({
+      scheduled: true,
+      activityId: expect.any(String),
+      dueAt: expect.any(String),
+    });
 
     await harness.lifecycle.dispose();
   });
@@ -683,6 +837,10 @@ describe("CRM plugin foundation", () => {
         companyId: company.id,
       })) as { id: string };
       await harness.behavior.callRpc("contacts_archive", { id: archivedContact.id });
+      const noLastName = (await harness.behavior.callRpc("contacts_create", {
+        firstName: "No-last-name",
+        companyId: company.id,
+      })) as { id: string };
       const foreign = (await harness.behavior.callRpc("contacts_create", {
         firstName: "Foreign",
         lastName: "Contact",
@@ -731,6 +889,13 @@ describe("CRM plugin foundation", () => {
         amountCents: 20_000,
         expectedCloseDate: "2026-11-01",
       })) as { id: string };
+      const noCloseDeal = (await harness.behavior.callRpc("deals_create", {
+        name: "No-close detail deal",
+        companyId: company.id,
+        ownerId: "owner-detail",
+        stage: "DEMO_BOOKED",
+        amountCents: 15_000,
+      })) as { id: string };
       const archivedOpenDeal = (await harness.behavior.callRpc("deals_create", {
         name: "Archived detail deal",
         companyId: company.id,
@@ -768,21 +933,24 @@ describe("CRM plugin foundation", () => {
         primary.id,
         second.id,
         archivedContact.id,
+        noLastName.id,
       ]);
       expect(detail.deals.map((deal) => deal.id)).toEqual([
         earlyDeal.id,
+        noCloseDeal.id,
         middleDeal.id,
         archivedOpenDeal.id,
         lateDeal.id,
       ]);
       expect(detail.deals.map((deal) => deal.baseAmountCents)).toEqual([
         10_000,
+        15_000,
         20_000,
         30_000,
         40_000,
       ]);
-      expect(detail.contactCount).toBe(3);
-      expect(detail.openDealCount).toBe(4);
+      expect(detail.contactCount).toBe(4);
+      expect(detail.openDealCount).toBe(5);
     } finally {
       await harness.lifecycle.dispose();
     }
@@ -1733,6 +1901,9 @@ describe("CRM plugin foundation", () => {
       id: wonDeal.id,
       stage: "CLOSED_WON",
     });
+    // The source dashboard does not apply the list/archive scope; archived
+    // deals still contribute to historical pipeline reporting.
+    await harness.behavior.callRpc("deals_archive", { id: openDeal.id });
     const overdue = new Date(now.getTime() - 24 * 60 * 60 * 1_000).toISOString();
     await harness.behavior.callRpc("activity_create", {
       type: "TASK",

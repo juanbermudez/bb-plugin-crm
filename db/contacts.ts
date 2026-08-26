@@ -320,14 +320,20 @@ export class ContactStore {
       lastActivity: "last_activity_at",
       archivedAt: "archived_at",
     };
-    const sortColumn = sortColumns[options.sortBy ?? "name"];
-    const direction = options.sortDirection === "desc" ? "DESC" : "ASC";
-    const nullLast = options.sortBy === "lastActivity" || options.sortBy === "archivedAt"
+    const sortBy = options.sortBy ?? "createdAt";
+    const sortColumn = sortColumns[sortBy];
+    // Match PostgreSQL's default NULL ordering for ordinary fields while
+    // preserving the source's explicit null-last activity/archive sorts.
+    const direction = options.sortBy === undefined
+      ? "DESC"
+      : options.sortDirection === "desc" ? "DESC" : "ASC";
+    const nullLast = options.sortBy === "lastActivity" || options.sortBy === "archivedAt" ||
+      (direction === "ASC" && ["name", "email", "title", "company", "owner"].includes(sortBy))
       ? `${sortColumn} IS NULL ASC, `
       : "";
     const nameTieDirection = options.sortBy === "name" ? direction : "ASC";
     return this.db
-      .prepare(`${CONTACT_SELECT}${where} ORDER BY ${nullLast}${sortColumn} COLLATE NOCASE ${direction}, last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ${nameTieDirection}, id ${direction} LIMIT @limit OFFSET @offset`)
+      .prepare(`${CONTACT_SELECT}${where} ORDER BY ${nullLast}${sortColumn} COLLATE NOCASE ${direction}, last_name IS NULL ASC, last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ${nameTieDirection}, id ${direction} LIMIT @limit OFFSET @offset`)
       .all(params)
       .map(row);
   }

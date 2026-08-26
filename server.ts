@@ -48,6 +48,7 @@ import {
   dealListInputSchema,
   dealUpdateDataSchema,
   fieldEntitySchema,
+  fieldTypeSchema,
   fieldValueSchema,
   idSchema,
   rpcJsonValueSchema,
@@ -113,6 +114,7 @@ import {
   createCustomFieldStore,
 } from "./db/custom-fields.js";
 import { createEvidenceStore } from "./db/evidence.js";
+import { createWorkspaceIdentityStore } from "./db/workspace.js";
 import {
   createAgentStore,
   type AgentDeletionResult,
@@ -846,6 +848,7 @@ export default async function plugin(bb: BbPluginApi) {
   const savedViews = createSavedViewStore(db);
   const customFields = createCustomFieldStore(db);
   const evidenceStore = createEvidenceStore(db);
+  const workspaceIdentity = createWorkspaceIdentityStore(db);
   const agents = createAgentStore(db);
   const crmEvents = createCrmEventStore(db);
   const agentWebhookTokens = createAgentWebhookTokenStore(db);
@@ -1116,7 +1119,8 @@ export default async function plugin(bb: BbPluginApi) {
             archived_at AS archivedAt
           FROM contacts
           WHERE company_id = ?
-          ORDER BY last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ASC, id ASC
+          ORDER BY (last_name IS NULL) ASC, last_name COLLATE NOCASE ASC,
+            first_name COLLATE NOCASE ASC, id ASC
         `).all(company.id) as Array<{
           id: string;
           firstName: string;
@@ -1148,7 +1152,8 @@ export default async function plugin(bb: BbPluginApi) {
             WHEN 'CLOSED_WON' THEN 5
             WHEN 'CLOSED_LOST' THEN 6
             ELSE 7
-          END ASC, expected_close_date ASC, id ASC
+          END ASC, (expected_close_date IS NULL) ASC,
+            expected_close_date ASC, id ASC
         `).all(company.id) as Array<{
           id: string;
           name: string;
@@ -1190,7 +1195,7 @@ export default async function plugin(bb: BbPluginApi) {
         ? input.sort
         : input.sort === "domain" || input.sort === "industry" || input.sort === "owner"
           ? input.sort
-          : "name";
+          : "createdAt";
     return {
       search: input.q,
       archivedOnly: input.archived,
@@ -2836,9 +2841,10 @@ export default async function plugin(bb: BbPluginApi) {
       ? db.prepare(`
           SELECT id, first_name AS firstName, last_name AS lastName, title
           FROM contacts
-          WHERE company_id = ? AND id <> ? AND archived_at IS NULL
+          WHERE company_id = ? AND id <> ?
           ORDER BY (last_activity_at IS NULL), last_activity_at DESC,
-            last_name COLLATE NOCASE, first_name COLLATE NOCASE, id
+            (last_name IS NULL), last_name COLLATE NOCASE,
+            first_name COLLATE NOCASE, id
           LIMIT 4
         `).all(contact.companyId, contact.id) as Array<{
           id: string;
@@ -2991,7 +2997,7 @@ export default async function plugin(bb: BbPluginApi) {
       input.sort === "lastActivity" ||
       input.sort === "archivedAt"
         ? input.sort
-        : "name";
+        : "createdAt";
     return {
       search: input.q,
       archivedOnly: input.archived,
@@ -3046,7 +3052,9 @@ export default async function plugin(bb: BbPluginApi) {
       FROM deal_contacts
       INNER JOIN contacts ON contacts.id = deal_contacts.contact_id
       WHERE deal_contacts.deal_id = ?
-      ORDER BY contacts.last_name COLLATE NOCASE, contacts.first_name COLLATE NOCASE
+      ORDER BY contacts.first_name COLLATE NOCASE,
+        (contacts.last_name IS NULL), contacts.last_name COLLATE NOCASE,
+        contacts.id
     `).all(deal.id) as DealOutput["contacts"];
     return {
       ...deal,
@@ -3665,6 +3673,14 @@ export default async function plugin(bb: BbPluginApi) {
         reportingCurrency,
       };
     },
+    async workspace_identity_get() {
+      const { workspaceName } = await settings.get();
+      return { workspaceName, ...workspaceIdentity.get() };
+    },
+    async workspace_identity_update(input) {
+      const { workspaceName } = await settings.get();
+      return { workspaceName, ...workspaceIdentity.update(input) };
+    },
     enrichment_queue(input) {
       return enrichmentQueue.list(input.limit);
     },
@@ -4113,16 +4129,14 @@ export default async function plugin(bb: BbPluginApi) {
           COALESCE(SUM(CASE WHEN d.base_currency = @reportingCurrency
             THEN d.base_amount_cents ELSE 0 END), 0) AS valueCents
         FROM deals d
-        WHERE d.archived_at IS NULL
-          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')${ownerSql}
+        WHERE d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')${ownerSql}
         GROUP BY d.stage
         ORDER BY d.stage
       `).all(params) as DashboardSummaryOutput["pipeline"]["stages"];
       const unconvertedRows = db.prepare(`
         SELECT d.currency, COUNT(*) AS count
         FROM deals d
-        WHERE d.archived_at IS NULL
-          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+        WHERE d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
           AND d.amount_cents IS NOT NULL AND d.base_amount_cents IS NULL${ownerSql}
         GROUP BY d.currency ORDER BY d.currency
       `).all(params) as Array<{ currency: string; count: number }>;
@@ -4132,7 +4146,7 @@ export default async function plugin(bb: BbPluginApi) {
           COALESCE(SUM(CASE WHEN d.base_currency = @reportingCurrency
             THEN d.base_amount_cents ELSE 0 END), 0) AS valueCents
         FROM deals d
-        WHERE d.archived_at IS NULL AND d.stage = 'CLOSED_WON'
+        WHERE d.stage = 'CLOSED_WON'
           AND d.closed_at >= @from AND d.closed_at < @to${ownerSql}
       `).get({ ...params, from: from.toISOString(), to: to.toISOString() }) as {
         count: number;
@@ -4148,8 +4162,7 @@ export default async function plugin(bb: BbPluginApi) {
           AVG(CASE WHEN d.stage = 'CLOSED_WON'
             THEN MAX(0, julianday(d.closed_at) - julianday(d.created_at)) END) AS avgCycleDays
         FROM deals d
-        WHERE d.archived_at IS NULL
-          AND d.stage IN ('CLOSED_WON', 'CLOSED_LOST')
+        WHERE d.stage IN ('CLOSED_WON', 'CLOSED_LOST')
           AND d.closed_at >= @cutoff${ownerSql}
       `).get({ ...params, cutoff: cutoff90.toISOString() }) as {
         wins: number | null;
@@ -4172,7 +4185,7 @@ export default async function plugin(bb: BbPluginApi) {
             COALESCE(SUM(CASE WHEN d.created_at >= @from AND d.created_at < @to
               AND d.base_currency = @reportingCurrency THEN d.base_amount_cents ELSE 0 END), 0) AS created
           FROM deals d
-          WHERE d.archived_at IS NULL${ownerSql}
+          WHERE 1 = 1${ownerSql}
         `).get({ ...params, from: from.toISOString(), to: to.toISOString() }) as {
           won: number;
           created: number;
@@ -4189,8 +4202,7 @@ export default async function plugin(bb: BbPluginApi) {
           COALESCE(SUM(CASE WHEN d.base_currency = @reportingCurrency
             THEN d.base_amount_cents ELSE 0 END), 0) AS valueCents
         FROM deals d
-        WHERE d.archived_at IS NULL
-          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
+        WHERE d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')
           AND d.expected_close_date >= @fromDate AND d.expected_close_date < @toDate${ownerSql}
       `).get({
         ...params,
@@ -4207,8 +4219,7 @@ export default async function plugin(bb: BbPluginApi) {
           c.id AS companyId, c.name AS companyName, c.icon_url AS iconUrl,
           c.icon_dark_url AS iconDarkUrl, c.icon_tone AS iconTone
         FROM deals d JOIN companies c ON c.id = d.company_id
-        WHERE d.archived_at IS NULL
-          AND d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')${ownerSql}
+        WHERE d.stage NOT IN ('CLOSED_WON', 'CLOSED_LOST')${ownerSql}
         ORDER BY (d.base_amount_cents IS NULL), d.base_amount_cents DESC,
           d.amount_cents DESC, d.id DESC LIMIT 6
       `).all(params) as Array<Record<string, unknown>>;
@@ -4951,6 +4962,17 @@ export default async function plugin(bb: BbPluginApi) {
     "crm_add_activity",
     "crm_list_tasks",
     "crm_complete_task",
+    "list_deals",
+    "list_outstanding_work",
+    "list_fields",
+    "manage_fields",
+    "archive_field",
+    "read_crm_history",
+    "read_company_history",
+    "read_deal_history",
+    "get_contact_work_history",
+    "record_job_change",
+    "schedule_recheck",
     "ask_question",
     "crm_set_field",
     "crm_record_contact_fact",
@@ -5026,6 +5048,117 @@ export default async function plugin(bb: BbPluginApi) {
     id: idSchema,
     completed: z.boolean().default(true),
   }).strict();
+  const listDealsToolInputSchema = z.object({
+    status: z.enum(["open", "won", "lost", "all"]).default("open"),
+    inactiveForDays: z.number().int().min(0).max(3650).optional(),
+    companyId: idSchema.optional(),
+    ownerId: idSchema.optional(),
+    limit: z.number().int().min(1).max(100).default(50),
+    cursor: idSchema.optional(),
+  }).strict();
+  const listOutstandingWorkToolInputSchema = z.object({
+    limit: z.number().int().min(1).max(25).default(10),
+  }).strict();
+  const listFieldsToolInputSchema = z.object({
+    entity: fieldEntitySchema,
+  }).strict();
+  const manageFieldsToolInputSchema = z.object({
+    action: z.enum(["create", "update-brief"]),
+    entity: fieldEntitySchema,
+    label: z.string().trim().min(1).optional(),
+    key: z.string().trim().min(1).optional(),
+    type: fieldTypeSchema.optional(),
+    options: z.array(z.string().trim().min(1)).optional(),
+    agentBrief: z.string().trim().nullable().optional(),
+    agentFilled: z.boolean().optional(),
+  }).strict();
+  const archiveFieldToolInputSchema = z.object({
+    entity: fieldEntitySchema,
+    key: z.string().trim().min(1),
+  }).strict();
+  const readCrmHistoryToolInputSchema = z.object({
+    contactId: idSchema,
+    threads: z.number().int().min(1).max(20).default(5),
+  }).strict();
+  const readCompanyHistoryToolInputSchema = z.object({
+    companyId: idSchema,
+    threads: z.number().int().min(1).max(20).default(5),
+    people: z.number().int().min(1).max(100).default(25),
+  }).strict();
+  const readDealHistoryToolInputSchema = z.object({
+    dealId: idSchema,
+    threads: z.number().int().min(1).max(20).default(5),
+  }).strict();
+  const getContactWorkHistoryToolInputSchema = z.object({
+    contactId: idSchema,
+  }).strict();
+  const recordJobChangeToolInputSchema = z.object({
+    contactId: idSchema,
+    moveToCompanyId: idSchema.optional(),
+  }).strict();
+  const scheduleRecheckToolInputSchema = z.object({
+    contactId: idSchema,
+    days: z.number().int().min(1).max(730),
+    reason: z.string().trim().min(10),
+    budget: z.number().int().min(1).max(20).default(4),
+  }).strict();
+  const AGENT_OPEN_DEAL_STAGES: readonly DealStage[] = [
+    "DEMO_BOOKED",
+    "QUALIFIED_TO_BUY",
+    "UNQUALIFIED_TO_BUY",
+    "DECISION_MAKER_BOUGHT_IN",
+    "CONTRACT_SENT",
+  ];
+  function agentDealStages(status: "open" | "won" | "lost" | "all"): readonly DealStage[] | undefined {
+    if (status === "open") return AGENT_OPEN_DEAL_STAGES;
+    if (status === "won") return ["CLOSED_WON"];
+    if (status === "lost") return ["CLOSED_LOST"];
+    return undefined;
+  }
+  function agentHistoryActivityLimit(threads: number): number {
+    // The local CRM stores activities rather than the source mailbox/calendar
+    // thread tables. Keep the result bounded while returning enough timeline
+    // context for the source history workflows.
+    return Math.min(100, threads * 20);
+  }
+  function agentContactNeedsIdentity(contact: StoredContact): boolean {
+    if (!contact.email || contact.lastName !== null) return false;
+    const emailLocal = contact.email.split("@", 1)[0]?.toLowerCase().replace(/[^a-z0-9]/gu, "") ?? "";
+    const firstName = contact.firstName.toLowerCase().replace(/[^a-z0-9]/gu, "");
+    return emailLocal.length > 0 && firstName.length > 0 &&
+      (emailLocal === firstName || emailLocal.startsWith(firstName) || firstName.startsWith(emailLocal));
+  }
+  function agentDate(value: string | null, fallback: string): number {
+    const timestamp = Date.parse(value ?? fallback);
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+  }
+  function allAgentDeals(options: Omit<DealListOptions, "limit" | "offset">): StoredDeal[] {
+    const rows: StoredDeal[] = [];
+    for (let offset = 0; ; offset += 1_000) {
+      const page = deals.list({
+        ...options,
+        includeArchived: true,
+        limit: 1_000,
+        offset,
+      });
+      rows.push(...page);
+      if (page.length < 1_000) return rows;
+    }
+  }
+  function allAgentContacts(): StoredContact[] {
+    const rows: StoredContact[] = [];
+    for (let offset = 0; ; offset += 1_000) {
+      const page = contacts.list({
+        includeArchived: true,
+        sortBy: "createdAt",
+        sortDirection: "asc",
+        limit: 1_000,
+        offset,
+      });
+      rows.push(...page);
+      if (page.length < 1_000) return rows;
+    }
+  }
 
   function clarificationError(message: string): PluginAgentToolResult {
     return {
@@ -5337,6 +5470,193 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.agents.registerTool({
+    name: "list_deals",
+    description:
+      "List deals across the local CRM by pipeline status, owner, company, or inactivity. Results include the company, stage, value, last activity, and a cursor for the next page.",
+    instructions:
+      "Use this for pipeline-wide or stale-deal questions. The local result is based on CRM records only; continue with nextCursor while hasMore is true.",
+    parameters: listDealsToolInputSchema,
+    execute(input) {
+      const asOf = new Date();
+      const rows = allAgentDeals({
+        stages: agentDealStages(input.status),
+        companyId: input.companyId,
+        ownerId: input.ownerId,
+      });
+      const cutoff = input.inactiveForDays === undefined
+        ? null
+        : asOf.getTime() - input.inactiveForDays * 24 * 60 * 60 * 1_000;
+      const matching = rows
+        .filter((deal) => {
+          if (cutoff === null) return true;
+          return agentDate(deal.lastActivityAt, deal.createdAt) <= cutoff;
+        })
+        .sort((left, right) => {
+          const leftNeverActive = left.lastActivityAt === null;
+          const rightNeverActive = right.lastActivityAt === null;
+          if (leftNeverActive !== rightNeverActive) return leftNeverActive ? -1 : 1;
+          const activityOrder = agentDate(left.lastActivityAt, left.createdAt) -
+            agentDate(right.lastActivityAt, right.createdAt);
+          if (activityOrder !== 0) return activityOrder;
+          const createdOrder = agentDate(left.createdAt, left.createdAt) -
+            agentDate(right.createdAt, right.createdAt);
+          return createdOrder !== 0 ? createdOrder : left.id.localeCompare(right.id);
+        });
+      const cursorIndex = input.cursor === undefined
+        ? -1
+        : matching.findIndex((deal) => deal.id === input.cursor);
+      if (input.cursor !== undefined && cursorIndex < 0) {
+        throw new Error(`Deal cursor ${input.cursor} does not identify a matching deal.`);
+      }
+      const start = cursorIndex + 1;
+      const page = matching.slice(start, start + input.limit);
+      const hasMore = start + page.length < matching.length;
+      return JSON.stringify({
+        criteria: {
+          status: input.status,
+          inactiveForDays: input.inactiveForDays ?? null,
+          companyId: input.companyId ?? null,
+          ownerId: input.ownerId ?? null,
+        },
+        asOf: asOf.toISOString(),
+        deals: page.map((deal) => {
+          const output = dealOutput(deal);
+          const activityAt = agentDate(deal.lastActivityAt, deal.createdAt);
+          return {
+            ...output,
+            owner: deal.ownerId === null ? null : localOwner(deal.ownerId),
+            daysSinceLastActivity: Math.max(
+              0,
+              Math.floor((asOf.getTime() - activityAt) / (24 * 60 * 60 * 1_000)),
+            ),
+            neverActive: deal.lastActivityAt === null,
+          };
+        }),
+        hasMore,
+        nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "list_outstanding_work",
+    description:
+      "List local CRM contacts with outstanding research: identity still unresolved, no background brief, or social profiles not checked. Each row names the missing work.",
+    parameters: listOutstandingWorkToolInputSchema,
+    execute(input) {
+      const rows = allAgentContacts();
+      const outstanding = rows
+        .map((contact) => {
+          const company = contact.companyId === null ? null : companies.get(contact.companyId);
+          const needs = {
+            identity: agentContactNeedsIdentity(contact),
+            brief: evidenceStore.briefs.latest(contact.id) === null,
+            socials: contact.socialsCheckedAt === null,
+          };
+          return {
+            id: contact.id,
+            fullName: [contact.firstName, contact.lastName].filter(Boolean).join(" "),
+            email: contact.email,
+            title: contact.title,
+            companyName: company?.name ?? null,
+            companyDomain: company?.domain ?? (contact.email?.split("@").at(-1) ?? null),
+            linkedinUrl: contact.linkedinUrl,
+            lastActivityAt: contact.lastActivityAt,
+            needs,
+          };
+        })
+        .filter((contact) => Object.values(contact.needs).some(Boolean))
+        .slice(0, input.limit);
+      return JSON.stringify({ count: outstanding.length, contacts: outstanding });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "list_fields",
+    description:
+      "List the active custom fields on companies, contacts, or deals, including each key, type, options, and agent brief. Read this before setting a custom value.",
+    parameters: listFieldsToolInputSchema,
+    execute({ entity }) {
+      const fields = customFields.list({ entity, includeArchived: false });
+      return JSON.stringify({
+        fields: fields.map((field) => ({
+          key: field.key,
+          label: field.label,
+          type: field.type,
+          agentFilled: field.agentFilled,
+          brief: field.agentBrief,
+          options: field.options.map((option) => option.label),
+        })),
+        note: fields.length === 0
+          ? "This workspace has no custom fields on this record type yet."
+          : "Fields marked agentFilled false are the rep's to keep; do not write them.",
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "manage_fields",
+    description:
+      "Add a custom field or change the brief and agent-write policy for an existing field. Use it when the workspace needs to start tracking a new fact.",
+    parameters: manageFieldsToolInputSchema,
+    execute(input) {
+      if (input.action === "create") {
+        if (!input.label || !input.type) {
+          return JSON.stringify({
+            created: false,
+            reason: "Creating a field needs both a label and a type.",
+          });
+        }
+        const field = customFields.create({
+          entity: input.entity,
+          label: input.label,
+          type: input.type,
+          options: input.options?.map((label) => ({ label })),
+          agentFilled: input.agentFilled,
+          agentBrief: input.agentBrief ?? null,
+        });
+        changed("custom-field", "created", field.id);
+        return JSON.stringify(field);
+      }
+      if (!input.key) {
+        return JSON.stringify({
+          updated: false,
+          reason: "Changing a field brief needs the field key.",
+        });
+      }
+      const existing = customFields.byKey(input.entity, input.key);
+      const field = customFields.update(existing.id, {
+        agentBrief: input.agentBrief ?? null,
+        ...(input.agentFilled === undefined ? {} : { agentFilled: input.agentFilled }),
+      });
+      changed("custom-field", "updated", field.id);
+      return JSON.stringify(field);
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "archive_field",
+    description:
+      "Archive a custom field by its entity and stable key. Existing values remain stored, but the field leaves active sheets and stops being eligible for agent fills.",
+    instructions:
+      "Archiving changes the workspace schema. Name the exact field key from list_fields and use this only when the requested schema change is clear; this BB plugin has no separate source approval callback.",
+    parameters: archiveFieldToolInputSchema,
+    execute({ entity, key }) {
+      const field = customFields.list({ entity, includeArchived: true })
+        .find((candidate) => candidate.key === key);
+      if (!field) {
+        return JSON.stringify({
+          archived: false,
+          reason: `There is no field called "${key}" on ${entity.toLowerCase()}s.`,
+        });
+      }
+      const archived = customFields.archive(field.id);
+      changed("custom-field", "archived", archived.id);
+      return JSON.stringify({ archived: true, field: archived });
+    },
+  });
+
+  bb.agents.registerTool({
     name: "crm_set_field",
     description:
       "Set or clear one typed CRM custom field by its stable key on a company, contact, or deal.",
@@ -5348,6 +5668,11 @@ export default async function plugin(bb: BbPluginApi) {
     }),
     execute({ entity, recordId, key, value }) {
       const definition = customFields.byKey(entity, key);
+      if (!definition.agentFilled) {
+        throw new Error(
+          `The custom field "${definition.key}" is marked manual only; agents cannot write it.`,
+        );
+      }
       const output = customFields.upsertValue({
         entity,
         recordId,
@@ -5356,6 +5681,277 @@ export default async function plugin(bb: BbPluginApi) {
       });
       changed("custom-field", "value-updated", definition.id);
       return JSON.stringify({ ...output, key: definition.key });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "read_crm_history",
+    description:
+      "Read the local CRM history for a contact: the contact, company and deals, timeline activities, and evidence-backed facts, brief, and work history.",
+    instructions:
+      "This BB port has local CRM activities and evidence but no connected mailbox or calendar thread tables. Treat empty threads and meetings as unavailable, not as proof that none occurred.",
+    parameters: readCrmHistoryToolInputSchema,
+    execute(input) {
+      const contact = contacts.get(input.contactId);
+      if (!contact) return JSON.stringify({ found: false, reason: "No such contact." });
+      const output = contactOutput(contact, true);
+      const entries = activities
+        .list({ contactId: contact.id, limit: agentHistoryActivityLimit(input.threads) })
+        .entries
+        .map(activityOutput);
+      return JSON.stringify({
+        found: true,
+        contact: output,
+        company: output.company,
+        deals: output.deals ?? [],
+        activities: entries,
+        threads: [],
+        meetings: [],
+        facts: output.facts ?? [],
+        brief: output.brief ?? null,
+        workHistory: output.workHistory ?? [],
+        stats: {
+          activities: entries.length,
+          emails: entries.filter((entry) => entry.type === "EMAIL").length,
+          meetings: entries.filter((entry) => entry.type === "MEETING").length,
+          tasks: entries.filter((entry) => entry.type === "TASK").length,
+          nextMeetingAt: null,
+        },
+        note:
+          "This history is limited to locally stored CRM activities and evidence. Connected email/calendar bodies and reply detection are not available in this BB port.",
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "read_company_history",
+    description:
+      "Read the local CRM history for a company: its contacts, deals, and timeline activities with stable record ids.",
+    instructions:
+      "The local result includes CRM activities and relationships. Connected mailbox/calendar threads are not installed, so empty threads and meetings are unavailable rather than negative evidence.",
+    parameters: readCompanyHistoryToolInputSchema,
+    execute(input) {
+      const company = companies.get(input.companyId);
+      if (!company) return JSON.stringify({ found: false, reason: "No such company." });
+      const output = companyOutput(company, true);
+      const entries = activities
+        .list({ companyId: company.id, limit: agentHistoryActivityLimit(input.threads) })
+        .entries
+        .map(activityOutput);
+      const people = output.contacts ?? [];
+      const dealsOnCompany = output.deals ?? [];
+      return JSON.stringify({
+        found: true,
+        company: output,
+        people,
+        deals: dealsOnCompany,
+        activities: entries,
+        threads: [],
+        meetings: [],
+        notes: entries
+          .filter((entry) => entry.type === "NOTE")
+          .map((entry) => ({
+            type: entry.type,
+            subject: entry.subject,
+            body: entry.body,
+            occurredAt: entry.occurredAt ?? entry.createdAt,
+          })),
+        stats: {
+          people: people.length,
+          openDeals: dealsOnCompany.filter(
+            (deal) => deal.stage !== "CLOSED_WON" && deal.stage !== "CLOSED_LOST",
+          ).length,
+          activities: entries.length,
+          emails: entries.filter((entry) => entry.type === "EMAIL").length,
+          meetings: entries.filter((entry) => entry.type === "MEETING").length,
+        },
+        note:
+          "This history is limited to locally stored CRM activities and relationships. Connected email/calendar threads are not available in this BB port.",
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "read_deal_history",
+    description:
+      "Read the local CRM history for a deal: current stage, value, company, contacts, stage-change activities, notes, and the remaining timeline.",
+    instructions:
+      "Use the returned contact and company ids for follow-up reads. Connected correspondence and calendar history are not installed in this BB port.",
+    parameters: readDealHistoryToolInputSchema,
+    execute(input) {
+      const deal = deals.get(input.dealId);
+      if (!deal) return JSON.stringify({ found: false, reason: "No such deal." });
+      const output = dealOutput(deal);
+      const entries = activities
+        .list({ dealId: deal.id, limit: agentHistoryActivityLimit(input.threads) })
+        .entries
+        .map(activityOutput);
+      const stageHistory = entries
+        .filter((entry) => entry.type === "STAGE_CHANGE")
+        .map((entry) => {
+          const meta = entry.meta as Record<string, unknown>;
+          return {
+            from: typeof meta.from === "string" ? meta.from : null,
+            to: typeof meta.to === "string" ? meta.to : null,
+            at: entry.occurredAt ?? entry.createdAt,
+          };
+        });
+      return JSON.stringify({
+        found: true,
+        deal: output,
+        company: output.company,
+        people: output.contacts ?? [],
+        stageHistory,
+        activities: entries,
+        threads: [],
+        meetings: [],
+        notes: entries
+          .filter((entry) => entry.type === "NOTE")
+          .map((entry) => ({
+            type: entry.type,
+            subject: entry.subject,
+            body: entry.body,
+            occurredAt: entry.occurredAt ?? entry.createdAt,
+          })),
+        stats: {
+          activities: entries.length,
+          emails: entries.filter((entry) => entry.type === "EMAIL").length,
+          meetings: entries.filter((entry) => entry.type === "MEETING").length,
+          daysSinceLastActivity: deal.lastActivityAt === null
+            ? null
+            : Math.max(0, Math.floor((Date.now() - agentDate(deal.lastActivityAt, deal.createdAt)) / (24 * 60 * 60 * 1_000))),
+        },
+        note:
+          "This history is limited to locally stored CRM activities and stage changes. Connected correspondence and calendar history are not available in this BB port.",
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "get_contact_work_history",
+    description:
+      "Read evidence-backed work-history roles already stored for a contact. A LinkedIn URL may be present, but this local tool never claims to fetch or verify an external profile.",
+    parameters: getContactWorkHistoryToolInputSchema,
+    execute(input) {
+      const contact = contacts.get(input.contactId);
+      if (!contact) return JSON.stringify({ found: false, reason: "No such contact." });
+      if (!contact.linkedinUrl) {
+        return JSON.stringify({
+          found: false,
+          reason: "This contact has no LinkedIn URL on file.",
+        });
+      }
+      const workHistory = evidenceStore.workHistory.list(contact.id, {
+        includeSuperseded: false,
+        limit: 100,
+      });
+      return JSON.stringify({
+        found: workHistory.length > 0,
+        workHistory,
+        sourceUrl: contact.linkedinUrl,
+        ...(workHistory.length === 0
+          ? { reason: "No locally stored work-history evidence is available; no external profile was fetched." }
+          : {}),
+        note: "Only locally stored, evidence-backed roles are returned by this BB port.",
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "record_job_change",
+    description:
+      "Raise a local timeline note when stored employer facts show a contact moved jobs. An explicit company id may also move the contact after the change is confirmed.",
+    instructions:
+      "Call this only after recording a new employer fact. This BB port records a note and does not send a notification or perform an external identity check; moving companies is an explicit consequential action.",
+    parameters: recordJobChangeToolInputSchema,
+    execute(input) {
+      const contact = contacts.get(input.contactId);
+      if (!contact) return JSON.stringify({ raised: false, reason: "No such contact." });
+      const employerFacts = evidenceStore.facts.list(contact.id, {
+        field: "employer",
+        includeSuperseded: true,
+        limit: 1_000,
+      });
+      const current = employerFacts
+        .filter((fact) => fact.status === "APPLIED")
+        .sort((left, right) => agentDate(right.observedAt, right.createdAt) - agentDate(left.observedAt, left.createdAt))[0];
+      const previous = employerFacts
+        .filter((fact) => fact.status === "SUPERSEDED" && fact.value !== current?.value)
+        .sort((left, right) => agentDate(right.supersededAt, right.createdAt) - agentDate(left.supersededAt, left.createdAt))[0];
+      if (!current || !previous || current.value === previous.value) {
+        return JSON.stringify({
+          raised: false,
+          reason: "No employer change on the stored facts for this contact.",
+        });
+      }
+      if (input.moveToCompanyId !== undefined) companies.getRequired(input.moveToCompanyId);
+      const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
+      const activity = activities.create({
+        type: "NOTE",
+        subject: `${name} changed jobs`,
+        body: [
+          `${name} appears to have left ${previous.value} for ${current.value}.`,
+          current.sourceUrl ?? "",
+          "",
+          "The change was derived from stored employer facts; a rep should review the relationship before moving the record.",
+        ].filter(Boolean).join("\n"),
+        contactId: contact.id,
+        createdById: LOCAL_OWNER_ID,
+        meta: {
+          source: "job-change",
+          from: previous.value,
+          to: current.value,
+        },
+      }, LOCAL_OWNER_ID);
+      stampActivity(activity);
+      changed("activity", "created", activity.id);
+      if (input.moveToCompanyId !== undefined) {
+        const moved = contacts.update(contact.id, { companyId: input.moveToCompanyId });
+        changed("contact", "updated", moved.id);
+      }
+      return JSON.stringify({
+        raised: true,
+        from: previous.value,
+        to: current.value,
+        moved: input.moveToCompanyId !== undefined,
+        ownerNotified: false,
+        ownerId: contact.ownerId,
+        activityId: activity.id,
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "schedule_recheck",
+    description:
+      "Schedule a durable local CRM task to look at a contact again, with an explicit interval and reason visible to the rep.",
+    instructions:
+      "Choose the interval from the record and explain why. This BB port stores a future CRM task; it does not promise a vendor lookup or an automatic external research run.",
+    parameters: scheduleRecheckToolInputSchema,
+    execute(input) {
+      contacts.getRequired(input.contactId);
+      const dueAt = new Date(Date.now() + input.days * 24 * 60 * 60 * 1_000).toISOString();
+      const task = activities.create({
+        type: "TASK",
+        subject: "CRM recheck",
+        body: input.reason,
+        dueAt,
+        contactId: input.contactId,
+        createdById: LOCAL_OWNER_ID,
+        meta: {
+          source: "recheck",
+          budget: input.budget,
+        },
+      }, LOCAL_OWNER_ID);
+      stampActivity(task);
+      changed("activity", "created", task.id);
+      return JSON.stringify({
+        scheduled: true,
+        dueAt,
+        reason: input.reason,
+        budget: input.budget,
+        activityId: task.id,
+      });
     },
   });
 

@@ -154,7 +154,14 @@ describe("ContactsView", () => {
     expect(screen.getByText("1")).toBeDefined();
     expect(rpc.call).toHaveBeenCalledWith(
       "contacts_list",
-      expect.objectContaining({ q: "", page: 1, pageSize: 25, archived: false }),
+      expect.objectContaining({
+        q: "",
+        sort: "createdAt",
+        dir: "desc",
+        page: 1,
+        pageSize: 25,
+        archived: false,
+      }),
     );
     fireEvent.change(screen.getByLabelText("Search contacts"), {
       target: { value: "Ada" },

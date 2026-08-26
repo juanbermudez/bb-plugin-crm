@@ -70,6 +70,18 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
   const [checklistOpen, setChecklistOpen] = useState(
     () => !readWorkspaceChecklistState().dismissed,
   );
+  const focusCreateButton = useMemo(
+    () => () => {
+      const button = createButtonRef.current;
+      if (
+        button?.isConnected &&
+        button.closest('[aria-hidden="true"], [inert]') === null
+      ) {
+        button.focus({ preventScroll: true });
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!createOpen) return;
@@ -80,13 +92,13 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       if (!(target instanceof Node)) return;
       if (createMenuRef.current?.contains(target) || createButtonRef.current?.contains(target)) return;
       setCreateOpen(false);
-      createButtonRef.current?.focus();
+      focusCreateButton();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         setCreateOpen(false);
-        createButtonRef.current?.focus();
+        focusCreateButton();
         return;
       }
       if (event.key === "Tab") {
@@ -111,7 +123,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
       document.removeEventListener("mousedown", handleMouseDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [createOpen]);
+  }, [createOpen, focusCreateButton]);
   const go = useMemo(
     () => (kind: CrmRouteKind) => {
       navigate.toPluginPanel("crm", {
@@ -122,6 +134,10 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
   );
   const clearCreateRoute = useMemo(
     () => () => {
+      // Focus before routing: the menu item that launched a global create
+      // action is about to unmount, while the persistent header trigger stays
+      // available as the controlled drawer's stable return target.
+      focusCreateButton();
       navigate.toPluginPanel("crm", {
         subPath: crmRouteToSubPath({
           kind: route.kind,
@@ -129,12 +145,13 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
           ...(route.tab === undefined ? {} : { tab: route.tab }),
         }),
       });
-      queueMicrotask(() => createButtonRef.current?.focus());
+      queueMicrotask(focusCreateButton);
     },
-    [navigate, route.kind, route.recordId, route.tab],
+    [focusCreateButton, navigate, route.kind, route.recordId, route.tab],
   );
   const openCreate = useMemo(
     () => (action: CrmCreateAction) => {
+      focusCreateButton();
       const kind =
         action === "company"
           ? "companies"
@@ -149,7 +166,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         subPath: crmRouteToSubPath({ kind, recordId: null, create: action }),
       });
     },
-    [navigate],
+    [focusCreateButton, navigate],
   );
 
   const openSearchResult = (result: GlobalSearchResult) => {
@@ -380,13 +397,15 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         ) : route.kind === "settings" ? (
           <SettingsView
             initialSection={
-              route.recordId === "custom-fields"
+              route.recordId === "workspace"
+                ? "workspace"
+                : route.recordId === "custom-fields"
                 ? "custom-fields"
                 : route.recordId === "connections"
                   ? "connections"
                   : route.recordId === "tracking"
                     ? "tracking"
-                    : "currency"
+                    : "workspace"
             }
             onSectionChange={(section: SettingsSection) => {
               navigate.toPluginPanel("crm", {
@@ -424,6 +443,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
         <GlobalActivityCreate
           type={route.create}
           onClose={clearCreateRoute}
+          returnFocusRef={createButtonRef}
         />
       ) : null}
     </div>

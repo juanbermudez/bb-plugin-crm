@@ -5,6 +5,8 @@ describe("CRM RPC contract", () => {
   it("uses deterministic flat method names for all implemented surfaces", () => {
     expect(Object.keys(rpcContract)).toEqual([
       "status",
+      "workspace_identity_get",
+      "workspace_identity_update",
       "enrichment_queue",
       "connections_list",
       "connections_get",

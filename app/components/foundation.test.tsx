@@ -149,4 +149,39 @@ describe("CRM frontend foundation components", () => {
 
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
+
+  it("restores focus to a stable trigger when the original opener is gone", async () => {
+    const onOpenChange = vi.fn();
+    const returnFocusRef = { current: null as HTMLElement | null };
+    const view = (open: boolean) => (
+      <>
+        <button
+          ref={(element) => {
+            returnFocusRef.current = element;
+          }}
+          type="button"
+        >
+          New
+        </button>
+        <RecordDrawer
+          open={open}
+          onOpenChange={onOpenChange}
+          returnFocusRef={returnFocusRef}
+          title="New note"
+        >
+          <p>Activity details</p>
+        </RecordDrawer>
+      </>
+    );
+    const { rerender } = render(view(false));
+    const trigger = screen.getByRole("button", { name: "New" });
+
+    // The routed create drawer may open while focus is still on a menu item;
+    // the stable header trigger remains the intended return target.
+    rerender(view(true));
+    fireEvent.click(screen.getByRole("button", { name: "Close record drawer" }));
+    rerender(view(false));
+
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
 });

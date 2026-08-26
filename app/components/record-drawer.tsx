@@ -16,6 +16,13 @@ import { cn } from "../../lib/utils.js";
 export interface RecordDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Optional stable opener for controlled drawers. This is useful when the
+   * visible trigger is temporarily unmounted while a routed drawer is open
+   * (for example, a header menu item), so focus can still return to the
+   * persistent trigger after close.
+   */
+  returnFocusRef?: { readonly current: HTMLElement | null };
   title: React.ReactNode;
   description?: React.ReactNode;
   media?: React.ReactNode;
@@ -38,6 +45,7 @@ export interface RecordDrawerProps {
 export function RecordDrawer({
   open,
   onOpenChange,
+  returnFocusRef,
   title,
   description,
   media,
@@ -50,35 +58,36 @@ export function RecordDrawer({
 }: RecordDrawerProps) {
   const isCompactViewport = useIsCompactViewport();
   const wasOpenRef = React.useRef(false);
-  const returnFocusRef = React.useRef<HTMLElement | null>(null);
+  const capturedReturnFocusRef = React.useRef<HTMLElement | null>(null);
 
   // Controlled dialogs do not have a Radix trigger to restore focus to.
   // Capture the actual opener before the portal/drawer moves focus, then
   // restore it after either the desktop dialog or compact drawer closes.
   if (open && !wasOpenRef.current && typeof document !== "undefined") {
-    returnFocusRef.current =
-      document.activeElement instanceof HTMLElement
+    capturedReturnFocusRef.current =
+      returnFocusRef?.current ??
+      (document.activeElement instanceof HTMLElement
         ? document.activeElement
-        : null;
+        : null);
   }
   React.useEffect(() => {
     const wasOpen = wasOpenRef.current;
     wasOpenRef.current = open;
     if (!wasOpen || open) return;
-    const target = returnFocusRef.current;
+    const target = returnFocusRef?.current ?? capturedReturnFocusRef.current;
     queueMicrotask(() => {
-      if (target?.isConnected) target.focus();
+      if (target?.isConnected) target.focus({ preventScroll: true });
     });
-  }, [open]);
+  }, [open, returnFocusRef]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         onCloseAutoFocus={(event) => {
-          const target = returnFocusRef.current;
+          const target = returnFocusRef?.current ?? capturedReturnFocusRef.current;
           if (!target?.isConnected) return;
           event.preventDefault();
-          target.focus();
+          target.focus({ preventScroll: true });
         }}
         style={
           isCompactViewport

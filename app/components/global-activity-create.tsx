@@ -32,6 +32,8 @@ export interface GlobalActivityRpcClient {
 export interface GlobalActivityCreateProps {
   type: ActivityCreateKind;
   onClose: () => void;
+  /** Stable header trigger used when this routed drawer outlives its menu. */
+  returnFocusRef?: { readonly current: HTMLElement | null };
   rpcClient?: GlobalActivityRpcClient;
 }
 
@@ -129,6 +131,7 @@ function normalizedDueAt(value: string): string | null | undefined {
 export function GlobalActivityCreate({
   type,
   onClose,
+  returnFocusRef,
   rpcClient,
 }: GlobalActivityCreateProps) {
   const contextRpc = useRpc<typeof rpcContract>() as unknown as GlobalActivityRpcClient;
@@ -260,8 +263,18 @@ export function GlobalActivityCreate({
     <RecordDrawer
       open
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) {
+          const target = returnFocusRef?.current;
+          if (
+            target?.isConnected &&
+            target.closest('[aria-hidden="true"], [inert]') === null
+          ) {
+            target.focus({ preventScroll: true });
+          }
+          onClose();
+        }
       }}
+      returnFocusRef={returnFocusRef}
       title={title}
       description="Attach a CRM activity to an existing company, contact, or deal."
       footer={

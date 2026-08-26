@@ -19,3 +19,11 @@ export {
   type TrackingMethod,
   type TrackingRpcClient,
 } from "./tracking/index.js";
+export {
+  WORKSPACE_METHODS,
+  WorkspaceSettingsView,
+  useWorkspaceRpc,
+  type WorkspaceMethod,
+  type WorkspaceRpcClient,
+  type WorkspaceSettingsViewProps,
+} from "./workspace/index.js";
