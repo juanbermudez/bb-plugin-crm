@@ -11,6 +11,8 @@ import {
   type ContactListInput,
   type Deal as DealOutput,
   type DealListInput,
+  type FieldEntity,
+  type FieldValues,
 } from "./contracts/core.js";
 import { rpcContract } from "./contracts/rpc.js";
 import {
@@ -84,6 +86,31 @@ export default async function plugin(bb: BbPluginApi) {
   const savedViews = createSavedViewStore(db);
   const customFields = createCustomFieldStore(db);
 
+  function recordFieldValues(entity: FieldEntity, recordId: string): FieldValues {
+    return Object.fromEntries(
+      customFields.listValues({ entity, recordId }).map((row) => [
+        customFields.getRequired(row.fieldId).key,
+        row.value,
+      ]),
+    );
+  }
+
+  function writeRecordFieldValues(
+    entity: FieldEntity,
+    recordId: string,
+    values: FieldValues,
+  ): void {
+    for (const [key, value] of Object.entries(values)) {
+      const definition = customFields.byKey(entity, key);
+      customFields.upsertValue({
+        entity,
+        recordId,
+        fieldId: definition.id,
+        value,
+      });
+    }
+  }
+
   function companyOutput(
     company: StoredCompany,
     includeRelations = false,
@@ -117,7 +144,7 @@ export default async function plugin(bb: BbPluginApi) {
       : undefined;
     const output: CompanyOutput = {
       ...company,
-      fields: {},
+      fields: recordFieldValues("COMPANY", company.id),
       contactCount: counts.contactCount,
       openDealCount: counts.openDealCount,
     };
@@ -231,7 +258,7 @@ export default async function plugin(bb: BbPluginApi) {
       company: company ?? null,
       isPrimaryContact,
       deals,
-      fields: {},
+      fields: recordFieldValues("CONTACT", contact.id),
     };
   }
 
@@ -310,7 +337,7 @@ export default async function plugin(bb: BbPluginApi) {
         deal.baseCurrency === null ? null : currencyCodeSchema.parse(deal.baseCurrency),
       company,
       contacts: relatedContacts,
-      fields: {},
+      fields: recordFieldValues("DEAL", deal.id),
     };
   }
 
@@ -665,8 +692,12 @@ export default async function plugin(bb: BbPluginApi) {
       return companyOutput(company);
     },
     companies_update({ id, data }) {
-      const { fields: _fields, ...record } = data;
-      const company = companies.update(id, record);
+      const { fields, ...record } = data;
+      const company = db.transaction(() => {
+        const updated = companies.update(id, record);
+        if (fields) writeRecordFieldValues("COMPANY", id, fields);
+        return updated;
+      })();
       changed("company", "updated", company.id);
       return companyOutput(company);
     },
@@ -726,8 +757,12 @@ export default async function plugin(bb: BbPluginApi) {
       return contactOutput(contact);
     },
     contacts_update({ id, data }) {
-      const { fields: _fields, ...record } = data;
-      const contact = contacts.update(id, record);
+      const { fields, ...record } = data;
+      const contact = db.transaction(() => {
+        const updated = contacts.update(id, record);
+        if (fields) writeRecordFieldValues("CONTACT", id, fields);
+        return updated;
+      })();
       changed("contact", "updated", contact.id);
       return contactOutput(contact);
     },
@@ -832,8 +867,12 @@ export default async function plugin(bb: BbPluginApi) {
       return dealOutput(deal);
     },
     deals_update({ id, data }) {
-      const { fields: _fields, ...record } = data;
-      const deal = deals.update(id, record);
+      const { fields, ...record } = data;
+      const deal = db.transaction(() => {
+        const updated = deals.update(id, record);
+        if (fields) writeRecordFieldValues("DEAL", id, fields);
+        return updated;
+      })();
       changed("deal", "updated", deal.id);
       return dealOutput(deal);
     },
