@@ -113,7 +113,7 @@ operator-confirmed site authority.
 ## Plugin checks
 
 - Integrated release-candidate checks in the local working tree (schema
-  version 10): `npm test` passed with 50 test files / 256 tests;
+  version 10): `npm test` passed with 50 test files / 257 tests;
   `npm run typecheck` passed; `./node_modules/.bin/bb plugin types --check .`
   passed; `npm run build` passed and emitted identity-checked metadata; and
   `git diff --check` passed.

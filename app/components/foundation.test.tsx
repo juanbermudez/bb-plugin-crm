@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -120,5 +120,33 @@ describe("CRM frontend foundation components", () => {
     expect(screen.getByText("Primary contact")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Close record drawer" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("restores focus to the opener after a controlled record drawer closes", async () => {
+    const onOpenChange = vi.fn();
+    const view = (open: boolean) => (
+      <>
+        <button type="button">New company</button>
+        <RecordDrawer
+          open={open}
+          onOpenChange={onOpenChange}
+          title="New company"
+        >
+          <label>
+            Company name
+            <input />
+          </label>
+        </RecordDrawer>
+      </>
+    );
+    const { rerender } = render(view(false));
+    const opener = screen.getByRole("button", { name: "New company" });
+    opener.focus();
+
+    rerender(view(true));
+    fireEvent.click(screen.getByRole("button", { name: "Close record drawer" }));
+    rerender(view(false));
+
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });

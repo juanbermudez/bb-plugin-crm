@@ -37,13 +37,21 @@ describe("CRM panel routes", () => {
       recordId: null,
       create: "contact" as const,
     };
-    expect(parseCrmRoute(crmRouteToSubPath(route))).toEqual(route);
+    const subPath = crmRouteToSubPath(route);
+    expect(subPath).toBe("contacts/create/contact");
+    expect(subPath).not.toContain("?");
+    expect(parseCrmRoute(subPath)).toEqual(route);
+    // Preserve old direct links while BB-hosted navigation uses path state.
     expect(parseCrmRoute("dashboard?create=task")).toEqual({
       kind: "dashboard",
       recordId: null,
       create: "task",
     });
     expect(parseCrmRoute("dashboard?create=unknown")).toEqual({
+      kind: "dashboard",
+      recordId: null,
+    });
+    expect(parseCrmRoute("dashboard/create/unknown")).toEqual({
       kind: "dashboard",
       recordId: null,
     });

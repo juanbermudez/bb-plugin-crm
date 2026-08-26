@@ -57,24 +57,29 @@ export function parseCrmRoute(rawSubPath: string): CrmRoute {
     candidate !== undefined && ROUTE_KINDS.has(candidate as CrmRouteKind)
       ? (candidate as CrmRouteKind)
       : "dashboard";
-  const createCandidate = new URLSearchParams(rawQuery).get("create");
+  const isCreatePath = segments[1] === "create";
+  const pathCreateCandidate = isCreatePath ? segments[2] : null;
+  const createCandidate = pathCreateCandidate ?? new URLSearchParams(rawQuery).get("create");
   const create = CREATE_ACTIONS.has(createCandidate as CrmCreateAction)
     ? (createCandidate as CrmCreateAction)
     : undefined;
   return {
     kind,
-    recordId: segments[1] ?? null,
-    ...(segments[2] === undefined ? {} : { tab: segments[2] }),
+    recordId: isCreatePath ? null : segments[1] ?? null,
+    ...(isCreatePath || segments[2] === undefined ? {} : { tab: segments[2] }),
     ...(create === undefined ? {} : { create }),
   };
 }
 
 export function crmRouteToSubPath(route: CrmRoute): string {
-  const query = route.create === undefined
-    ? ""
-    : `?create=${encodeURIComponent(route.create)}`;
-  if (route.recordId === null) return `${route.kind}${query}`;
+  // BB owns the outer route and percent-encodes plugin sub-path segments.
+  // Keep create state in path segments rather than query syntax so `?` is
+  // never encoded into a literal route segment by the host.
+  if (route.create !== undefined) {
+    return `${route.kind}/create/${encodeURIComponent(route.create)}`;
+  }
+  if (route.recordId === null) return route.kind;
   const base = `${route.kind}/${encodeURIComponent(route.recordId)}`;
   const tab = route.tab?.trim();
-  return `${tab ? `${base}/${encodeURIComponent(tab)}` : base}${query}`;
+  return tab ? `${base}/${encodeURIComponent(tab)}` : base;
 }

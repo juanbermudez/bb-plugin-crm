@@ -10,7 +10,7 @@ with CRM schema version 10, BB `0.39.0`, and plugin SDK `0.4.8`. These
 checks are local working-tree evidence; they do not claim a public release,
 tag, or marketplace submission.
 
-- `npm test`: 50 test files and 256 tests passed.
+- `npm test`: 50 test files and 257 tests passed.
 - `npm run typecheck`: passed.
 - `./node_modules/.bin/bb plugin types --check .`: passed.
 - `npm run build`: passed and emitted identity-checked server/app bundles and

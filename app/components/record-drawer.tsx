@@ -49,10 +49,37 @@ export function RecordDrawer({
   footerClassName,
 }: RecordDrawerProps) {
   const isCompactViewport = useIsCompactViewport();
+  const wasOpenRef = React.useRef(false);
+  const returnFocusRef = React.useRef<HTMLElement | null>(null);
+
+  // Controlled dialogs do not have a Radix trigger to restore focus to.
+  // Capture the actual opener before the portal/drawer moves focus, then
+  // restore it after either the desktop dialog or compact drawer closes.
+  if (open && !wasOpenRef.current && typeof document !== "undefined") {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  }
+  React.useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!wasOpen || open) return;
+    const target = returnFocusRef.current;
+    queueMicrotask(() => {
+      if (target?.isConnected) target.focus();
+    });
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        onCloseAutoFocus={(event) => {
+          const target = returnFocusRef.current;
+          if (!target?.isConnected) return;
+          event.preventDefault();
+          target.focus();
+        }}
         style={
           isCompactViewport
             ? undefined

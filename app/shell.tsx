@@ -129,6 +129,7 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
           ...(route.tab === undefined ? {} : { tab: route.tab }),
         }),
       });
+      queueMicrotask(() => createButtonRef.current?.focus());
     },
     [navigate, route.kind, route.recordId, route.tab],
   );

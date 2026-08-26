@@ -128,7 +128,7 @@ describe("CRM nav panel", () => {
     expect(slot.inspection.navigateCalls).toContainEqual({
       method: "toPluginPanel",
       path: "crm",
-      options: { subPath: "companies?create=company" },
+      options: { subPath: "companies/create/company" },
     });
 
     slot.lifecycle.unmount();
