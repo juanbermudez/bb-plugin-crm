@@ -15,6 +15,7 @@ import {
 import { CompaniesView } from "./views/companies/index.js";
 import { ContactsView } from "./views/contacts/index.js";
 import { DealsView } from "./views/deals/index.js";
+import { CurrencySettingsView } from "./views/settings/currency/index.js";
 
 const NAV_ITEMS: ReadonlyArray<{
   kind: CrmRouteKind;
@@ -161,6 +162,8 @@ export function CrmAppShell({ subPath }: PluginNavPanelProps) {
               });
             }}
           />
+        ) : route.kind === "settings" ? (
+          <CurrencySettingsView />
         ) : (
           <PendingView kind={route.kind} />
         )}
