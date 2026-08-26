@@ -14,6 +14,8 @@ Git repository.
 - Plugin package name: `bb-plugin-crm`
 - Derived plugin id: `crm`
 - Current manifest package version (release approval still pending): `0.1.0`
+- Proposed immutable tag: `v0.1.0`
+- Proposed marketplace source range: `^0.1.0`
 - Declared engines: BB `>=0.39`; plugin SDK `>=0.4.8`
 - Current plugin icon: `assets/icon.svg` (784 bytes, SHA-256
   `f1ddd8a46e88b19777e38d4a2cbc0fe222a4497d64f5b163248a3d78b91a61b1`)
@@ -21,10 +23,10 @@ Git repository.
   `icons/crm-f1ddd8a4.svg` in the marketplace repository. The entry must
   reference only that copied file, never the plugin repository or a remote URL.
 
-The release commit, approved version, tag, source range, and release commands
-are intentionally left as placeholders until parity work, live QA, and
-explicit release approval finish. No production tag or public-tag install is
-claimed by this draft.
+The release commit and remote-mutating release commands remain placeholders
+until explicit release approval. The proposed version, immutable tag, and
+source range are concrete so this entry is ready for review. No production tag
+or public-tag install is claimed by this draft.
 
 ## Proposed `entries/crm.json`
 
@@ -62,15 +64,15 @@ compatibility remains authoritative in the plugin manifest.
   "source": {
     "git": {
       "url": "https://github.com/juanbermudez/bb-plugin-crm.git",
-      "range": "<approved-source-range>"
+      "range": "^0.1.0"
     }
   }
 }
 ```
 
 The source is a repository-root plugin, so `subdir` and `tagPrefix` are not
-included. The placeholder range is valid only after the public repository has
-the approved release tag. If the release is intentionally pinned, replace
+included. The proposed range becomes live only after the public repository has
+the approved `v0.1.0` tag. If the release is intentionally pinned, replace
 `range` with an immutable `ref` and document that choice in the PR.
 
 ## Marketplace PR body template
@@ -102,19 +104,21 @@ operator-confirmed site authority.
 ## Source release
 
 - Repository: `https://github.com/juanbermudez/bb-plugin-crm.git`
-- Release: `<approved-release-tag>` → `<approved-release-commit>`
-- Marketplace range: `<approved-source-range>`
+- Release: `v0.1.0` → `<approved-release-commit>`
+- Marketplace range: `^0.1.0`
 - Plugin id: `crm`, derived from `bb-plugin-crm`
 - Repository layout: root plugin; no `subdir` or `tagPrefix`
 
 ## Plugin checks
 
-- Historical clean-gate baseline at implementation revision `7166be5`: 45 test
-  files / 197 tests passed with `npm test`; re-run against the approved release
-  tag because these results predate current shared-worktree edits.
+- Public clean-clone gate at implementation revision
+  `93d68ba4799de162c674026449f910fae93db698`: `npm ci` found zero
+  vulnerabilities, and 47 test files / 225 tests passed with `npm test`.
 - `npm run typecheck` passed
 - `npm run build` passed and emitted identity-checked metadata
 - `git diff --check` passed
+- `npm pack --json --dry-run` passed with 160 entries, 1,517,149 packed
+  bytes, and SHA-1 `b823589ce981c6bf703d6a651a96bc687cf3b5d0`
 - `<approved public-tag install/build command>` remains release-gated and
   unrun
 - Live packaged-BB panel smoke passed for Dashboard Me (installation-local
@@ -125,8 +129,12 @@ operator-confirmed site authority.
   the refreshed panel also covered onboarding, global search, column controls,
   record Agent empty-state behavior, provider-backed enrichment controls, the
   deal stage stepper, contact portraits/Photo URL editing, and the fixed public
-  tracking loader. Full keyboard, light/custom-theme, and Electron-specific QA
-  were not run.
+  tracking loader. The release-candidate smoke additionally covered bounded
+  896×720 drawers in a 1280×720 viewport, drawer-tab URL restoration,
+  `Cmd/Ctrl+Shift+K` CRM search with keyboard result selection, keyboard entity
+  selection, builder Conversation routing/fail-closed provider error, required
+  closed-stage reasons, and BB AlertDialogs. A complete keyboard-only sweep,
+  light/custom-theme sweep, and Electron-specific QA were not run.
 
 ## Marketplace checks
 

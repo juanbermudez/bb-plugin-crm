@@ -3,18 +3,24 @@
 This log records checks that have actually run. Planned checks remain in the
 port plan and marketplace draft and are not treated as passing evidence.
 
-## Clean local gate
+## Clean local and public-clone gate
 
-Verified on 2026-08-26 at implementation revision `7166be5` (historical clean-gate
-baseline before subsequent shared-worktree edits), against BB `0.39.0` and plugin SDK
-`0.4.8`:
+Verified on 2026-08-26 at public implementation revision
+`93d68ba4799de162c674026449f910fae93db698`, against BB `0.39.0` and
+plugin SDK `0.4.8`. The same gate was run both in the working copy and in a
+new depth-one clone from `https://github.com/juanbermudez/bb-plugin-crm.git`:
 
-- `npm test`: 45 test files and 197 tests passed.
+- `npm ci`: installed 453 packages, audited 454, and found 0 vulnerabilities.
+- `npm test`: 47 test files and 225 tests passed.
 - `npm run typecheck`: passed.
 - `npm run build`: passed and emitted the server/app bundles and metadata.
 - `git diff --check`: passed.
-- `npm pack --json --dry-run`: passed with 155 entries; the package includes
-  the task-dispatch, portrait, clarification, and BB attachment runtime paths.
+- `npm pack --json --dry-run`: passed with 160 entries, 1,517,149 packed
+  bytes, 8,400,103 unpacked bytes, and SHA-1
+  `b823589ce981c6bf703d6a651a96bc687cf3b5d0`. The package includes both
+  compiled bundles and metadata, the icon, CRM skill, docs, license, tests,
+  and the task-dispatch, portrait, clarification, builder, and BB attachment
+  runtime paths.
 
 The build metadata reports plugin id `crm`, plugin version `0.1.0`, SDK
 `0.4.8`, and BB `0.39.0`. The automated suites use real temporary SQLite
@@ -99,13 +105,42 @@ Observed in the live CRM panel:
   editing.
 - The public fixed tracking loader returned JavaScript with `PAGE_VIEW` and
   `crmTrack`, cross-origin resource policy, and no site-token-shaped value.
+- The release-candidate drawer fix was loaded from immutable app bundle hash
+  `a0aa100f9494df45`. At a 1280×720 browser viewport, a company drawer stayed
+  within the viewport at 896×720; its tab strip remained on-screen.
+- Switching the company drawer from Overview to Contacts updated the BB URL to
+  `/companies/<id>/contacts`; a full browser reload retained both that URL and
+  the selected tab. Browser console error output was empty.
+- `Cmd/Ctrl+Shift+K` focused CRM search without taking BB's reserved plain
+  `Cmd/Ctrl+K` thread-search shortcut. Searching `Live` returned one company,
+  contact, and deal; ArrowDown + Enter opened the contact drawer through its
+  deep link.
+- The relationship entity picker exposed only real records and supported
+  ArrowDown + Enter. The live test linked the existing contact to the existing
+  company and the table/drawer refreshed to the persisted relationship.
+- The live Agents drawer exposed Overview, Conversation, Versions, Triggers,
+  Run history, and Audit. Conversation deep-linked and reloaded correctly.
+  Starting a builder conversation reached BB's real visible-thread spawn path
+  and failed closed with HTTP 503 because this disposable host could not
+  resolve the Codex default model; no builder link or phantom conversation was
+  persisted. The server tests separately cover successful spawn/link,
+  idempotent reopen, explicit new conversation, deletion ordering, permission
+  mode, and version ownership.
+- The deal table opened its BB-styled inline stage menu with all seven source
+  stages. Choosing Closed lost opened a required-reason dialog with Save stage
+  disabled until a reason is entered; the smoke cancelled without changing the
+  record.
+- Saved-view and currency removal actions opened BB AlertDialogs and were
+  cancelled, proving the browser-native confirmation replacements without
+  deleting live-smoke data.
 
 ## Release-gated or not run
 
 The following are not claimed as passing evidence in this log:
 
-- full light/custom-theme, keyboard-only, and every remaining source-workflow
-  sweep; compact dark-theme is covered only by the focused smoke above;
+- full light/custom-theme and every remaining source-workflow sweep; compact
+  dark-theme and focused keyboard paths are covered by the smokes above, but a
+  complete keyboard-only audit was not run;
 - Electron-specific smoke (no Electron QA was run for this update);
 - production release tag creation, public-tag installation, or marketplace
   submission.
