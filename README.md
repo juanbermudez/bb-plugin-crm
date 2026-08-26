@@ -8,7 +8,18 @@ activity, enrichment, integration, and agent workflows. The interface uses BB
 theme tokens and version-matched vendored components.
 
 The implementation is in progress. The full parity contract and phased task
-breakdown live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md).
+breakdown live in [docs/PORT_PLAN.md](docs/PORT_PLAN.md). Track exact source
+capabilities in [docs/PARITY_MATRIX.md](docs/PARITY_MATRIX.md) and checks that
+have actually run in [docs/QA.md](docs/QA.md).
+
+Currently working end to end:
+
+- BB-native dashboard and inner CRM navigation
+- append-only SQLite storage for companies, contacts, deals, activities,
+  saved views, and custom fields
+- company table, search, pagination, create, deep-linked record drawer,
+  archive, restore, purge, bulk RPC, and realtime invalidation
+- strict company/contact/deal/activity/currency/field/saved-view wire contracts
 
 ## Install
 
