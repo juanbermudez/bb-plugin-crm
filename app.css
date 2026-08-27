@@ -6,7 +6,19 @@ header:has([data-bb-plugin="crm"])
   display: none;
 }
 
-/* Center section navigation within the host title row, independent of side actions. */
+/*
+ * BB positions its action cluster so accessory menus can layer above the title.
+ * Make that cluster transparent to absolute positioning for CRM: otherwise the
+ * tab strip centers inside the small action group and covers its icon buttons.
+ * The host title row remains the nearest positioned ancestor.
+ */
+header:has([data-bb-plugin="crm"])
+  [data-testid="app-page-header-content-row"]
+  > div:has([data-bb-plugin="crm"]) {
+  position: static;
+}
+
+/* Center section navigation within the full host title row. */
 header:has([data-bb-plugin="crm"])
   [data-testid="app-page-header-content-row"]
   .crm-header-tabs {
